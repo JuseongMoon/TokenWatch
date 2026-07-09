@@ -76,7 +76,9 @@ struct AgentSnapshot: Sendable {
 /// `seven_day_fable`)은 시간이 지나며 늘어나므로, 고정 필드로 파싱하지 않고
 /// "모든 창 형태 키"를 동적으로 수집한 뒤 원하는 것을 골라 쓴다.
 struct ClaudeUsageResponse: Decodable, Sendable {
-    /// key(원본 스네이크케이스) -> 창
+    /// 새 형식: 모든 사용량 창을 담은 배열(session / weekly_all / weekly_scoped …).
+    let limits: [ClaudeLimit]
+    /// 구형 형식: key(원본 스네이크케이스) -> 창. limits가 비었을 때만 fallback으로 쓴다.
     let windows: [String: ClaudeWindow]
 
     private struct DynamicKey: CodingKey {
@@ -88,16 +90,59 @@ struct ClaudeUsageResponse: Decodable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DynamicKey.self)
+
+        // 새 형식: limits 배열.
+        if let limitsKey = DynamicKey(stringValue: "limits") {
+            self.limits = (try? container.decode([ClaudeLimit].self, forKey: limitsKey)) ?? []
+        } else {
+            self.limits = []
+        }
+
+        // 구형 형식: utilization/resets_at을 가진 최상위 창 키들.
         var result: [String: ClaudeWindow] = [:]
-        for key in container.allKeys {
-            // 값이 { utilization, resets_at } 형태인 것만 창으로 취급.
-            // extra_usage 같은 다른 오브젝트는 utilization이 없으면 무시된다.
+        for key in container.allKeys where key.stringValue != "limits" {
             if let window = try? container.decode(ClaudeWindow.self, forKey: key),
-               window.utilization != nil {
+               window.utilization != nil || window.resetsAt != nil {
                 result[key.stringValue] = window
             }
         }
         self.windows = result
+    }
+}
+
+/// 새 형식 `limits` 배열의 원소 — Claude /usage가 보여주는 창 하나.
+struct ClaudeLimit: Decodable, Sendable {
+    let kind: String        // "session" | "weekly_all" | "weekly_scoped" …
+    let group: String       // "session" | "weekly"
+    let percent: Double     // 0~100 used %
+    let resetsAt: Date?
+    let scope: Scope?
+
+    struct Scope: Decodable, Sendable {
+        let model: Model?
+        struct Model: Decodable, Sendable {
+            let displayName: String?
+            enum CodingKeys: String, CodingKey { case displayName = "display_name" }
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, group, percent, scope
+        case resetsAt = "resets_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? ""
+        group = (try? c.decode(String.self, forKey: .group)) ?? ""
+        percent = (try? c.decode(Double.self, forKey: .percent)) ?? 0
+        scope = try? c.decode(Scope.self, forKey: .scope)
+        if let s = try? c.decode(String.self, forKey: .resetsAt) {
+            resetsAt = ISO8601DateFormatter.tokenwatch.date(from: s)
+                ?? ISO8601DateFormatter.tokenwatchNoFraction.date(from: s)
+        } else {
+            resetsAt = nil
+        }
     }
 }
 
@@ -146,14 +191,38 @@ extension ISO8601DateFormatter {
 // MARK: - 응답 -> UI 창 매핑
 
 enum ClaudeUsageMapper {
-    /// 스크린샷의 3개 창(Current session / Current week all models / Current week Fable)을
-    /// 우선 노출하고, 그 외 발견된 7일 모델 창들도 뒤에 붙인다.
+    /// 새 형식(limits 배열)이 있으면 그것으로 매핑하고,
+    /// 없으면 구형 키(five_hour / seven_day / *fable*)로 fallback한다.
     static func windows(from response: ClaudeUsageResponse) -> [UsageWindow] {
+        // ── 새 형식 우선: limits 배열을 순서대로 매핑 ──
+        if !response.limits.isEmpty {
+            return response.limits.map { limit in
+                let kind: WindowKind = (limit.group == "session") ? .session : .weekly
+                let label: String
+                switch limit.kind {
+                case "session":    label = "Current session"
+                case "weekly_all": label = "Current week (all models)"
+                case "weekly_scoped":
+                    let model = limit.scope?.model?.displayName ?? "scoped"
+                    label = "Current week (\(model))"
+                default:
+                    label = limit.kind
+                }
+                return UsageWindow(label: label,
+                                   usedPercent: limit.percent.clamped(0, 100),
+                                   resetsAt: limit.resetsAt, kind: kind,
+                                   windowSeconds: kind.defaultSeconds)
+            }
+        }
+
+        // ── 구형 fallback (five_hour / seven_day / *fable*) ──
         var out: [UsageWindow] = []
         var consumed: Set<String> = []
 
         func take(_ key: String, label: String, kind: WindowKind) {
-            guard let w = response.windows[key], let util = w.utilization else { return }
+            guard let w = response.windows[key] else { return }
+            // 0% 미사용 창은 utilization이 없을 수 있음 → 0으로 간주해 그대로 노출.
+            let util = w.utilization ?? 0
             out.append(UsageWindow(label: label, usedPercent: util.clamped(0, 100),
                                    resetsAt: w.resetsAt, kind: kind,
                                    windowSeconds: kind.defaultSeconds))

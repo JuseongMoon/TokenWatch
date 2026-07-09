@@ -2,7 +2,8 @@
 //  AgentCardView.swift
 //  TokenWatch
 //
-//  리스트의 한 행: 에이전트 이름 + 원형 게이지들.
+//  리스트의 한 행: 罫선 박스 하나. 타이틀 라인에 provider 태그/이름/계정,
+//  본문에 사용량 게이지들. (누르면 상세로 이동 — NavigationLink는 ContentView가 감쌈)
 //
 
 import SwiftUI
@@ -13,66 +14,78 @@ struct AgentCardView: View {
     let isLoading: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-
-            if let snapshot, let error = snapshot.error {
-                errorRow(error)
-            } else if let snapshot, !snapshot.windows.isEmpty {
-                ringsRow(snapshot.windows)
-            } else if isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 92)
-            } else {
-                Text("사용량 데이터 없음")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 92)
-            }
-        }
-        .padding(16)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: agent.provider.symbolName)
-                .font(.title3)
-                .foregroundStyle(agent.provider.accentColor)
-                .frame(width: 32, height: 32)
-                .background(agent.provider.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(agent.provider.displayName)
-                    .font(.headline)
-                if let label = agent.accountLabel {
-                    Text(label)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            if isLoading {
-                ProgressView().controlSize(.small)
+        TerminalBox(title: titleText, titleColor: agent.provider.terminalColor) {
+            VStack(alignment: .leading, spacing: 12) {
+                content
             }
         }
     }
 
-    private func ringsRow(_ windows: [UsageWindow]) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(windows) { window in
+    /// `[C] CLAUDE · pro` 형태의 박스 타이틀.
+    /// 이메일(@ 포함)은 메인 화면에 노출하지 않는다 — 플랜명 등만 덧붙인다.
+    private var titleText: String {
+        var t = "\(agent.provider.terminalTag) \(agent.provider.displayName.uppercased())"
+        if let label = agent.accountLabel, !label.isEmpty, !label.contains("@") {
+            t += " · \(label)"
+        }
+        return t
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let snapshot, !snapshot.windows.isEmpty {
+            ForEach(snapshot.windows) { window in
                 UsageBar(window: window)
             }
+            if let error = snapshot.error { errorRow(error) }   // last-good 유지 중 에러
+        } else if let error = snapshot?.error {
+            errorRow(error)
+        } else if isLoading {
+            HStack(spacing: 8) {
+                TerminalSpinner(size: 13)
+                Text("querying usage…")
+                    .font(.term(12)).foregroundStyle(Term.dim)
+            }
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        } else {
+            Text("no usage data")
+                .font(.term(12)).foregroundStyle(Term.dim)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
         }
     }
 
     private func errorRow(_ error: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+        HStack(alignment: .top, spacing: 6) {
+            Text("!").font(.term(13, weight: .bold)).foregroundStyle(Term.red)
             Text(error)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .font(.term(11))
+                .foregroundStyle(Term.red.opacity(0.85))
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+#Preview {
+    ScrollView {
+        VStack(spacing: 14) {
+            AgentCardView(
+                agent: Agent(provider: .claude, accountLabel: "pro"),
+                snapshot: AgentSnapshot(
+                    windows: [
+                        UsageWindow(label: "Current session", usedPercent: 34,
+                                    resetsAt: Date().addingTimeInterval(3 * 3600),
+                                    kind: .session, windowSeconds: 5 * 3600),
+                        UsageWindow(label: "Current week (all models)", usedPercent: 88,
+                                    resetsAt: Date().addingTimeInterval(4 * 86400),
+                                    kind: .weekly, windowSeconds: 7 * 86400),
+                    ],
+                    planLabel: "pro", fetchedAt: Date(), error: nil),
+                isLoading: false)
+            AgentCardView(
+                agent: Agent(provider: .codex, accountLabel: "dev@sciencefiction.co.kr"),
+                snapshot: nil, isLoading: true)
+        }
+        .padding(16)
+    }
+    .background(Term.bg)
 }

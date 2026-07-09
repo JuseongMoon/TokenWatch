@@ -39,6 +39,22 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex: return .green
         }
     }
+
+    /// 터미널 카드에서 provider를 나타내는 짧은 텍스트 태그.
+    var terminalTag: String {
+        switch self {
+        case .claude: return "[C]"
+        case .codex:  return "[X]"
+        }
+    }
+
+    /// 터미널 팔레트 기준 provider 구분색(태그/타이틀 강조용).
+    var terminalColor: Color {
+        switch self {
+        case .claude: return Term.yellow
+        case .codex:  return Term.cyan
+        }
+    }
 }
 
 /// 사용자가 추가한 에이전트 항목. 리스트의 한 행에 대응한다.

@@ -11,6 +11,14 @@ import Foundation
 enum WindowKind: Sendable, Hashable {
     case session   // 5시간 창 → "N시간 남음"
     case weekly    // 7일 창 → "N일 N시간 남음"
+
+    /// 기본 창 주기(초). API가 명시적 주기를 주지 않는 Claude에서 사용한다.
+    var defaultSeconds: TimeInterval {
+        switch self {
+        case .session: return 5 * 3600        // 18,000초 (5시간)
+        case .weekly:  return 7 * 24 * 3600   // 604,800초 (7일)
+        }
+    }
 }
 
 /// UI에 표시되는 정규화된 사용량 창 하나.
@@ -19,13 +27,39 @@ struct UsageWindow: Identifiable, Sendable, Hashable {
     let label: String
     /// 0...100
     let usedPercent: Double
-    /// 0...100
-    var remainingPercent: Double { max(0, 100 - usedPercent) }
     /// 리셋 시각(ISO8601 파싱 결과). 없을 수 있다.
     let resetsAt: Date?
     let kind: WindowKind
+    /// 이 창의 전체 주기(초). 시간 경과 마커(노란선) 계산에 사용. 모르면 nil.
+    let windowSeconds: TimeInterval?
 
+    init(label: String, usedPercent: Double, resetsAt: Date?, kind: WindowKind,
+         windowSeconds: TimeInterval? = nil) {
+        self.label = label
+        self.usedPercent = usedPercent
+        self.resetsAt = resetsAt
+        self.kind = kind
+        self.windowSeconds = windowSeconds
+    }
+
+    /// 0...100
+    var remainingPercent: Double { max(0, 100 - usedPercent) }
     var id: String { label }
+
+    /// 주어진 시각 기준, 창 안에서 흐른 시간의 비율(0...1) — "현재 시각" 마커 위치.
+    /// 예) 5시간 창에서 2.5시간 남으면 0.5, 1시간 남으면 0.8.
+    func elapsedFraction(at now: Date = Date()) -> Double? {
+        guard let resetsAt, let windowSeconds, windowSeconds > 0 else { return nil }
+        let remaining = resetsAt.timeIntervalSince(now)
+        let elapsed = windowSeconds - remaining
+        return min(max(elapsed / windowSeconds, 0), 1)
+    }
+
+    /// 사용 속도 편차(%p): (사용률 − 시간경과율)×100. 양수=시간보다 빠름, 음수=여유.
+    func paceDelta(at now: Date = Date()) -> Double? {
+        guard let elapsed = elapsedFraction(at: now) else { return nil }
+        return usedPercent - elapsed * 100
+    }
 }
 
 /// 한 에이전트의 사용량 스냅샷 (성공 또는 실패).
@@ -121,7 +155,8 @@ enum ClaudeUsageMapper {
         func take(_ key: String, label: String, kind: WindowKind) {
             guard let w = response.windows[key], let util = w.utilization else { return }
             out.append(UsageWindow(label: label, usedPercent: util.clamped(0, 100),
-                                   resetsAt: w.resetsAt, kind: kind))
+                                   resetsAt: w.resetsAt, kind: kind,
+                                   windowSeconds: kind.defaultSeconds))
             consumed.insert(key)
         }
 

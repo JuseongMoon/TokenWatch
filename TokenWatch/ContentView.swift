@@ -2,7 +2,8 @@
 //  ContentView.swift
 //  TokenWatch
 //
-//  메인 화면: 추가된 에이전트 리스트 + 하단 추가 셀 + 우측 상단 설정 버튼.
+//  메인 화면(터미널 스타일): 상단 프롬프트 헤더 + 에이전트 카드 리스트 +
+//  하단 추가 셀. 우측 상단 [CFG] 설정 버튼.
 //
 
 import SwiftUI
@@ -19,25 +20,34 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            list
-                .navigationTitle("TokenWatch")
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            showingSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
-                        .accessibilityLabel("설정")
+            ZStack {
+                Term.bg.ignoresSafeArea()
+                list
+            }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Term.bg, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Text("[CFG]")
+                            .font(.term(13, weight: .semibold))
+                            .foregroundStyle(Term.cyan)
                     }
+                    .accessibilityLabel("설정")
                 }
-                .sheet(isPresented: $showingAdd) {
-                    AddAgentSheet().environment(store)
-                }
-                .sheet(isPresented: $showingSettings) {
-                    SettingsSheet().environment(store)
-                }
+            }
+            .sheet(isPresented: $showingAdd) {
+                AddAgentSheet().environment(store)
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsSheet().environment(store)
+            }
         }
+        .tint(Term.green)
         // 씬 라이프사이클: 활성일 때만 자동 새로고침 + 화면 유지.
         .onChange(of: scenePhase, initial: true) { _, phase in
             applyScenePhase(phase)
@@ -61,18 +71,62 @@ struct ContentView: View {
         }
     }
 
+    // MARK: 헤더 (프롬프트 배너)
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 0) {
+                Text("token").foregroundStyle(Term.green)
+                Text("watch").foregroundStyle(Term.cyan)
+                Text("  v\(appVersion)")
+                    .font(.term(11)).foregroundStyle(Term.dim)
+            }
+            .font(.term(21, weight: .bold))
+            .terminalGlow(Term.green, radius: 3)
+
+            HStack(spacing: 6) {
+                Text("$").foregroundStyle(Term.dim)
+                Text(statusLine).foregroundStyle(Term.fg)
+                BlinkingCursor(symbol: "_", color: Term.green, size: 13)
+                Spacer(minLength: 0)
+            }
+            .font(.term(12))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var statusLine: String {
+        let n = store.agents.count
+        return n == 0 ? "no agents connected" : "watching \(n) agent\(n == 1 ? "" : "s")"
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+
+    // MARK: 리스트
+
     private var list: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            LazyVStack(spacing: 14) {
+                header
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
+
                 if store.agents.isEmpty {
                     emptyHint
                 }
                 ForEach(store.agents) { agent in
-                    AgentCardView(
-                        agent: agent,
-                        snapshot: store.snapshots[agent.id],
-                        isLoading: store.loadingIDs.contains(agent.id)
-                    )
+                    NavigationLink {
+                        AgentDetailView(agent: agent).environment(store)
+                    } label: {
+                        AgentCardView(
+                            agent: agent,
+                            snapshot: store.snapshots[agent.id],
+                            isLoading: store.loadingIDs.contains(agent.id)
+                        )
+                    }
+                    .buttonStyle(.plain)
                     .contextMenu {
                         Button("새로고침", systemImage: "arrow.clockwise") {
                             Task { await store.refresh(agent) }
@@ -86,24 +140,26 @@ struct ContentView: View {
             }
             .padding(16)
         }
-        .background(Color(.systemGroupedBackground))
+        .scrollContentBackground(.hidden)
+        .background(Term.bg)
         .refreshable {
             await store.refreshAll()
         }
     }
 
     private var emptyHint: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("아래 버튼을 눌러 AI 에이전트에 로그인하고\n토큰 잔여량을 확인하세요.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("$ tap").foregroundStyle(Term.dim)
+                Text("[+ ADD AGENT]").foregroundStyle(Term.green)
+                Text("below to login").foregroundStyle(Term.dim)
+            }
+            Text("  tokens are stored only on this device")
+                .foregroundStyle(Term.dim.opacity(0.7))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        .font(.term(12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 20)
     }
 }
 

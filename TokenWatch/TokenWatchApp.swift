@@ -15,6 +15,8 @@ struct TokenWatchApp: App {
         WindowGroup {
             ContentView()
                 .environment(store)
+                .preferredColorScheme(.dark)   // 블랙 단일 테마 고정
+                .tint(Term.green)
         }
     }
 }

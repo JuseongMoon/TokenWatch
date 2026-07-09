@@ -6,11 +6,13 @@
 //
 
 import Foundation
+import SwiftUI
 
 /// 지원하는 AI 에이전트 제공자. 지금은 Claude만 있지만, 추후 Codex/Gemini 등을
 /// 같은 방식으로 추가할 수 있도록 enum + 프로토콜 조합으로 확장 여지를 둔다.
 enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     case claude
+    case codex
 
     var id: String { rawValue }
 
@@ -18,6 +20,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .claude: return "Claude"
+        case .codex: return "Codex"
         }
     }
 
@@ -25,6 +28,15 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     var symbolName: String {
         switch self {
         case .claude: return "sparkle"
+        case .codex: return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+
+    /// 브랜드 색상.
+    var accentColor: Color {
+        switch self {
+        case .claude: return .orange
+        case .codex: return .green
         }
     }
 }

@@ -21,6 +21,10 @@ struct OAuthTokens: Codable, Sendable {
     var accountEmail: String?
     /// 구독 플랜/조직 라벨 (이메일이 없을 때 폴백).
     var plan: String?
+    /// OIDC id_token (Codex는 여기서 이메일/플랜/account_id를 파싱). Claude는 미사용.
+    var idToken: String? = nil
+    /// Codex 계정 ID (usage 요청의 ChatGPT-Account-Id 헤더). Claude는 미사용.
+    var accountId: String? = nil
 
     var isExpired: Bool {
         guard let expiresAt else { return false }
@@ -100,6 +104,12 @@ enum ClaudeOAuth {
             if case .refreshFailed(let m) = e { throw OAuthError.exchangeFailed(m) }
             throw e
         }
+    }
+
+    /// 저장된 토큰으로 갱신하는 편의 래퍼(디스패치 레이어에서 사용).
+    static func refresh(tokens: OAuthTokens) async throws -> OAuthTokens {
+        guard let refresh = tokens.refreshToken else { throw OAuthError.notAuthenticated }
+        return try await self.refresh(refresh, scopes: tokens.scopes, previous: tokens)
     }
 
     static func refresh(_ refreshToken: String, scopes: [String], previous: OAuthTokens? = nil) async throws -> OAuthTokens {

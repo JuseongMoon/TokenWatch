@@ -68,7 +68,7 @@ final class AgentStore {
     func refresh(_ agent: Agent) async {
         loadingIDs.insert(agent.id)
         defer { loadingIDs.remove(agent.id) }
-        let snapshot = await ClaudeUsageClient.fetchSnapshot(for: agent.id)
+        let snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id)
 
         // last-good 유지: 이번 결과가 에러 + 빈 windows인데 이전에 표시하던
         // windows가 있으면, 링/바가 사라지지 않도록 이전 windows를 유지하고

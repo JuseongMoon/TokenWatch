@@ -11,6 +11,7 @@ import SwiftUI
 @preconcurrency import WebKit
 
 struct LoginWebView: UIViewRepresentable {
+    let provider: AgentProvider
     let startURL: URL
     /// 콜백에서 (code, state)를 뽑으면 호출.
     let onCode: (String, String) -> Void
@@ -18,7 +19,7 @@ struct LoginWebView: UIViewRepresentable {
     let onError: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onCode: onCode, onError: onError)
+        Coordinator(provider: provider, onCode: onCode, onError: onError)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -32,11 +33,13 @@ struct LoginWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
     final class Coordinator: NSObject, WKNavigationDelegate {
+        let provider: AgentProvider
         let onCode: (String, String) -> Void
         let onError: (String) -> Void
         private var finished = false
 
-        init(onCode: @escaping (String, String) -> Void, onError: @escaping (String) -> Void) {
+        init(provider: AgentProvider, onCode: @escaping (String, String) -> Void, onError: @escaping (String) -> Void) {
+            self.provider = provider
             self.onCode = onCode
             self.onError = onError
         }
@@ -45,7 +48,7 @@ struct LoginWebView: UIViewRepresentable {
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             if let url = navigationAction.request.url,
-               let parsed = ClaudeOAuth.parseCallback(url) {
+               let parsed = ProviderAuth.parseCallback(provider, url) {
                 decisionHandler(.cancel)
                 guard !finished else { return }
                 finished = true

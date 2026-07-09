@@ -38,9 +38,9 @@ struct AgentCardView: View {
         HStack(spacing: 10) {
             Image(systemName: agent.provider.symbolName)
                 .font(.title3)
-                .foregroundStyle(.orange)
+                .foregroundStyle(agent.provider.accentColor)
                 .frame(width: 32, height: 32)
-                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .background(agent.provider.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 1) {
                 Text(agent.provider.displayName)
                     .font(.headline)

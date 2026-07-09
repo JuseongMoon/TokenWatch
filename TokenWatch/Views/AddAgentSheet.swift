@@ -61,7 +61,8 @@ struct AddAgentSheet: View {
                     } label: {
                         HStack {
                             Image(systemName: provider.symbolName)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(provider.accentColor)
+                                .frame(width: 24)
                             Text(provider.displayName)
                             Spacer()
                             Image(systemName: "chevron.right")
@@ -77,7 +78,8 @@ struct AddAgentSheet: View {
 
     private func loginView(_ provider: AgentProvider) -> some View {
         LoginWebView(
-            startURL: ClaudeOAuth.authorizeURL(pkce: pkce),
+            provider: provider,
+            startURL: ProviderAuth.authorizeURL(provider, pkce: pkce),
             onCode: { code, state in
                 phase = .exchanging
                 Task { await exchange(provider: provider, code: code, state: state) }
@@ -105,7 +107,7 @@ struct AddAgentSheet: View {
 
     private func exchange(provider: AgentProvider, code: String, state: String) async {
         do {
-            let tokens = try await ClaudeOAuth.exchange(code: code, state: state, pkce: pkce)
+            let tokens = try await ProviderAuth.exchange(provider, code: code, state: state, pkce: pkce)
             await store.addAgent(provider: provider, tokens: tokens)
             dismiss()
         } catch {
@@ -113,4 +115,8 @@ struct AddAgentSheet: View {
             phase = .failed(msg)
         }
     }
+}
+
+#Preview {
+    AddAgentSheet().environment(AgentStore())
 }

@@ -59,7 +59,7 @@ struct SettingsSheet: View {
                 ForEach(store.agents) { agent in
                     HStack {
                         Image(systemName: agent.provider.symbolName)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(agent.provider.accentColor)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(agent.provider.displayName)
                             if let label = agent.accountLabel {

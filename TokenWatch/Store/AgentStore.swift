@@ -9,6 +9,16 @@
 import Foundation
 import SwiftUI
 
+/// 상세 화면에 표시할 계정 정보(Keychain 토큰에서 추출한 스냅샷).
+struct AccountInfo: Sendable {
+    var email: String?
+    var plan: String?
+    var scopes: [String]
+    var expiresAt: Date?
+    var canRefresh: Bool
+    var accountId: String?
+}
+
 @MainActor
 @Observable
 final class AgentStore {
@@ -53,6 +63,14 @@ final class AgentStore {
         snapshots[agent.id] = nil
         persist()
         Task { await TokenStore.shared.delete(for: agent.id) }
+    }
+
+    /// 상세 화면용: Keychain에 저장된 토큰에서 계정 정보를 읽어온다.
+    func accountInfo(for agent: Agent) async -> AccountInfo? {
+        guard let t = await TokenStore.shared.tokens(for: agent.id) else { return nil }
+        return AccountInfo(email: t.accountEmail, plan: t.plan, scopes: t.scopes,
+                           expiresAt: t.expiresAt, canRefresh: t.refreshToken != nil,
+                           accountId: t.accountId)
     }
 
     // MARK: 수동 새로고침

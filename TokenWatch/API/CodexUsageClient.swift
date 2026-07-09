@@ -99,9 +99,12 @@ private struct CodexUsageResponse: Decodable {
     private func mapped(_ label: String, _ w: CodexWindow) -> UsageWindow? {
         let kind: WindowKind = role(w) == .session ? .session : .weekly
         let resetsAt = (w.reset_at.map { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0)) : nil } ?? nil)
+        // Codex는 창 주기를 명시적으로 주므로 그대로 사용(없으면 종류별 기본값).
+        let seconds = w.limit_window_seconds.map(TimeInterval.init) ?? kind.defaultSeconds
         return UsageWindow(label: label,
                            usedPercent: min(max(w.used_percent, 0), 100),
                            resetsAt: resetsAt,
-                           kind: kind)
+                           kind: kind,
+                           windowSeconds: seconds)
     }
 }

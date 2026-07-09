@@ -9,9 +9,12 @@ import SwiftUI
 
 @main
 struct TokenWatchApp: App {
+    @State private var store = AgentStore()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(store)
         }
     }
 }

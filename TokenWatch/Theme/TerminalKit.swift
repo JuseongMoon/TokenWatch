@@ -38,6 +38,23 @@ struct TerminalBox<Content: View>: View {
     }
 }
 
+/// iOS 26 툴바의 Liquid Glass 공유 배경(알약/원형)을 제거한 툴바 아이템.
+/// 터미널 테마는 텍스트만 노출해야 하므로 `sharedBackgroundVisibility(.hidden)`로 배경을 끈다.
+/// 해당 API는 iOS 26+ 전용이라, 그 이하에서는 일반 `ToolbarItem`과 동일하게 동작한다.
+struct PlainToolbarItem<Content: View>: ToolbarContent {
+    var placement: ToolbarItemPlacement = .automatic
+    @ViewBuilder var content: () -> Content
+
+    var body: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: placement) { content() }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: placement) { content() }
+        }
+    }
+}
+
 /// 프롬프트형 버튼. title에 `[ + ADD ]`, `❯ add agent_` 같은 텍스트를 그대로 전달한다.
 struct TerminalButton: View {
     let title: String

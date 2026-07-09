@@ -33,7 +33,7 @@ struct AddAgentSheet: View {
             .toolbarBackground(Term.bg, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                PlainToolbarItem(placement: .cancellationAction) {
                     Button {
                         dismiss()
                     } label: {
@@ -41,6 +41,7 @@ struct AddAgentSheet: View {
                             .font(.term(13, weight: .semibold))
                             .foregroundStyle(Term.dim)
                     }
+                    .buttonStyle(.plain)   // iOS 26 Liquid Glass 알약 배경 제거 → 터미널 테마 유지
                 }
             }
         }

@@ -40,7 +40,7 @@ struct AgentDetailView: View {
         .toolbarBackground(Term.bg, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            PlainToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task { await store.refresh(agent) }
                 } label: {
@@ -48,6 +48,7 @@ struct AgentDetailView: View {
                         .font(.term(13, weight: .semibold))
                         .foregroundStyle(Term.cyan)
                 }
+                .buttonStyle(.plain)   // iOS 26 Liquid Glass 알약 배경 제거 → 터미널 테마 유지
                 .disabled(isLoading)
                 .accessibilityLabel(loc.a11yRefresh)
             }

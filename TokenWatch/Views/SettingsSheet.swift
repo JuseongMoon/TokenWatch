@@ -57,7 +57,7 @@ struct SettingsSheet: View {
             .toolbarBackground(Term.bg, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                PlainToolbarItem(placement: .confirmationAction) {
                     Button {
                         dismiss()
                     } label: {
@@ -65,6 +65,7 @@ struct SettingsSheet: View {
                             .font(.term(13, weight: .semibold))
                             .foregroundStyle(Term.green)
                     }
+                    .buttonStyle(.plain)   // iOS 26 Liquid Glass 알약 배경 제거 → 터미널 테마 유지
                 }
             }
         }

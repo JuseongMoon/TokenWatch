@@ -3,7 +3,7 @@
 //  TokenWatch
 //
 //  메인 화면(터미널 스타일): 상단 프롬프트 헤더 + 에이전트 카드 리스트 +
-//  하단 추가 셀. 우측 상단 [CFG] 설정 버튼.
+//  하단 추가 셀. 우측 상단 [SETTINGS] 설정 버튼.
 //
 
 import SwiftUI
@@ -25,24 +25,13 @@ struct ContentView: View {
         NavigationStack {
             ZStack {
                 Term.bg.ignoresSafeArea()
-                list
-            }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Term.bg, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Text("[CFG]")
-                            .font(.term(13, weight: .semibold))
-                            .foregroundStyle(Term.cyan)
-                    }
-                    .accessibilityLabel(loc.a11ySettings)
+                VStack(spacing: 0) {
+                    topBar   // 앱 이름·상태 라인·[SETTINGS] 를 최상단에 고정
+                    list     // 아래 리스트만 스크롤
                 }
             }
+            // 시스템 네비바를 숨기고 상단 배너를 직접 고정한다(두 줄 배너를 위해 커스텀 바 사용).
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingAdd) {
                 AddAgentSheet().environment(store)
             }
@@ -74,28 +63,52 @@ struct ContentView: View {
         }
     }
 
-    // MARK: 헤더 (프롬프트 배너)
+    // MARK: 상단 고정 바
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 0) {
-                Text("token").foregroundStyle(Term.green)
-                Text("watch").foregroundStyle(Term.cyan)
-                Text("  v\(appVersion)")
-                    .font(.term(11)).foregroundStyle(Term.dim)
+    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[SETTINGS] 모두 스크롤과 무관하게 고정.
+    private var topBar: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                appNameLine
+                statusPrompt
             }
-            .font(.term(21, weight: .bold))
-            .terminalGlow(Term.green, radius: 3)
-
-            HStack(spacing: 6) {
-                Text("$").foregroundStyle(Term.dim)
-                Text(statusLine).foregroundStyle(Term.fg)
-                BlinkingCursor(symbol: "_", color: Term.green, size: 13)
-                Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            Button {
+                showingSettings = true
+            } label: {
+                Text("[SETTINGS]")
+                    .font(.term(13, weight: .semibold))
+                    .foregroundStyle(Term.cyan)
             }
-            .font(.term(12))
+            .buttonStyle(.plain)
+            .accessibilityLabel(loc.a11ySettings)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(Term.bg)
+    }
+
+    /// 앱 이름 라인 (`tokenwatch v1.0`).
+    private var appNameLine: some View {
+        HStack(spacing: 0) {
+            Text("token").foregroundStyle(Term.green)
+            Text("watch").foregroundStyle(Term.cyan)
+            Text("  v\(appVersion)")
+                .font(.term(11)).foregroundStyle(Term.dim)
+        }
+        .font(.term(19, weight: .bold))
+        .terminalGlow(Term.green, radius: 2)
+    }
+
+    /// 상태 프롬프트 라인 (`$ watching N agents _`).
+    private var statusPrompt: some View {
+        HStack(spacing: 6) {
+            Text("$").foregroundStyle(Term.dim)
+            Text(statusLine).foregroundStyle(Term.fg)
+            BlinkingCursor(symbol: "_", color: Term.green, size: 13)
+        }
+        .font(.term(12))
     }
 
     private var statusLine: String {
@@ -112,10 +125,6 @@ struct ContentView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                header
-                    .padding(.top, 4)
-                    .padding(.bottom, 6)
-
                 if store.agents.isEmpty {
                     emptyHint
                 }

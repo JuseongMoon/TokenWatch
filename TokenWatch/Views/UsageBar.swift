@@ -11,6 +11,9 @@ import SwiftUI
 struct UsageBar: View {
     let window: UsageWindow
 
+    @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    private var loc: L10n { L10n(lang: appLanguage.resolved) }
+
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
 
@@ -38,7 +41,7 @@ struct UsageBar: View {
             }
 
             if window.resetsAt != nil {
-                Text(window.resetSummary())
+                Text(window.resetSummary(loc))
                     .font(.term(10))
                     .foregroundStyle(Term.dim)
             }

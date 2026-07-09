@@ -39,10 +39,11 @@ enum OAuthError: LocalizedError {
     case notAuthenticated
 
     var errorDescription: String? {
+        let loc = L10n(lang: currentLang())
         switch self {
-        case .exchangeFailed(let m): return "토큰 교환 실패: \(m)"
-        case .refreshFailed(let m): return "토큰 갱신 실패: \(m)"
-        case .notAuthenticated: return "로그인이 필요합니다."
+        case .exchangeFailed(let m): return loc.errTokenExchange(m)
+        case .refreshFailed(let m): return loc.errTokenRefresh(m)
+        case .notAuthenticated: return loc.errNotAuthenticated
         }
     }
 }
@@ -170,7 +171,7 @@ enum ClaudeOAuth {
         do {
             return try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {
-            throw OAuthError.refreshFailed("응답 파싱 실패: \(error.localizedDescription)")
+            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription))
         }
     }
 

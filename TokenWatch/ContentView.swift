@@ -14,6 +14,9 @@ struct ContentView: View {
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
+    @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+
+    private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     @State private var showingAdd = false
     @State private var showingSettings = false
@@ -37,7 +40,7 @@ struct ContentView: View {
                             .font(.term(13, weight: .semibold))
                             .foregroundStyle(Term.cyan)
                     }
-                    .accessibilityLabel("설정")
+                    .accessibilityLabel(loc.a11ySettings)
                 }
             }
             .sheet(isPresented: $showingAdd) {
@@ -128,10 +131,10 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button("새로고침", systemImage: "arrow.clockwise") {
+                        Button(loc.menuRefresh, systemImage: "arrow.clockwise") {
                             Task { await store.refresh(agent) }
                         }
-                        Button("삭제", systemImage: "trash", role: .destructive) {
+                        Button(loc.menuDelete, systemImage: "trash", role: .destructive) {
                             store.remove(agent)
                         }
                     }

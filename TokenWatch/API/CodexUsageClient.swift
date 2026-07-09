@@ -80,7 +80,7 @@ private struct CodexUsageResponse: Decodable {
 
         for extra in additional_rate_limits ?? [] {
             guard let w = extra.rate_limit?.primary_window ?? extra.rate_limit?.secondary_window else { continue }
-            let label = extra.limit_name ?? extra.metered_feature ?? "추가 한도"
+            let label = extra.limit_name ?? extra.metered_feature ?? L10n(lang: currentLang()).codexAdditionalLimit
             guard !seen.contains(label), let win = mapped(label, w) else { continue }
             out.append(win); seen.insert(label)
         }

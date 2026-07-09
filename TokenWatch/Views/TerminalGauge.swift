@@ -23,6 +23,9 @@ struct TerminalGauge: View {
     /// 양 끝 대괄호 폰트 크기.
     var bracketSize: CGFloat = 13
 
+    @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    private var loc: L10n { L10n(lang: appLanguage.resolved) }
+
     private var used: Double { min(1, max(0, usedFraction)) }
     private var elapsed: Double? { elapsedFraction.map { min(1, max(0, $0)) } }
 
@@ -33,7 +36,7 @@ struct TerminalGauge: View {
             Text("]").font(.term(bracketSize)).foregroundStyle(Term.dim)
         }
         .accessibilityElement()
-        .accessibilityLabel("\(Int((used * 100).rounded()))% 사용")
+        .accessibilityLabel(loc.a11yUsed(Int((used * 100).rounded())))
     }
 
     private var bar: some View {

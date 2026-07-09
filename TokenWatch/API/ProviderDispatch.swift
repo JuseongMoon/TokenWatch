@@ -18,12 +18,13 @@ enum UsageError: Error, LocalizedError {
     case noWindows
 
     var errorDescription: String? {
+        let loc = L10n(lang: currentLang())
         switch self {
-        case .unauthorized: return "인증이 만료되었습니다. 다시 로그인해 주세요."
-        case .rateLimited: return "요청이 많아 잠시 대기 중입니다."
-        case .http(let code, _): return "사용량 조회 실패 (HTTP \(code))."
-        case .decode(let m): return "응답 해석 실패: \(m)"
-        case .noWindows: return "표시할 사용량 창이 없습니다."
+        case .unauthorized: return loc.errAuthExpired
+        case .rateLimited: return loc.errRateLimited
+        case .http(let code, _): return loc.errHTTP(code)
+        case .decode(let m): return loc.errDecode(m)
+        case .noWindows: return loc.errNoWindows
         }
     }
 }
@@ -88,7 +89,7 @@ enum ProviderUsage {
             if let cached = await RateLimitGate.shared.lastGood(for: agentID) { return cached }
             let mins = max(1, Int(until.timeIntervalSinceNow) / 60 + 1)
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
-                                 error: "요청이 많아 잠시 대기 중입니다. 약 \(mins)분 후 재시도합니다.")
+                                 error: L10n(lang: currentLang()).errRateLimitedRetry(mins))
         }
 
         do {
@@ -108,7 +109,7 @@ enum ProviderUsage {
             await RateLimitGate.shared.recordRateLimit(for: agentID, retryAfter: retryAfter)
             if let cached = await RateLimitGate.shared.lastGood(for: agentID) { return cached }
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
-                                 error: "요청이 많아 잠시 대기 중입니다.")
+                                 error: L10n(lang: currentLang()).errRateLimited)
         } catch {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)

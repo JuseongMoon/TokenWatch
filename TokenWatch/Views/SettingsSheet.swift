@@ -33,6 +33,9 @@ struct SettingsSheet: View {
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
+    @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+
+    private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     var body: some View {
         NavigationStack {
@@ -41,6 +44,7 @@ struct SettingsSheet: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         accountSection
+                        languageSection
                         refreshSection
                         screenSection
                         infoSection
@@ -102,6 +106,35 @@ struct SettingsSheet: View {
         }
     }
 
+    // MARK: 언어 (세그먼트)
+
+    private var languageSection: some View {
+        TerminalBox(title: "LANGUAGE") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 0) {
+                    ForEach(AppLanguage.allCases) { opt in
+                        let selected = appLanguage == opt
+                        Button {
+                            appLanguage = opt
+                        } label: {
+                            Text(opt.segmentLabel)
+                                .font(.term(13, weight: selected ? .bold : .regular))
+                                .foregroundStyle(selected ? Term.green : Term.dim)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 9)
+                                .background(selected ? Term.green.opacity(0.14) : Color.clear)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+
+                Text(loc.settingsLanguageHelp)
+                    .font(.term(10)).foregroundStyle(Term.dim)
+            }
+        }
+    }
+
     // MARK: 새로고침 (세그먼트)
 
     private var refreshSection: some View {
@@ -125,7 +158,7 @@ struct SettingsSheet: View {
                 }
                 .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
 
-                Text("화면이 켜져 있을 때만 갱신. 너무 짧으면 429 제한에 걸릴 수 있습니다.")
+                Text(loc.settingsRefreshHelp)
                     .font(.term(10)).foregroundStyle(Term.dim)
             }
         }
@@ -149,7 +182,7 @@ struct SettingsSheet: View {
                 }
                 .buttonStyle(.plain)
 
-                Text("켜면 앱을 보는 동안 화면이 꺼지지 않습니다.")
+                Text(loc.settingsScreenHelp)
                     .font(.term(10)).foregroundStyle(Term.dim)
             }
         }

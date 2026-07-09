@@ -14,6 +14,9 @@ struct AgentDetailView: View {
     @Environment(AgentStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    private var loc: L10n { L10n(lang: appLanguage.resolved) }
+
     @State private var account: AccountInfo?
     @State private var showLogoutConfirm = false
 
@@ -46,19 +49,19 @@ struct AgentDetailView: View {
                         .foregroundStyle(Term.cyan)
                 }
                 .disabled(isLoading)
-                .accessibilityLabel("새로고침")
+                .accessibilityLabel(loc.a11yRefresh)
             }
         }
         .task { account = await store.accountInfo(for: agent) }
         .refreshable { await store.refresh(agent) }
-        .confirmationDialog("로그아웃하시겠어요?", isPresented: $showLogoutConfirm, titleVisibility: .visible) {
-            Button("로그아웃", role: .destructive) {
+        .confirmationDialog(loc.logoutConfirmTitle, isPresented: $showLogoutConfirm, titleVisibility: .visible) {
+            Button(loc.logout, role: .destructive) {
                 store.remove(agent)
                 dismiss()
             }
-            Button("취소", role: .cancel) {}
+            Button(loc.cancel, role: .cancel) {}
         } message: {
-            Text("\(agent.provider.displayName) 계정의 저장된 토큰이 이 기기에서 삭제됩니다.")
+            Text(loc.logoutMessage(provider: agent.provider.displayName))
         }
     }
 
@@ -92,7 +95,7 @@ struct AgentDetailView: View {
 
     private var emailText: String {
         if let email = account?.email, !email.isEmpty { return email }
-        return account == nil ? "확인 중…" : "정보 없음"
+        return account == nil ? loc.checking : loc.unavailable
     }
 
     // MARK: USAGE
@@ -105,7 +108,7 @@ struct AgentDetailView: View {
                     legend
                     ForEach(Array(snapshot.windows.enumerated()), id: \.element.id) { index, window in
                         if index > 0 { hDivider }
-                        DetailUsageRow(window: window)
+                        DetailUsageRow(window: window, loc: loc)
                     }
                     if let error = snapshot.error { errorRow(error) }
                 } else if let error = snapshot?.error {
@@ -140,7 +143,7 @@ struct AgentDetailView: View {
                 .fill(Color.white)
                 .frame(width: 2, height: 12)
                 .overlay(Rectangle().stroke(Color.black.opacity(0.45), lineWidth: 0.5))
-            Text("= 현재 시각 · 채움이 이 선보다 앞서면 시간보다 빠른 소비")
+            Text(loc.usageLegend)
                 .font(.term(10)).foregroundStyle(Term.dim)
             Spacer(minLength: 0)
         }
@@ -186,17 +189,11 @@ struct AgentDetailView: View {
     }
 
     private func relativeString(_ date: Date) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.unitsStyle = .short
-        return f.localizedString(for: date, relativeTo: Date())
+        loc.relativeTime(date)
     }
 
     private func absoluteString(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "M월 d일 a h:mm"
-        return f.string(from: date)
+        loc.absoluteDateTime(date)
     }
 }
 
@@ -205,6 +202,7 @@ struct AgentDetailView: View {
 /// 상세 화면의 창 1개: 라벨 + 큰 게이지 + 잔여/리셋/페이스/소진예상.
 private struct DetailUsageRow: View {
     let window: UsageWindow
+    let loc: L10n
 
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
@@ -245,8 +243,8 @@ private struct DetailUsageRow: View {
     }
 
     private func resetText(now: Date) -> String? {
-        guard let exact = window.resetExactText else { return nil }
-        if let remain = window.resetRemainingText(at: now) {
+        guard let exact = window.resetExactText(loc) else { return nil }
+        if let remain = window.resetRemainingText(loc, at: now) {
             return "\(exact) · \(remain)"
         }
         return exact
@@ -257,11 +255,11 @@ private struct DetailUsageRow: View {
         guard let delta = window.paceDelta(at: now) else { return nil }
         let mag = Int(abs(delta).rounded())
         if delta >= 3 {
-            return ("↑ 시간 대비 \(mag)%p 빠름", Term.yellow)
+            return (loc.paceAhead(mag), Term.yellow)
         } else if delta <= -3 {
-            return ("↓ 시간 대비 \(mag)%p 여유", Term.green)
+            return (loc.paceUnder(mag), Term.green)
         } else {
-            return ("≈ 시간과 비슷한 속도", Term.dim)
+            return (loc.paceEven, Term.dim)
         }
     }
 
@@ -281,11 +279,8 @@ private struct DetailUsageRow: View {
         guard projectedFull < resetsAt else { return nil }
         let c = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: projectedFull)
         let d = max(0, c.day ?? 0), h = max(0, c.hour ?? 0), m = max(0, c.minute ?? 0)
-        let when: String
-        if d > 0 { when = "약 \(d)일 \(h)시간 후" }
-        else if h > 0 { when = "약 \(h)시간 \(m)분 후" }
-        else { when = "약 \(max(1, m))분 후" }
-        return "이 속도면 리셋 전 소진 예상 (\(when))"
+        let when = loc.depletionETA(days: d, hours: h, minutes: m)
+        return loc.depletionWarning(when)
     }
 }
 
@@ -293,10 +288,12 @@ private struct DetailUsageRow: View {
     VStack(alignment: .leading, spacing: 14) {
         DetailUsageRow(window: UsageWindow(label: "Current session", usedPercent: 70,
                                            resetsAt: Date().addingTimeInterval(3 * 3600),
-                                           kind: .session, windowSeconds: 5 * 3600))
+                                           kind: .session, windowSeconds: 5 * 3600),
+                       loc: L10n(lang: .en))
         DetailUsageRow(window: UsageWindow(label: "Current week (all models)", usedPercent: 12,
                                            resetsAt: Date().addingTimeInterval(2 * 86400),
-                                           kind: .weekly, windowSeconds: 7 * 86400))
+                                           kind: .weekly, windowSeconds: 7 * 86400),
+                       loc: L10n(lang: .en))
     }
     .padding()
     .background(Term.bg)

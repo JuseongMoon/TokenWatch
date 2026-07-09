@@ -125,7 +125,7 @@ enum CodexOAuth {
         do {
             return try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {
-            throw OAuthError.exchangeFailed("응답 파싱 실패: \(error.localizedDescription)")
+            throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errParse(error.localizedDescription))
         }
     }
 

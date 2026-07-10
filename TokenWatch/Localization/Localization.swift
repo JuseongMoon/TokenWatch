@@ -183,9 +183,34 @@ struct L10n: Sendable {
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
+    /// 아직 구현되지 않은 인증 방식(sessionCapture)을 고른 경우.
+    var errAuthMethodUnavailable: String {
+        lang == .ko ? "이 로그인 방식은 곧 지원됩니다." : "This sign-in method is coming soon."
+    }
+
+    // MARK: 디바이스 플로우(GitHub Copilot 등)
+    var deviceFlowRequesting: String { lang == .ko ? "코드 요청 중…" : "requesting code…" }
+    var deviceFlowPrompt: String {
+        lang == .ko ? "브라우저에서 아래 코드를 입력해 인증하세요."
+                    : "Enter this code in your browser to authorize."
+    }
+    var deviceFlowOpen: String { lang == .ko ? "[ 브라우저 열기 ↗ ]" : "[ open browser ↗ ]" }
+    var deviceFlowWaiting: String { lang == .ko ? "인증 대기 중…" : "waiting for authorization…" }
+    var deviceFlowExpired: String {
+        lang == .ko ? "코드가 만료되었습니다. 다시 시도해 주세요." : "The code expired. Please try again."
+    }
+    var deviceFlowDenied: String { lang == .ko ? "인증이 거부되었습니다." : "Authorization was denied." }
 
     // MARK: Codex 사용량 라벨
     var codexAdditionalLimit: String { lang == .ko ? "추가 한도" : "Additional limit" }
+
+    // MARK: 사용량 성격(UsageCategory) — 구독 잔여 vs 개발자 API 크레딧
+    func usageCategoryLabel(_ category: UsageCategory) -> String {
+        switch category {
+        case .subscription: return lang == .ko ? "구독 사용량" : "subscription"
+        case .apiCredit:    return lang == .ko ? "API 크레딧" : "API credit"
+        }
+    }
 
     // MARK: 날짜/시간 포맷
     var dateLocale: Locale { Locale(identifier: lang == .ko ? "ko_KR" : "en_US") }

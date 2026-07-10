@@ -17,6 +17,11 @@ enum Term {
     static let green  = Color(red: 0.30, green: 0.82, blue: 0.48)     // #4CD07A 정상/프롬프트/커서
     static let yellow = Color(red: 0.90, green: 0.76, blue: 0.30)     // #E6C34D 주의/현재시각 마커
     static let red    = Color(red: 0.94, green: 0.34, blue: 0.30)     // #F0574C 위험/에러
+    static let orange = Color(red: 0.95, green: 0.58, blue: 0.30)     // #F2944D provider 구분색
+    static let magenta = Color(red: 0.80, green: 0.52, blue: 0.90)    // #CC85E6 provider 구분색
+    static let blue   = Color(red: 0.40, green: 0.62, blue: 0.95)     // #669EF2 provider 구분색
+    static let pink   = Color(red: 0.95, green: 0.45, blue: 0.65)     // #F273A6 provider 구분색
+    static let teal   = Color(red: 0.30, green: 0.78, blue: 0.70)     // #4CC7B3 provider 구분색
     static let track  = Color(red: 0.14, green: 0.17, blue: 0.13)     // 게이지 빈 칸 배경(거의 안 씀)
 
     /// 잔여율(0...100) 기준 상태색. 게이지 채움·수치 색을 통일한다.

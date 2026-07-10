@@ -187,6 +187,7 @@ struct AgentDetailView: View {
                     KVRow(key: "updated", value: relativeString(snapshot.fetchedAt), keyWidth: 96)
                 }
                 KVRow(key: "provider", value: agent.provider.displayName, keyWidth: 96)
+                KVRow(key: "type", value: loc.usageCategoryLabel(agent.provider.usageCategory), keyWidth: 96)
                 if let account, !account.canRefresh, let exp = account.expiresAt {
                     KVRow(key: "re-login", value: absoluteString(exp),
                           valueColor: Term.yellow, keyWidth: 96)
@@ -237,6 +238,31 @@ private struct DetailUsageRow: View {
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
 
     var body: some View {
+        if window.style == .balance {
+            balanceBody
+        } else {
+            gaugeBody
+        }
+    }
+
+    // 잔액 스타일(한도 없는 선불 크레딧).
+    private var balanceBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(window.label.uppercased())
+                .font(.term(12, weight: .semibold)).foregroundStyle(Term.cyan)
+            HStack(spacing: 6) {
+                Text("▸").foregroundStyle(Term.dim)
+                Text(window.valueText ?? "—")
+                    .font(.term(20, weight: .bold)).foregroundStyle(Term.green)
+                Spacer(minLength: 0)
+            }
+            if window.resetsAt != nil {
+                KVRow(key: "reset", value: window.resetSummary(loc), keyWidth: 84)
+            }
+        }
+    }
+
+    private var gaugeBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(window.label.uppercased())

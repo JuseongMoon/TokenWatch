@@ -64,6 +64,7 @@ struct SettingsSheet: View {
                         Text("[done]")
                             .font(.term(13, weight: .semibold))
                             .foregroundStyle(Term.green)
+                            .fixedSize()   // 좁은 툴바 폭에서 마지막 ']'만 줄바꿈되는 것 방지
                     }
                     .buttonStyle(.plain)   // iOS 26 Liquid Glass 알약 배경 제거 → 터미널 테마 유지
                 }

@@ -81,6 +81,7 @@ struct L10n: Sendable {
     }
 
     // MARK: 상세(AgentDetailView)
+    var a11yBack: String           { lang == .ko ? "뒤로" : "Back" }
     var logoutConfirmTitle: String { lang == .ko ? "로그아웃하시겠어요?" : "Log out?" }
     var logout: String             { lang == .ko ? "로그아웃" : "Log out" }
     var cancel: String             { lang == .ko ? "취소" : "Cancel" }

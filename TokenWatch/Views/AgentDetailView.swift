@@ -39,14 +39,28 @@ struct AgentDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Term.bg, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)   // 시스템 back 버튼(Liquid Glass) 대신 터미널 스타일 사용
         .toolbar {
+            PlainToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Text("[back]")
+                        .font(.term(13, weight: .semibold))
+                        .foregroundStyle(Term.green)
+                        .fixedSize()
+                }
+                .buttonStyle(.plain)   // iOS 26 Liquid Glass 알약 배경 제거 → 터미널 테마 유지
+                .accessibilityLabel(loc.a11yBack)
+            }
             PlainToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task { await store.refresh(agent) }
                 } label: {
-                    Text(isLoading ? "[··]" : "[↻]")
+                    Text("[refresh]")
                         .font(.term(13, weight: .semibold))
-                        .foregroundStyle(Term.cyan)
+                        .foregroundStyle(Term.cyan.opacity(isLoading ? 0.4 : 1))
+                        .fixedSize()
                 }
                 .buttonStyle(.plain)   // iOS 26 Liquid Glass 알약 배경 제거 → 터미널 테마 유지
                 .disabled(isLoading)

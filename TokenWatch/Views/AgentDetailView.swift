@@ -15,6 +15,7 @@ struct AgentDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     @State private var account: AccountInfo?
@@ -115,15 +116,28 @@ struct AgentDetailView: View {
 
     // MARK: USAGE
 
+    /// "미사용 창 숨김" 설정이 켜져 있으면 사용률 0% 게이지 창을 제외한다.
+    private func visibleWindows(_ windows: [UsageWindow]) -> [UsageWindow] {
+        hideUnusedWindows ? windows.filter { !$0.isUnused } : windows
+    }
+
     private var usageCard: some View {
         TerminalBox(title: "USAGE") {
             VStack(alignment: .leading, spacing: 12) {
                 if let snapshot, !snapshot.windows.isEmpty {
+                    let windows = visibleWindows(snapshot.windows)
                     if isLoading { refreshingLine }
-                    legend
-                    ForEach(Array(snapshot.windows.enumerated()), id: \.element.id) { index, window in
-                        if index > 0 { hDivider }
-                        DetailUsageRow(window: window, loc: loc)
+                    if windows.isEmpty {
+                        // 모든 창이 미사용(0%)이라 숨겨진 경우 — 안내 문구.
+                        Text(loc.usageAllUnusedHidden)
+                            .font(.term(12)).foregroundStyle(Term.dim)
+                            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                    } else {
+                        legend
+                        ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
+                            if index > 0 { hDivider }
+                            DetailUsageRow(window: window, loc: loc)
+                        }
                     }
                     if let error = snapshot.error { errorRow(error) }
                 } else if let error = snapshot?.error {

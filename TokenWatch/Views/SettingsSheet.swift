@@ -33,6 +33,7 @@ struct SettingsSheet: View {
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
+    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -46,6 +47,7 @@ struct SettingsSheet: View {
                         accountSection
                         languageSection
                         refreshSection
+                        displaySection
                         screenSection
                         infoSection
                     }
@@ -161,6 +163,30 @@ struct SettingsSheet: View {
                 .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
 
                 Text(loc.settingsRefreshHelp)
+                    .font(.term(10)).foregroundStyle(Term.dim)
+            }
+        }
+    }
+
+    // MARK: 표시 (체크박스)
+
+    private var displaySection: some View {
+        TerminalBox(title: "DISPLAY") {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    hideUnusedWindows.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(hideUnusedWindows ? "[x]" : "[ ]")
+                            .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
+                        Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
+                        Spacer()
+                    }
+                    .font(.term(14))
+                }
+                .buttonStyle(.plain)
+
+                Text(loc.settingsHideUnusedHelp)
                     .font(.term(10)).foregroundStyle(Term.dim)
             }
         }

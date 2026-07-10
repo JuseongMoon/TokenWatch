@@ -75,6 +75,10 @@ struct L10n: Sendable {
         lang == .ko ? "켜면 앱을 보는 동안 화면이 꺼지지 않습니다."
                     : "When on, the screen stays awake while you view the app."
     }
+    var settingsHideUnusedHelp: String {
+        lang == .ko ? "사용률이 0%인(전혀 쓰지 않은) 그래프를 목록·상세에서 숨깁니다."
+                    : "Hides usage graphs sitting at 0% from the list and detail."
+    }
     var settingsLanguageHelp: String {
         lang == .ko ? "시스템 언어를 따르거나 직접 선택합니다."
                     : "Follow the system language or pick one manually."
@@ -94,6 +98,10 @@ struct L10n: Sendable {
     var usageLegend: String {
         lang == .ko ? "= 현재 시각 · 채움이 이 선보다 앞서면 시간보다 빠른 소비"
                     : "= current time · fill past this line means faster-than-time usage"
+    }
+    /// "미사용 창 숨김" 설정으로 모든 창이 숨겨졌을 때의 안내(카드·상세 공용).
+    var usageAllUnusedHidden: String {
+        lang == .ko ? "미사용(0%) 창은 숨김" : "unused (0%) windows hidden"
     }
 
     func paceAhead(_ p: Int) -> String { lang == .ko ? "↑ 시간 대비 \(p)%p 빠름" : "↑ \(p)%p ahead of pace" }

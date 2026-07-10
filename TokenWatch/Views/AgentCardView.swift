@@ -13,6 +13,10 @@ struct AgentCardView: View {
     let snapshot: AgentSnapshot?
     let isLoading: Bool
 
+    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    private var loc: L10n { L10n(lang: appLanguage.resolved) }
+
     var body: some View {
         TerminalBox(title: titleText, titleColor: agent.provider.terminalColor) {
             VStack(alignment: .leading, spacing: 12) {
@@ -31,11 +35,24 @@ struct AgentCardView: View {
         return t
     }
 
+    /// "미사용 창 숨김" 설정이 켜져 있으면 사용률 0% 게이지 창을 제외한다.
+    private func visibleWindows(_ windows: [UsageWindow]) -> [UsageWindow] {
+        hideUnusedWindows ? windows.filter { !$0.isUnused } : windows
+    }
+
     @ViewBuilder
     private var content: some View {
         if let snapshot, !snapshot.windows.isEmpty {
-            ForEach(snapshot.windows) { window in
-                UsageBar(window: window)
+            let windows = visibleWindows(snapshot.windows)
+            if windows.isEmpty {
+                // 모든 창이 미사용(0%)이라 숨겨진 경우 — 카드가 비지 않도록 안내.
+                Text(loc.usageAllUnusedHidden)
+                    .font(.term(12)).foregroundStyle(Term.dim)
+                    .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            } else {
+                ForEach(windows) { window in
+                    UsageBar(window: window)
+                }
             }
             if let error = snapshot.error { errorRow(error) }   // last-good 유지 중 에러
         } else if let error = snapshot?.error {

@@ -21,6 +21,14 @@ enum WindowKind: Sendable, Hashable {
     }
 }
 
+/// 창 표시 방식.
+/// - gauge: 사용률(0~100%) 게이지. 한도가 있는 구독/쿼터형(Claude/Codex/Copilot 등).
+/// - balance: 절대 잔액 텍스트(예: "6.50 USD", "1.2M pts"). 한도 없는 선불 크레딧형.
+enum UsageStyle: Sendable, Hashable {
+    case gauge
+    case balance
+}
+
 /// UI에 표시되는 정규화된 사용량 창 하나.
 /// (예: "Current session" 15% used → remainingPercent 85)
 struct UsageWindow: Identifiable, Sendable, Hashable {
@@ -32,19 +40,30 @@ struct UsageWindow: Identifiable, Sendable, Hashable {
     let kind: WindowKind
     /// 이 창의 전체 주기(초). 시간 경과 마커(노란선) 계산에 사용. 모르면 nil.
     let windowSeconds: TimeInterval?
+    /// 표시 방식(게이지 vs 잔액 텍스트).
+    let style: UsageStyle
+    /// balance 스타일에서 표시할 절대값 문자열(예: "6.50 USD"). gauge에선 미사용.
+    let valueText: String?
 
     init(label: String, usedPercent: Double, resetsAt: Date?, kind: WindowKind,
-         windowSeconds: TimeInterval? = nil) {
+         windowSeconds: TimeInterval? = nil, style: UsageStyle = .gauge,
+         valueText: String? = nil) {
         self.label = label
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
         self.kind = kind
         self.windowSeconds = windowSeconds
+        self.style = style
+        self.valueText = valueText
     }
 
     /// 0...100
     var remainingPercent: Double { max(0, 100 - usedPercent) }
     var id: String { label }
+
+    /// 전혀 쓰지 않은(사용률 0%) 게이지 창인지. "미사용 창 숨김" 설정의 판정 기준.
+    /// 잔액(balance) 스타일은 "0% 그래프" 개념이 없으므로 항상 false(숨기지 않음).
+    var isUnused: Bool { style == .gauge && usedPercent <= 0 }
 
     /// 주어진 시각 기준, 창 안에서 흐른 시간의 비율(0...1) — "현재 시각" 마커 위치.
     /// 예) 5시간 창에서 2.5시간 남으면 0.5, 1시간 남으면 0.8.

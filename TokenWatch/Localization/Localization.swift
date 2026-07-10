@@ -65,6 +65,8 @@ struct L10n: Sendable {
     var a11yRefresh: String  { lang == .ko ? "새로고침" : "Refresh" }
     var menuRefresh: String  { lang == .ko ? "새로고침" : "Refresh" }
     var menuDelete: String   { lang == .ko ? "삭제" : "Delete" }
+    var a11yMoveUp: String   { lang == .ko ? "위로 이동" : "Move up" }
+    var a11yMoveDown: String { lang == .ko ? "아래로 이동" : "Move down" }
 
     // MARK: 설정(SettingsSheet)
     var settingsRefreshHelp: String {

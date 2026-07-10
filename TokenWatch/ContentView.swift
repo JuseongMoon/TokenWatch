@@ -128,24 +128,29 @@ struct ContentView: View {
                 if store.agents.isEmpty {
                     emptyHint
                 }
-                ForEach(store.agents) { agent in
-                    NavigationLink {
-                        AgentDetailView(agent: agent).environment(store)
-                    } label: {
-                        AgentCardView(
-                            agent: agent,
-                            snapshot: store.snapshots[agent.id],
-                            isLoading: store.loadingIDs.contains(agent.id)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button(loc.menuRefresh, systemImage: "arrow.clockwise") {
-                            Task { await store.refresh(agent) }
+                ForEach(Array(store.agents.enumerated()), id: \.element.id) { index, agent in
+                    ZStack(alignment: .topTrailing) {
+                        NavigationLink {
+                            AgentDetailView(agent: agent).environment(store)
+                        } label: {
+                            AgentCardView(
+                                agent: agent,
+                                snapshot: store.snapshots[agent.id],
+                                isLoading: store.loadingIDs.contains(agent.id)
+                            )
                         }
-                        Button(loc.menuDelete, systemImage: "trash", role: .destructive) {
-                            store.remove(agent)
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(loc.menuRefresh, systemImage: "arrow.clockwise") {
+                                Task { await store.refresh(agent) }
+                            }
+                            Button(loc.menuDelete, systemImage: "trash", role: .destructive) {
+                                store.remove(agent)
+                            }
                         }
+
+                        // 카드 위에 겹쳐 놓는 순서 변경 화살표(NavigationLink와 별도 레이어라 탭 충돌 없음).
+                        reorderControls(agent: agent, index: index)
                     }
                 }
                 AddAgentCell { showingAdd = true }
@@ -157,6 +162,41 @@ struct ContentView: View {
         .refreshable {
             await store.refreshAll()
         }
+    }
+
+    // MARK: 순서 변경 화살표
+
+    /// 카드 우상단에 겹쳐 놓는 정렬 컨트롤(왼쪽 ▲ 위로 / 오른쪽 ▼ 아래로).
+    /// 배경색을 깔아 타이틀 위에 떠도 가독성을 유지하고, 경계 항목은 해당 화살표를 흐리게 비활성한다.
+    private func reorderControls(agent: Agent, index: Int) -> some View {
+        HStack(spacing: 2) {
+            reorderArrow("▲", disabled: index == 0, label: loc.a11yMoveUp) {
+                store.moveUp(agent)
+            }
+            reorderArrow("▼", disabled: index == store.agents.count - 1, label: loc.a11yMoveDown) {
+                store.moveDown(agent)
+            }
+        }
+        .padding(4)
+        .background(Term.bg)
+        .padding(.top, 7)
+        .padding(.trailing, 8)
+    }
+
+    private func reorderArrow(_ glyph: String, disabled: Bool, label: String,
+                              action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.22)) { action() }
+        } label: {
+            Text(glyph)
+                .font(.term(11))
+                .foregroundStyle(disabled ? Term.dim.opacity(0.3) : Term.green)
+                .frame(width: 26, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .accessibilityLabel(label)
     }
 
     private var emptyHint: some View {

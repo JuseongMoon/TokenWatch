@@ -65,6 +65,22 @@ final class AgentStore {
         Task { await TokenStore.shared.delete(for: agent.id) }
     }
 
+    // MARK: 정렬(순서 변경)
+
+    /// 리스트에서 에이전트를 한 칸 위로 이동. 최상단이면 아무 것도 하지 않는다.
+    func moveUp(_ agent: Agent) { reorder(agent, by: -1) }
+
+    /// 리스트에서 에이전트를 한 칸 아래로 이동. 최하단이면 아무 것도 하지 않는다.
+    func moveDown(_ agent: Agent) { reorder(agent, by: 1) }
+
+    /// 화살표로 지정한 새 순서를 반영하고 영속화한다. 경계를 벗어나면 무시.
+    private func reorder(_ agent: Agent, by offset: Int) {
+        let next = agents.reordered(movingID: agent.id, by: offset)
+        guard next.map(\.id) != agents.map(\.id) else { return }
+        agents = next
+        persist()
+    }
+
     /// 상세 화면용: Keychain에 저장된 토큰에서 계정 정보를 읽어온다.
     func accountInfo(for agent: Agent) async -> AccountInfo? {
         guard let t = await TokenStore.shared.tokens(for: agent.id) else { return nil }
@@ -130,5 +146,19 @@ final class AgentStore {
     func stopAutoRefresh() {
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
+    }
+}
+
+extension Array where Element: Identifiable {
+    /// `id`에 해당하는 원소를 `offset`칸(위로 -1 / 아래로 +1) 옮긴 새 배열을 돌려준다.
+    /// 원소가 없거나 이동 위치가 배열 범위를 벗어나면 원본을 그대로 돌려준다.
+    /// (AgentStore의 순서 변경과 그 단위 테스트가 공유하는 순수 로직.)
+    func reordered(movingID id: Element.ID, by offset: Int) -> [Element] {
+        guard let from = firstIndex(where: { $0.id == id }) else { return self }
+        let to = from + offset
+        guard indices.contains(to) else { return self }
+        var copy = self
+        copy.swapAt(from, to)
+        return copy
     }
 }

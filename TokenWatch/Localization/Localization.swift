@@ -90,6 +90,14 @@ struct L10n: Sendable {
         lang == .ko ? "'$ watching …' 뒤 커서를 언더바 대신 하트로 표시합니다."
                     : "Shows a heart instead of the underscore cursor after '$ watching …'."
     }
+    var settingsHeartbeatModeHelp: String {
+        lang == .ko ? "usage를 고르면 선택한 그래프의 잔여량을 하트 5칸으로 표시합니다(10%당 반 칸)."
+                    : "With usage, the selected graph's remaining amount shows as 5 hearts (half a heart per 10%)."
+    }
+    var settingsHeartbeatNoGraphs: String {
+        lang == .ko ? "추적할 그래프가 없습니다. 먼저 게이지형 에이전트를 추가하세요."
+                    : "No graphs to track. Add a gauge-based agent first."
+    }
     var settingsLanguageHelp: String {
         lang == .ko ? "시스템 언어를 따르거나 직접 선택합니다."
                     : "Follow the system language or pick one manually."

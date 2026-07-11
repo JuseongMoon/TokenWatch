@@ -80,6 +80,10 @@ struct PixelHeart: View {
 
     /// nil이면 3톤 광택 렌더. 값이 있으면 실루엣 전체를 그 색 하나로(설정 off 미리보기 등).
     var flatColor: Color? = nil
+    /// 세로로 왼쪽 절반만 그린다(반쪽 하트 — 잔여율 10% 단위 표기).
+    var half: Bool = false
+    /// 채움 없이 흰 외곽선만 그린다(사용량 소진 표시).
+    var outline: Bool = false
     /// 하트 높이(대략 폰트 cap-height에 맞춘다). 픽셀 한 칸 = size / 행 수.
     var size: CGFloat = 11
 
@@ -101,12 +105,16 @@ struct PixelHeart: View {
         let rows = Self.bitmap.count
         let cols = Self.bitmap[0].count
         let cell = size / CGFloat(rows)
+        let centerCol = cols / 2                              // 세로 반쪽 컷 경계(가운데 열 포함)
         Canvas { ctx, _ in
             for (r, row) in Self.bitmap.enumerated() {
                 for (c, v) in row.enumerated() where v != 0 {
+                    if half && c > centerCol { continue }             // 오른쪽 절반 제거
+                    if outline && !Self.isEdge(r, c) { continue }     // 가장자리 칸만
                     let rect = CGRect(x: CGFloat(c) * cell, y: CGFloat(r) * cell,
                                       width: cell, height: cell)
-                    ctx.fill(Path(rect), with: .color(flatColor ?? Self.tone(v)))
+                    let color = outline ? Color.white : (flatColor ?? Self.tone(v))
+                    ctx.fill(Path(rect), with: .color(color))
                 }
             }
         }
@@ -121,23 +129,82 @@ struct PixelHeart: View {
         default: return heartRed
         }
     }
+
+    /// 채워진 칸 중 상하좌우 이웃에 빈칸(또는 격자 밖)이 있는 가장자리 칸인지 — 외곽선 렌더용.
+    private static func isEdge(_ r: Int, _ c: Int) -> Bool {
+        let rows = bitmap.count, cols = bitmap[0].count
+        for (dr, dc) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let nr = r + dr, nc = c + dc
+            if nr < 0 || nr >= rows || nc < 0 || nc >= cols { return true }
+            if bitmap[nr][nc] == 0 { return true }
+        }
+        return false
+    }
 }
 
-/// 하트 커서. BlinkingCursor와 같은 주기로 심장박동처럼 켜졌다 꺼진다.
-/// 상태 프롬프트의 언더바 커서를 대체한다.
-struct BlinkingHeart: View {
-    var size: CGFloat = 11
-    /// 전체 깜빡임 주기(초).
+/// content를 BlinkingCursor와 같은 주기로 딱딱 깜빡인다(심장박동 리듬). 상태 없이 가볍다.
+struct TerminalBlink<Content: View>: View {
     var period: Double = 1.0
+    @ViewBuilder var content: Content
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: period / 2)) { context in
             let half = period / 2
             let phase = Int(context.date.timeIntervalSinceReferenceDate / half) % 2
-            PixelHeart(size: size)
-                .opacity(phase == 0 ? 1 : 0)
-                .accessibilityHidden(true)
+            content.opacity(phase == 0 ? 1 : 0)
         }
+    }
+}
+
+/// 하트 커서(단일). 심장박동처럼 켜졌다 꺼진다. 상태 프롬프트의 언더바 커서를 대체한다.
+struct BlinkingHeart: View {
+    var size: CGFloat = 11
+    var period: Double = 1.0
+
+    var body: some View {
+        TerminalBlink(period: period) {
+            PixelHeart(size: size).accessibilityHidden(true)
+        }
+    }
+}
+
+/// 사용량 추적 하트 바. 선택한 그래프의 잔여율을 최대 5개 하트로 표현한다(10%당 반 칸).
+/// 맨 오른쪽 하트만 깜빡이고, 소진(100%)되면 흰 외곽선 하트가 깜빡인다.
+struct HeartHealthBar: View {
+    /// 추적 대상 창의 사용률(0...100).
+    var usedPercent: Double
+    var size: CGFloat = 11
+    var spacing: CGFloat = 2
+
+    var body: some View {
+        let h = Self.remainingHalfHearts(usedPercent)
+        HStack(spacing: spacing) {
+            if h == 0 {
+                // 소진: 흰 외곽선 하트가 깜빡.
+                TerminalBlink { PixelHeart(outline: true, size: size) }
+            } else {
+                let full = h / 2
+                let hasHalf = h % 2 == 1
+                let slots = full + (hasHalf ? 1 : 0)          // 표시할 하트 칸 수(1...5)
+                ForEach(0..<slots, id: \.self) { i in
+                    let isLast = i == slots - 1
+                    let heart = PixelHeart(half: hasHalf && isLast, size: size)
+                    if isLast {
+                        TerminalBlink { heart }               // 맨 오른쪽(잔여 끝)만 깜빡
+                    } else {
+                        heart
+                    }
+                }
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("\(Int(usedPercent.rounded()))% used")
+    }
+
+    /// 사용률(0...100) → 남은 반쪽 하트 수(0...10). 10%당 반 칸, 100%면 0.
+    static func remainingHalfHearts(_ usedPercent: Double) -> Int {
+        let used = min(100, max(0, usedPercent))
+        return max(0, 10 - Int(used / 10))
     }
 }
 

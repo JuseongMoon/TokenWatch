@@ -15,6 +15,9 @@ struct ContentView: View {
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
+    @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
+    @AppStorage("tokenwatch.heartbeatTargetAgent") private var heartbeatTargetAgent = ""
+    @AppStorage("tokenwatch.heartbeatTargetWindow") private var heartbeatTargetWindow = ""
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -107,13 +110,33 @@ struct ContentView: View {
         HStack(spacing: 6) {
             Text("$").foregroundStyle(Term.dim)
             Text(statusLine).foregroundStyle(Term.fg)
-            if heartbeatCursor {
-                BlinkingHeart(size: 11)
-            } else {
-                BlinkingCursor(symbol: "_", color: Term.green, size: 13)
-            }
+            cursor
         }
         .font(.term(12))
+    }
+
+    /// 상태 프롬프트 끝의 커서. 하트비트 설정에 따라 언더바 / 단일 하트 / 사용량 추적 하트 바.
+    @ViewBuilder
+    private var cursor: some View {
+        if heartbeatCursor {
+            if let used = trackedUsedPercent {
+                HeartHealthBar(usedPercent: used, size: 11)
+            } else {
+                BlinkingHeart(size: 11)   // 추적 꺼짐 또는 대상 미해석 시 단일 하트
+            }
+        } else {
+            BlinkingCursor(symbol: "_", color: Term.green, size: 13)
+        }
+    }
+
+    /// 추적 대상으로 선택된 그래프(gauge 창)의 사용률(0...100). 대상이 없거나 못 찾으면 nil.
+    private var trackedUsedPercent: Double? {
+        guard heartbeatTracking,
+              let agentID = UUID(uuidString: heartbeatTargetAgent),
+              let window = store.snapshots[agentID]?.windows
+                  .first(where: { $0.label == heartbeatTargetWindow && $0.style == .gauge })
+        else { return nil }
+        return window.usedPercent
     }
 
     private var statusLine: String {

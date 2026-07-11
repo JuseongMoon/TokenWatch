@@ -7,6 +7,14 @@
 
 import SwiftUI
 
+/// 하트비트 추적 대상 후보 한 개 = (에이전트, 게이지 창). 그래프 피커의 한 행.
+private struct GraphOption: Identifiable {
+    let agent: Agent
+    let window: UsageWindow
+    /// 에이전트 UUID + 창 라벨로 유일하게 식별(같은 라벨이 여러 계정에 있어도 구분).
+    var id: String { "\(agent.id.uuidString)|\(window.label)" }
+}
+
 /// 자동 새로고침 주기 옵션(초). 0 = 꺼짐, -1 = Auto(적응형).
 enum RefreshInterval: Int, CaseIterable, Identifiable {
     case off = 0
@@ -37,6 +45,9 @@ struct SettingsSheet: View {
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
+    @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
+    @AppStorage("tokenwatch.heartbeatTargetAgent") private var heartbeatTargetAgent = ""
+    @AppStorage("tokenwatch.heartbeatTargetWindow") private var heartbeatTargetWindow = ""
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -51,6 +62,7 @@ struct SettingsSheet: View {
                         languageSection
                         refreshSection
                         displaySection
+                        heartbeatSection
                         screenSection
                         infoSection
                     }
@@ -186,25 +198,58 @@ struct SettingsSheet: View {
 
     private var displaySection: some View {
         TerminalBox(title: "DISPLAY") {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        hideUnusedWindows.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(hideUnusedWindows ? "[x]" : "[ ]")
-                                .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
-                            Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
-                            Spacer()
-                        }
-                        .font(.term(14))
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    hideUnusedWindows.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(hideUnusedWindows ? "[x]" : "[ ]")
+                            .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
+                        Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
+                        Spacer()
                     }
-                    .buttonStyle(.plain)
-
-                    Text(loc.settingsHideUnusedHelp)
-                        .font(.term(10)).foregroundStyle(Term.dim)
+                    .font(.term(14))
                 }
+                .buttonStyle(.plain)
 
+                Text(loc.settingsHideUnusedHelp)
+                    .font(.term(10)).foregroundStyle(Term.dim)
+            }
+        }
+    }
+
+    // MARK: 하트비트 커서
+
+    /// 추적 대상 후보: 추가된 모든 에이전트의 게이지(그래프) 창.
+    /// hide unused 설정과 무관하게 0% 창도 전부 포함한다.
+    private var trackableGraphs: [GraphOption] {
+        store.agents.flatMap { agent in
+            (store.snapshots[agent.id]?.windows ?? [])
+                .filter { $0.style == .gauge }
+                .map { GraphOption(agent: agent, window: $0) }
+        }
+    }
+
+    /// 현재 저장된 선택이 실제 후보 목록에 존재하는지.
+    private var hasValidTarget: Bool {
+        trackableGraphs.contains {
+            $0.agent.id.uuidString == heartbeatTargetAgent && $0.window.label == heartbeatTargetWindow
+        }
+    }
+
+    /// usage 모드로 전환. 유효한 선택이 없으면 첫 후보를 기본 선택한다.
+    private func selectUsageMode() {
+        heartbeatTracking = true
+        if !hasValidTarget, let first = trackableGraphs.first {
+            heartbeatTargetAgent = first.agent.id.uuidString
+            heartbeatTargetWindow = first.window.label
+        }
+    }
+
+    private var heartbeatSection: some View {
+        TerminalBox(title: "HEARTBEAT") {
+            VStack(alignment: .leading, spacing: 14) {
+                // on/off
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
                         heartbeatCursor.toggle()
@@ -222,6 +267,74 @@ struct SettingsSheet: View {
 
                     Text(loc.settingsHeartbeatHelp)
                         .font(.term(10)).foregroundStyle(Term.dim)
+                }
+
+                if heartbeatCursor {
+                    // 모드: heart(단일) / usage(사용량 추적)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 0) {
+                            modeButton("heart", selected: !heartbeatTracking) { heartbeatTracking = false }
+                            modeButton("usage", selected: heartbeatTracking) { selectUsageMode() }
+                        }
+                        .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+
+                        Text(loc.settingsHeartbeatModeHelp)
+                            .font(.term(10)).foregroundStyle(Term.dim)
+                    }
+
+                    if heartbeatTracking {
+                        graphPicker
+                    }
+                }
+            }
+        }
+    }
+
+    private func modeButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.term(13, weight: selected ? .bold : .regular))
+                .foregroundStyle(selected ? Term.green : Term.dim)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(selected ? Term.green.opacity(0.14) : Color.clear)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var graphPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("track graph")
+                .font(.term(11, weight: .semibold)).foregroundStyle(Term.cyan)
+
+            let graphs = trackableGraphs
+            if graphs.isEmpty {
+                Text(loc.settingsHeartbeatNoGraphs)
+                    .font(.term(11)).foregroundStyle(Term.dim)
+            } else {
+                ForEach(graphs) { g in
+                    let selected = g.agent.id.uuidString == heartbeatTargetAgent
+                        && g.window.label == heartbeatTargetWindow
+                    Button {
+                        heartbeatTargetAgent = g.agent.id.uuidString
+                        heartbeatTargetWindow = g.window.label
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(selected ? "(o)" : "( )")
+                                .foregroundStyle(selected ? Term.green : Term.dim)
+                            Text(g.agent.provider.terminalTag)
+                                .foregroundStyle(g.agent.provider.terminalColor)
+                            Text(g.window.label)
+                                .foregroundStyle(selected ? Term.fg : Term.dim)
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text("\(Int(g.window.usedPercent.rounded()))%")
+                                .foregroundStyle(Term.statusColor(remainingPercent: g.window.remainingPercent))
+                                .monospacedDigit()
+                        }
+                        .font(.term(12))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

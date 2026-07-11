@@ -47,8 +47,8 @@ struct SettingsSheet: View {
     @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
-    @AppStorage("tokenwatch.heartbeatTargetAgent") private var heartbeatTargetAgent = ""
-    @AppStorage("tokenwatch.heartbeatTargetWindow") private var heartbeatTargetWindow = ""
+    /// 다중 선택된 추적 대상. GraphOption.id("uuid|label")들을 개행으로 이어 저장.
+    @AppStorage("tokenwatch.heartbeatTargets") private var heartbeatTargetsRaw = ""
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -253,19 +253,28 @@ struct SettingsSheet: View {
         }
     }
 
-    /// 현재 저장된 선택이 실제 후보 목록에 존재하는지.
+    /// 저장된 다중 선택 대상 ID 집합.
+    private var selectedTargetIDs: Set<String> {
+        Set(heartbeatTargetsRaw.split(separator: "\n").map(String.init))
+    }
+
+    /// 대상 하나를 선택/해제 토글. 정렬해 저장(순서 안정 → 불필요한 갱신 방지).
+    private func toggleTarget(_ id: String) {
+        var ids = selectedTargetIDs
+        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
+        heartbeatTargetsRaw = ids.sorted().joined(separator: "\n")
+    }
+
+    /// 현재 저장된 선택 중 하나라도 실제 후보 목록에 존재하는지.
     private var hasValidTarget: Bool {
-        trackableGraphs.contains {
-            $0.agent.id.uuidString == heartbeatTargetAgent && $0.window.label == heartbeatTargetWindow
-        }
+        !selectedTargetIDs.isDisjoint(with: Set(trackableGraphs.map(\.id)))
     }
 
     /// usage 모드로 전환. 유효한 선택이 없으면 첫 후보를 기본 선택한다.
     private func selectUsageMode() {
         heartbeatTracking = true
         if !hasValidTarget, let first = trackableGraphs.first {
-            heartbeatTargetAgent = first.agent.id.uuidString
-            heartbeatTargetWindow = first.window.label
+            heartbeatTargetsRaw = first.id
         }
     }
 
@@ -336,14 +345,12 @@ struct SettingsSheet: View {
                     .font(.term(11)).foregroundStyle(Term.dim)
             } else {
                 ForEach(graphs) { g in
-                    let selected = g.agent.id.uuidString == heartbeatTargetAgent
-                        && g.window.label == heartbeatTargetWindow
+                    let selected = selectedTargetIDs.contains(g.id)
                     Button {
-                        heartbeatTargetAgent = g.agent.id.uuidString
-                        heartbeatTargetWindow = g.window.label
+                        toggleTarget(g.id)
                     } label: {
                         HStack(spacing: 8) {
-                            Text(selected ? "(o)" : "( )")
+                            Text(selected ? "[x]" : "[ ]")
                                 .foregroundStyle(selected ? Term.green : Term.dim)
                             Text(g.agent.provider.terminalTag)
                                 .foregroundStyle(g.agent.provider.terminalColor)
@@ -359,6 +366,9 @@ struct SettingsSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                Text(loc.settingsHeartbeatMultiHelp)
+                    .font(.term(10)).foregroundStyle(Term.dim)
             }
         }
     }

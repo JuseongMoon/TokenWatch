@@ -102,6 +102,10 @@ struct L10n: Sendable {
         lang == .ko ? "추적할 그래프가 없습니다. 먼저 게이지형 에이전트를 추가하세요."
                     : "No graphs to track. Add a gauge-based agent first."
     }
+    var settingsHeartbeatMultiHelp: String {
+        lang == .ko ? "여러 개를 고르면 남은 비율의 평균을 하트로 표시합니다."
+                    : "Pick several and the heart shows the average of their remaining amounts."
+    }
     var settingsLanguageHelp: String {
         lang == .ko ? "시스템 언어를 따르거나 직접 선택합니다."
                     : "Follow the system language or pick one manually."

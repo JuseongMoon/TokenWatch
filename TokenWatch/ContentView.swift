@@ -16,8 +16,7 @@ struct ContentView: View {
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
-    @AppStorage("tokenwatch.heartbeatTargetAgent") private var heartbeatTargetAgent = ""
-    @AppStorage("tokenwatch.heartbeatTargetWindow") private var heartbeatTargetWindow = ""
+    @AppStorage("tokenwatch.heartbeatTargets") private var heartbeatTargetsRaw = ""
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -146,14 +145,25 @@ struct ContentView: View {
         }
     }
 
-    /// 추적 대상으로 선택된 그래프(gauge 창)의 사용률(0...100). 대상이 없거나 못 찾으면 nil.
+    /// 추적 대상으로 선택된 그래프(gauge 창)들의 사용률 기준값(0...100). 대상이 없거나 못 찾으면 nil.
+    /// 여러 개를 선택하면 각 그래프 잔여율의 평균 = 사용률의 평균을 기준으로 삼는다
+    /// (예: 40·50·60% 잔여 → 50% 기준). 하나만 선택하면 그 값 그대로.
     private var trackedUsedPercent: Double? {
-        guard heartbeatTracking,
-              let agentID = UUID(uuidString: heartbeatTargetAgent),
-              let window = store.snapshots[agentID]?.windows
-                  .first(where: { $0.label == heartbeatTargetWindow && $0.style == .gauge })
-        else { return nil }
-        return window.usedPercent
+        guard heartbeatTracking else { return nil }
+        let ids = Set(heartbeatTargetsRaw.split(separator: "\n").map(String.init))
+        guard !ids.isEmpty else { return nil }
+
+        // 선택된 게이지 창들의 usedPercent 수집. ID 형식은 SettingsSheet의 GraphOption.id("uuid|label")와 일치.
+        var used: [Double] = []
+        for agent in store.agents {
+            for window in store.snapshots[agent.id]?.windows ?? [] where window.style == .gauge {
+                if ids.contains("\(agent.id.uuidString)|\(window.label)") {
+                    used.append(window.usedPercent)
+                }
+            }
+        }
+        guard !used.isEmpty else { return nil }
+        return used.reduce(0, +) / Double(used.count)
     }
 
     private var statusLine: String {

@@ -56,9 +56,71 @@ struct TerminalGauge: View {
                         .position(x: min(w - 1, max(1, w * elapsed)), y: geo.size.height / 2)
                         .shadow(color: .black.opacity(0.5), radius: 1.5)
                 }
+                if used >= GaugeCritter.threshold {                  // 소진: 슬라임 행진
+                    GaugeCritter(barSize: geo.size)
+                }
             }
         }
         .frame(height: height)
+    }
+}
+
+/// 100% 소진된 바를 무대 삼아 행진하는 픽셀 크리터(기본: 슬라임).
+/// 도약 프레임에 한 걸음 전진하고 착지 프레임에 제자리에서 눌린다 — 통통 튀는 호핑.
+/// TimelineView 기반 무상태: 시각에서 위치·프레임을 순수 계산한다(BlinkingCursor와 같은 패턴).
+struct GaugeCritter: View {
+    let barSize: CGSize
+    var sprite: PixelSprite = .slime
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 슬라임 등장 사용률(0...1). 표시 반올림상 100%가 되는 지점과 맞춘다.
+    static let threshold = 0.995
+    /// 프레임 토글 주기(초). 한 틱마다 착지↔도약이 바뀐다.
+    static let tick: Double = 0.25
+    /// 도약 한 번에 전진하는 스프라이트 픽셀 칸 수.
+    static let hopCells = 4
+
+    /// 픽셀 한 칸 pt — 스프라이트가 바 안에서 위아래 1pt씩 여유를 갖는 크기.
+    private var cell: CGFloat { max(0, barSize.height - 2) / CGFloat(sprite.rows) }
+
+    var body: some View {
+        if reduceMotion {
+            place(frameIndex: 0, x: barSize.width * 0.6)     // 모션 최소화: 제자리 슬라임
+        } else {
+            TimelineView(.periodic(from: .now, by: Self.tick)) { context in
+                let tick = Int(context.date.timeIntervalSinceReferenceDate / Self.tick)
+                let x = Self.offsetX(tick: tick,
+                                     hop: cell * CGFloat(Self.hopCells),
+                                     spriteWidth: cell * CGFloat(sprite.cols),
+                                     barWidth: barSize.width)
+                place(frameIndex: Self.frameIndex(tick: tick), x: x)
+            }
+        }
+    }
+
+    /// 스프라이트를 바 안 왼끝 기준 x 위치에 바닥 정렬로 놓고, 바 밖으로 나가는 부분은 자른다.
+    private func place(frameIndex: Int, x: CGFloat) -> some View {
+        PixelSpriteView(sprite: sprite, frameIndex: frameIndex, cell: cell)
+            .offset(x: x, y: barSize.height - 1 - cell * CGFloat(sprite.rows))
+            .frame(width: barSize.width, height: barSize.height, alignment: .topLeading)
+            .clipped()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    // MARK: 행진 산수(순수 함수 — 단위 테스트 대상)
+
+    /// 짝수 틱 = 착지(0), 홀수 틱 = 도약(1).
+    static func frameIndex(tick: Int) -> Int { abs(tick) % 2 }
+
+    /// 도약 틱에만 한 걸음 나아간 x(스프라이트 왼끝). 완전히 숨은 왼쪽 밖(-spriteWidth)에서
+    /// 출발해 오른끝을 다 지나면 다시 왼쪽 밖에서 재등장(랩어라운드).
+    static func offsetX(tick: Int, hop: CGFloat, spriteWidth: CGFloat, barWidth: CGFloat) -> CGFloat {
+        guard hop > 0, barWidth > 0 else { return -spriteWidth }
+        let hopsPerCross = Int(((barWidth + spriteWidth) / hop).rounded(.up))
+        let hopIndex = (abs(tick) + 1) / 2 % max(1, hopsPerCross)
+        return CGFloat(hopIndex) * hop - spriteWidth
     }
 }
 

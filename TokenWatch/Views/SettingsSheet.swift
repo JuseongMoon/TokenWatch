@@ -7,12 +7,13 @@
 
 import SwiftUI
 
-/// 자동 새로고침 주기 옵션(초). 0 = 꺼짐.
+/// 자동 새로고침 주기 옵션(초). 0 = 꺼짐, -1 = Auto(적응형).
 enum RefreshInterval: Int, CaseIterable, Identifiable {
     case off = 0
     case s30 = 30
     case s60 = 60
     case s300 = 300
+    case auto = -1   // AutoRefreshPolicy.sentinel과 같아야 한다
 
     var id: Int { rawValue }
 
@@ -23,6 +24,7 @@ enum RefreshInterval: Int, CaseIterable, Identifiable {
         case .s30:  return "30s"
         case .s60:  return "60s"
         case .s300: return "5m"
+        case .auto: return "auto"
         }
     }
 }
@@ -165,8 +167,19 @@ struct SettingsSheet: View {
 
                 Text(loc.settingsRefreshHelp)
                     .font(.term(10)).foregroundStyle(Term.dim)
+
+                if refreshInterval == RefreshInterval.auto.rawValue {
+                    Text(loc.settingsRefreshAutoHelp(currentAutoLabel))
+                        .font(.term(10)).foregroundStyle(Term.cyan)
+                }
             }
         }
+    }
+
+    /// Auto 모드의 현재 유효 간격 라벨(예: "30s", "2m").
+    private var currentAutoLabel: String {
+        let s = store.autoIntervalSeconds
+        return s < 60 ? "\(s)s" : "\(s / 60)m"
     }
 
     // MARK: 표시 (체크박스)

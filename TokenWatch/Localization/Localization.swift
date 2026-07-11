@@ -70,8 +70,13 @@ struct L10n: Sendable {
 
     // MARK: 설정(SettingsSheet)
     var settingsRefreshHelp: String {
-        lang == .ko ? "화면이 켜져 있을 때만 갱신. 너무 짧으면 429 제한에 걸릴 수 있습니다."
-                    : "Refreshes only while the screen is on. Too short may hit the 429 rate limit."
+        lang == .ko ? "화면이 켜져 있을 때만 갱신. 너무 짧으면 429 제한에 걸릴 수 있습니다. 창이 리셋되는 시각에는 한 번 더 갱신합니다."
+                    : "Refreshes only while the screen is on. Too short may hit the 429 rate limit. An extra refresh runs when a window resets."
+    }
+    /// Auto 모드 설명 + 현재 유효 간격(예: "60s") 표기.
+    func settingsRefreshAutoHelp(_ current: String) -> String {
+        lang == .ko ? "auto: 사용량이 빠르게 오르면 간격을 줄이고, 멈추면 늘립니다(30초~10분). 현재 \(current)"
+                    : "auto: shortens the interval while usage climbs and relaxes it when idle (30s–10m). now \(current)"
     }
     var settingsScreenHelp: String {
         lang == .ko ? "켜면 앱을 보는 동안 화면이 꺼지지 않습니다."

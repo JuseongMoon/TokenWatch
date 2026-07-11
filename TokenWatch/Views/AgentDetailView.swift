@@ -140,7 +140,10 @@ struct AgentDetailView: View {
                         legend
                         ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                             if index > 0 { hDivider }
-                            DetailUsageRow(window: window, loc: loc)
+                            DetailUsageRow(window: window, loc: loc,
+                                           onResetPeak: window.estimatedTotal ? {
+                                               store.resetCreditPeak(agentID: agent.id, windowLabel: window.label)
+                                           } : nil)
                         }
                     }
                     if let error = snapshot.error { errorRow(error) }
@@ -212,7 +215,7 @@ struct AgentDetailView: View {
             Text(":").foregroundStyle(Term.dim)
             Text("●")
                 .font(.term(11))
-                .foregroundStyle(Term.serviceHealthColor(health))
+                .foregroundStyle(Term.serviceHealthDotColor(health))
             Text(loc.serviceHealthLabel(health))
                 .foregroundStyle(Term.serviceHealthColor(health))
             Spacer(minLength: 8)
@@ -264,15 +267,57 @@ struct AgentDetailView: View {
 private struct DetailUsageRow: View {
     let window: UsageWindow
     let loc: L10n
+    /// 충전형 추정 게이지의 peak 재설정 액션(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
+    var onResetPeak: (() -> Void)? = nil
+
+    @State private var showResetConfirm = false
 
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
 
     var body: some View {
-        if window.style == .balance {
-            balanceBody
-        } else {
-            gaugeBody
+        switch window.style {
+        case .gauge:       gaugeBody
+        case .creditGauge: creditGaugeBody
+        case .balance:     balanceBody
+        }
+    }
+
+    // 충전형 잔액 게이지(채움=남은 잔액, 역방향) + 잔액 텍스트 + 추정 안내.
+    private var creditGaugeBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(window.label.uppercased())
+                    .font(.term(12, weight: .semibold)).foregroundStyle(Term.cyan)
+                Spacer()
+                Text("\(window.estimatedTotal ? "~" : "")\(Int(window.remainingPercent.rounded()))% left")
+                    .font(.term(12)).foregroundStyle(statusColor)
+            }
+            TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
+                          elapsedFraction: nil, fillsRemaining: true,
+                          height: 20, bracketSize: 15)
+            KVRow(key: "remaining", value: window.valueText ?? "—",
+                  valueColor: statusColor, keyWidth: 84)
+            if window.estimatedTotal {
+                HStack(spacing: 8) {
+                    Text(loc.creditApproxNote)
+                        .font(.term(11)).foregroundStyle(Term.dim)
+                    Spacer(minLength: 0)
+                    if onResetPeak != nil {
+                        Button { showResetConfirm = true } label: {
+                            Text(loc.creditResetButton)
+                                .font(.term(11)).foregroundStyle(Term.yellow)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .confirmationDialog(loc.creditResetTitle, isPresented: $showResetConfirm, titleVisibility: .visible) {
+            Button(loc.creditResetConfirm, role: .destructive) { onResetPeak?() }
+            Button(loc.cancel, role: .cancel) {}
+        } message: {
+            Text(loc.creditResetMessage)
         }
     }
 
@@ -380,6 +425,17 @@ private struct DetailUsageRow: View {
                                            resetsAt: Date().addingTimeInterval(2 * 86400),
                                            kind: .weekly, windowSeconds: 7 * 86400),
                        loc: L10n(lang: .en))
+        // 충전형 게이지(역방향): 정확(API 총액) + 추정(peak, ~approx 안내).
+        DetailUsageRow(window: UsageWindow(label: "Credits", usedPercent: 2.5, resetsAt: nil,
+                                           kind: .weekly, style: .creditGauge,
+                                           valueText: "487.50 credits left",
+                                           balanceRemaining: 487.5, balanceTotal: 500),
+                       loc: L10n(lang: .en))
+        DetailUsageRow(window: UsageWindow(label: "Balance", usedPercent: 82, resetsAt: nil,
+                                           kind: .weekly, style: .creditGauge,
+                                           valueText: "18.00 USD", balanceRemaining: 18,
+                                           estimatedTotal: true),
+                       loc: L10n(lang: .ko), onResetPeak: {})
     }
     .padding()
     .background(Term.bg)

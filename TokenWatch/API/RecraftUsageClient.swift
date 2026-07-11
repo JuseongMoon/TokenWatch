@@ -32,7 +32,8 @@ enum RecraftUsageClient {
             let decoded = try JSONDecoder().decode(Response.self, from: data)
             let value = "\(decoded.credits ?? 0) credits"
             return [UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: decoded.credits.map(Double.init))]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

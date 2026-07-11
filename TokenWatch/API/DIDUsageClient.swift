@@ -32,9 +32,11 @@ enum DIDUsageClient {
         do {
             let decoded = try JSONDecoder().decode(Response.self, from: data)
             let remaining = decoded.remaining ?? decoded.credits?.first?.remaining ?? 0
+            let total = decoded.total ?? decoded.credits?.first?.total
             let value = "\(Int(remaining.rounded())) credits"
             return [UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: remaining, balanceTotal: total)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

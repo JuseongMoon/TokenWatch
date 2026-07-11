@@ -34,7 +34,8 @@ enum LumaUsageClient {
             let usd = (decoded.credit_balance ?? 0) / 100.0
             let value = String(format: "%.2f USD", usd)
             return [UsageWindow(label: "Balance", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: usd)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

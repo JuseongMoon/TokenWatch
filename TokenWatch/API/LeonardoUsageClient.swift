@@ -37,7 +37,8 @@ enum LeonardoUsageClient {
             let tokensLeft = apiTokens > 0 ? apiTokens : (d.subscriptionTokens ?? 0)
             let value = "\(tokensLeft) tokens"
             return [UsageWindow(label: "API tokens", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: Double(tokensLeft))]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

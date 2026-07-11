@@ -23,10 +23,10 @@ struct UsageBar: View {
                 .font(.term(11, weight: .semibold))
                 .foregroundStyle(Term.cyan)
 
-            if window.style == .balance {
-                balanceValue
-            } else {
-                gauge
+            switch window.style {
+            case .gauge:       gauge
+            case .creditGauge: creditGauge
+            case .balance:     balanceValue
             }
 
             if window.resetsAt != nil {
@@ -57,6 +57,27 @@ struct UsageBar: View {
         }
     }
 
+    // 충전형 잔액 게이지(채움=남은 잔액, 역방향) + 잔액 텍스트 병기.
+    private var creditGauge: some View {
+        HStack(spacing: 8) {
+            TerminalGauge(usedFraction: usedFraction,
+                          fillColor: statusColor,
+                          elapsedFraction: nil,
+                          fillsRemaining: true,
+                          height: 14, bracketSize: 13)
+            Text(balanceText)
+                .font(.term(12))
+                .foregroundStyle(statusColor)
+                .fixedSize()
+        }
+    }
+
+    /// 잔액 텍스트(추정 게이지면 ~ 접두로 부정확함을 표시).
+    private var balanceText: String {
+        let base = window.valueText ?? "—"
+        return window.estimatedTotal ? "~\(base)" : base
+    }
+
     // 잔액 스타일(한도 없는 선불 크레딧 — 절대값 텍스트).
     private var balanceValue: some View {
         HStack(spacing: 6) {
@@ -83,6 +104,20 @@ struct UsageBar: View {
                                      kind: .weekly, windowSeconds: 7 * 86400))
         UsageBar(window: UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil,
                                      kind: .weekly, style: .balance, valueText: "6.50 USD left"))
+        // 충전형 게이지(역방향): 정확(API 총액) + 추정(peak, ~ 접두).
+        UsageBar(window: UsageWindow(label: "Credits", usedPercent: 2.5, resetsAt: nil,
+                                     kind: .weekly, style: .creditGauge,
+                                     valueText: "487.50 credits left",
+                                     balanceRemaining: 487.5, balanceTotal: 500))
+        UsageBar(window: UsageWindow(label: "Balance", usedPercent: 82, resetsAt: nil,
+                                     kind: .weekly, style: .creditGauge,
+                                     valueText: "18.00 USD", balanceRemaining: 18,
+                                     estimatedTotal: true))
+        // 잔액 소진: 빈 트랙 위에서 슬라임이 논다(역방향 소진).
+        UsageBar(window: UsageWindow(label: "Balance", usedPercent: 99.7, resetsAt: nil,
+                                     kind: .weekly, style: .creditGauge,
+                                     valueText: "1.50 credits left",
+                                     balanceRemaining: 1.5, balanceTotal: 500))
     }
     .padding()
     .background(Term.bg)

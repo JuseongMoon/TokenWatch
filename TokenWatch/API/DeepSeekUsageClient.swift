@@ -33,8 +33,10 @@ enum DeepSeekUsageClient {
             guard let info = decoded.balance_infos?.first else { return [] }
             let value = "\(info.total_balance ?? "0") \(info.currency ?? "")"
                 .trimmingCharacters(in: .whitespaces)
+            let remaining = info.total_balance.flatMap(Double.init)
             return [UsageWindow(label: "Balance", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: remaining)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

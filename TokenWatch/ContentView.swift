@@ -156,7 +156,7 @@ struct ContentView: View {
         // 선택된 게이지 창들의 usedPercent 수집. ID 형식은 SettingsSheet의 GraphOption.id("uuid|label")와 일치.
         var used: [Double] = []
         for agent in store.agents {
-            for window in store.snapshots[agent.id]?.windows ?? [] where window.style == .gauge {
+            for window in store.snapshots[agent.id]?.windows ?? [] where window.isGaugeLike {
                 if ids.contains("\(agent.id.uuidString)|\(window.label)") {
                     used.append(window.usedPercent)
                 }
@@ -245,7 +245,7 @@ struct ContentView: View {
             withAnimation(.snappy(duration: 0.22)) { action() }
         } label: {
             Text(glyph)
-                .font(.term(11))
+                .font(.term(16.5))
                 .foregroundStyle(disabled ? Term.dim.opacity(0.3) : Term.green)
                 .frame(width: 26, height: 20)
                 .contentShape(Rectangle())

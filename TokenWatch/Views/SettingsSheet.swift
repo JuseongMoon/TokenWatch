@@ -248,7 +248,7 @@ struct SettingsSheet: View {
     private var trackableGraphs: [GraphOption] {
         store.agents.flatMap { agent in
             (store.snapshots[agent.id]?.windows ?? [])
-                .filter { $0.style == .gauge }
+                .filter { $0.isGaugeLike }
                 .map { GraphOption(agent: agent, window: $0) }
         }
     }

@@ -30,8 +30,12 @@ final class AgentStore {
     /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter·Grok·Leonardo)는 키가 없으며,
     /// UI는 그 경우를 "알 수 없음"으로 취급한다.
     private(set) var serviceStatus: [AgentProvider: ServiceHealth] = [:]
-    /// provider별 마지막 상태 조회 시각 — 짧은 간격 중복 조회를 막는 스로틀 기준.
+    /// provider별 마지막 "성공한" 상태 조회 시각 — 짧은 간격 중복 조회를 막는 스로틀 기준.
+    /// 실패한 조회는 여기 찍지 않으므로, 일시적 실패 후 다음 주기에 곧바로 재시도된다.
     @ObservationIgnored private var statusFetchedAt: [AgentProvider: Date] = [:]
+    /// 현재 상태를 조회 중인 provider — 동시 중복 요청을 막는 in-flight 가드.
+    /// (스로틀을 성공 시에만 찍으므로, 같은 provider의 병렬 호출 억제는 이쪽이 담당.)
+    @ObservationIgnored private var statusInFlight: Set<AgentProvider> = []
     /// 상태 재조회 최소 간격(초). 사용량 폴링(최소 30초)과 무관하게 상태는 이 간격으로만 갱신.
     @ObservationIgnored private let statusMinInterval: TimeInterval = 60
 
@@ -42,6 +46,10 @@ final class AgentStore {
     @ObservationIgnored private let minFetchSpacing: TimeInterval = 20
 
     private let defaultsKey = "tokenwatch.agents.v1"
+    private let creditPeaksKey = "tokenwatch.creditPeaks.v1"
+    /// 충전형 창의 관측 최고 잔액. key = "에이전트UUID|창라벨". API가 총액을 안 주는 provider의
+    /// 게이지 분모 추정에 쓴다. (영속 — 세션 간 유지해야 추정이 안정적.)
+    @ObservationIgnored private var creditPeaks: [String: Double] = [:]
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
     /// Auto 모드의 현재 사다리 인덱스. 관찰 대상이라 설정 화면의 "현재 간격" 표기가 따라간다.
@@ -55,6 +63,7 @@ final class AgentStore {
 
     init() {
         load()
+        creditPeaks = loadCreditPeaks()
     }
 
     // MARK: 영속화
@@ -68,6 +77,17 @@ final class AgentStore {
     private func persist() {
         guard let data = try? JSONEncoder().encode(agents) else { return }
         UserDefaults.standard.set(data, forKey: defaultsKey)
+    }
+
+    private func loadCreditPeaks() -> [String: Double] {
+        guard let data = UserDefaults.standard.data(forKey: creditPeaksKey),
+              let decoded = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+        return decoded
+    }
+
+    private func saveCreditPeaks(_ peaks: [String: Double]) {
+        guard let data = try? JSONEncoder().encode(peaks) else { return }
+        UserDefaults.standard.set(data, forKey: creditPeaksKey)
     }
 
     // MARK: 변경
@@ -85,6 +105,10 @@ final class AgentStore {
     func remove(_ agent: Agent) {
         agents.removeAll { $0.id == agent.id }
         snapshots[agent.id] = nil
+        // 이 에이전트의 충전형 peak 추정치도 함께 정리(고아 키 방지).
+        let prefix = "\(agent.id.uuidString)|"
+        let pruned = creditPeaks.filter { !$0.key.hasPrefix(prefix) }
+        if pruned.count != creditPeaks.count { creditPeaks = pruned; saveCreditPeaks(pruned) }
         persist()
         Task { await TokenStore.shared.delete(for: agent.id) }
     }
@@ -132,7 +156,10 @@ final class AgentStore {
         lastFetchAt[agent.id] = Date()
         loadingIDs.insert(agent.id)
         defer { loadingIDs.remove(agent.id) }
-        let snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id)
+        var snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id)
+        // 충전형 잔액 창을 게이지로 승격(peak 갱신 포함). RateLimitGate 캐시는 승격 이전 원본을
+        // 저장하므로, 캐시로 돌아온 스냅샷도 매번 여기서 승격해야 표시가 일관된다.
+        snapshot.windows = promoteCreditWindows(snapshot.windows, agentID: agent.id)
 
         // last-good 유지: 이번 결과가 에러 + 빈 windows인데 이전에 표시하던
         // windows가 있으면, 링/바가 사라지지 않도록 이전 windows를 유지하고
@@ -161,21 +188,73 @@ final class AgentStore {
         await refreshStatus(for: agent.provider)
     }
 
+    // MARK: 충전형 게이지 승격(peak 추정)
+
+    /// 충전형(balanceRemaining을 가진) 창을 creditGauge로 승격한다. API 총액이 있으면 그 값을,
+    /// 없으면 관측 최고 잔액(peak)을 분모로 삼아 소비율을 계산한다. peak는 갱신·영속화한다.
+    /// 총액을 못 구하면(첫 관측 0 등) balance 텍스트 그대로 둔다.
+    private func promoteCreditWindows(_ windows: [UsageWindow], agentID: UUID) -> [UsageWindow] {
+        var peaks = creditPeaks
+        var changed = false
+        let promoted = windows.map { window -> UsageWindow in
+            guard let remaining = window.balanceRemaining else { return window }
+            let total: Double
+            let estimated: Bool
+            if let apiTotal = window.balanceTotal, apiTotal > 0 {
+                total = apiTotal
+                estimated = false
+            } else {
+                let key = "\(agentID.uuidString)|\(window.label)"
+                let peak = CreditGaugePolicy.newPeak(peaks[key], observed: remaining)
+                if peaks[key] != peak { peaks[key] = peak; changed = true }
+                total = peak
+                estimated = true
+            }
+            guard let used = CreditGaugePolicy.usedPercent(remaining: remaining, total: total) else {
+                return window   // total ≤ 0 → balance 텍스트 fallback
+            }
+            return window.promotedToCreditGauge(usedPercent: used, estimatedTotal: estimated)
+        }
+        if changed { creditPeaks = peaks; saveCreditPeaks(peaks) }
+        return promoted
+    }
+
+    /// 충전형 게이지의 관측 최고 잔액(peak)을 지운다 — 이상 스파이크로 오염된 기준을 사용자가
+    /// 수동으로 바로잡을 때 쓴다. 지운 뒤 저장된 스냅샷을 즉시 재승격해, 네트워크 재조회 없이
+    /// 현재 잔액을 새 기준(100%)으로 반영한다.
+    func resetCreditPeak(agentID: UUID, windowLabel: String) {
+        let key = "\(agentID.uuidString)|\(windowLabel)"
+        guard creditPeaks[key] != nil else { return }
+        creditPeaks[key] = nil
+        saveCreditPeaks(creditPeaks)
+        if var snap = snapshots[agentID] {
+            snap.windows = promoteCreditWindows(snap.windows, agentID: agentID)
+            snapshots[agentID] = snap
+        }
+    }
+
     // MARK: 서비스 운영 상태 조회
 
     /// provider의 상태 페이지 JSON을 조회해 serviceStatus를 갱신한다.
     /// - 엔드포인트가 없는 provider는 즉시 반환(항상 "알 수 없음"으로 남는다).
     /// - force가 아니면 statusMinInterval 안에는 재조회하지 않는다.
-    /// - 조회 실패는 ServiceStatusClient가 .unknown으로 흡수한다(예외 없음).
+    /// - 조회/파싱 실패(fetch가 nil)면 직전 상태(last-good)를 그대로 두고 스로틀도 찍지
+    ///   않아 다음 주기에 곧바로 재시도한다. 일시적 네트워크·봇차단·타임아웃 한 번이
+    ///   정상 배지를 "알 수 없음"으로 덮어쓰거나 오래 고착시키지 않게 하기 위함이다.
     func refreshStatus(for provider: AgentProvider, force: Bool = false) async {
         guard let source = provider.statusSource else { return }
         let now = Date()
         if !force, let last = statusFetchedAt[provider],
            now.timeIntervalSince(last) < statusMinInterval { return }
-        // await 전에 시각을 먼저 찍어, 동시에 여러 에이전트가 같은 provider를 조회할 때
-        // 중복 요청을 막는다.
+        // 동시에 여러 에이전트가 같은 provider를 조회할 때 중복 요청을 막는다.
+        // 스로틀 시각은 성공 시에만 찍으므로(실패-재시도를 막지 않으려고), 병렬 억제는
+        // in-flight 가드가 담당한다. MainActor라 이 검사·삽입은 원자적이다.
+        guard !statusInFlight.contains(provider) else { return }
+        statusInFlight.insert(provider)
+        defer { statusInFlight.remove(provider) }
+
+        guard let health = await ServiceStatusClient.fetch(source) else { return }
         statusFetchedAt[provider] = now
-        let health = await ServiceStatusClient.fetch(source)
         serviceStatus[provider] = health
     }
 
@@ -226,11 +305,12 @@ final class AgentStore {
     }
 
     /// 에러 없는 스냅샷의 게이지 창 사용률 맵. key = "에이전트UUID|창라벨".
-    /// balance(잔액형) 창은 usedPercent가 항상 0이라 변화 신호가 없으므로 제외한다.
+    /// 순수 balance(잔액 텍스트) 창은 usedPercent가 항상 0이라 신호가 없어 제외하지만,
+    /// creditGauge(충전형)는 소비율을 가지므로 포함한다(잔액은 느리게 변해 대체로 간격을 늘림).
     private func gaugePercents() -> [String: Double] {
         var out: [String: Double] = [:]
         for (id, snap) in snapshots where snap.error == nil {
-            for w in snap.windows where w.style == .gauge {
+            for w in snap.windows where w.isGaugeLike {
                 out["\(id.uuidString)|\(w.label)"] = w.usedPercent
             }
         }
@@ -315,6 +395,24 @@ enum AutoRefreshPolicy {
     /// 스냅샷들의 모든 창 중 now 이후(엄격히 미래)에 오는 가장 이른 리셋 시각.
     static func nextResetDate(in snapshots: [AgentSnapshot], after now: Date) -> Date? {
         snapshots.flatMap(\.windows).compactMap(\.resetsAt).filter { $0 > now }.min()
+    }
+}
+
+// MARK: - 충전형 게이지 정책(순수 로직)
+
+/// 충전형(선불 크레딧) 잔액을 게이지 사용률로 환산하는 순수 정책 — AgentStore와 단위 테스트가 공유한다.
+enum CreditGaugePolicy {
+    /// 남은 잔액과 총액으로 "소비율(%)"을 낸다. total>0이 아니면 nil(→ balance 텍스트 fallback).
+    /// 예) remaining=487.3, total=500 → 2.54% used. 초과지출(remaining<0)은 100%로 clamp.
+    static func usedPercent(remaining: Double, total: Double) -> Double? {
+        guard total > 0 else { return nil }
+        let used = (1 - remaining / total) * 100
+        return min(100, max(0, used))
+    }
+
+    /// 관측된 잔액으로 갱신한 최고 잔액(peak). 추가 충전 시 커지며, 그 순간 게이지가 100%로 리셋된다.
+    static func newPeak(_ stored: Double?, observed: Double) -> Double {
+        max(stored ?? 0, observed)
     }
 }
 

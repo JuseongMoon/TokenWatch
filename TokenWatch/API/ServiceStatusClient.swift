@@ -40,10 +40,15 @@ struct ServiceStatusSource: Sendable, Equatable {
 }
 
 enum ServiceStatusClient {
-    /// 상태 페이지 JSON을 조회해 정규화된 ServiceHealth로 돌려준다.
-    /// 네트워크/디코딩 실패는 예외를 던지지 않고 `.unknown`으로 흡수한다
-    /// (상태 배지는 부가 정보라 실패해도 사용량 화면을 방해하지 않아야 한다).
-    static func fetch(_ source: ServiceStatusSource) async -> ServiceHealth {
+    /// 상태 페이지 JSON을 조회해 정규화된 ServiceHealth로 돌려준다. 예외는 던지지 않고
+    /// 반환값으로 두 가지 실패 양상을 구분한다:
+    ///  - `nil`      : 조회·파싱 실패(네트워크/타임아웃, 비2xx 응답, 형식 불일치 등).
+    ///                 "일시적으로 못 봤다"는 뜻이라, 호출측은 직전 상태(last-good)를
+    ///                 유지하고 곧바로 재시도할 수 있게 해야 한다.
+    ///  - `.unknown` : 응답은 정상 파싱했으나 상태값이 앱이 아는 범주 밖일 때만.
+    /// 이렇게 "일시적 실패"와 "진짜 미지원 상태"를 분리해야, 실패 한 번이 정상 배지를
+    /// "알 수 없음"으로 덮어쓰거나 스로틀에 걸려 오래 고착되는 문제를 막을 수 있다.
+    static func fetch(_ source: ServiceStatusSource) async -> ServiceHealth? {
         var req = URLRequest(url: source.jsonURL)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -54,13 +59,14 @@ enum ServiceStatusClient {
         guard let (data, response) = try? await URLSession.shared.data(for: req),
               let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
-            return .unknown
+            return nil
         }
         return parse(source.platform, data: data)
     }
 
     /// 플랫폼별 JSON → ServiceHealth 매핑(순수 함수, 단위 테스트 대상).
-    static func parse(_ platform: StatusPlatform, data: Data) -> ServiceHealth {
+    /// `nil` = 파싱 실패(형식 불일치·필드 없음), `.unknown` = 파싱은 됐으나 미지원 값.
+    static func parse(_ platform: StatusPlatform, data: Data) -> ServiceHealth? {
         switch platform {
         case .atlassian:   return parseAtlassian(data)
         case .instatus:    return parseInstatus(data)
@@ -75,9 +81,9 @@ enum ServiceStatusClient {
         let status: Status?
     }
 
-    static func parseAtlassian(_ data: Data) -> ServiceHealth {
+    static func parseAtlassian(_ data: Data) -> ServiceHealth? {
         guard let decoded = try? JSONDecoder().decode(AtlassianStatus.self, from: data),
-              let indicator = decoded.status?.indicator?.lowercased() else { return .unknown }
+              let indicator = decoded.status?.indicator?.lowercased() else { return nil }
         switch indicator {
         case "none":                 return .operational
         case "minor":                return .degraded
@@ -92,9 +98,9 @@ enum ServiceStatusClient {
         let page: Page?
     }
 
-    static func parseInstatus(_ data: Data) -> ServiceHealth {
+    static func parseInstatus(_ data: Data) -> ServiceHealth? {
         guard let decoded = try? JSONDecoder().decode(InstatusSummary.self, from: data),
-              let status = decoded.page?.status?.uppercased() else { return .unknown }
+              let status = decoded.page?.status?.uppercased() else { return nil }
         switch status {
         case "UP":              return .operational
         case "HASISSUES":       return .degraded
@@ -112,9 +118,9 @@ enum ServiceStatusClient {
         let data: Data?
     }
 
-    static func parseBetterStack(_ data: Data) -> ServiceHealth {
+    static func parseBetterStack(_ data: Data) -> ServiceHealth? {
         guard let decoded = try? JSONDecoder().decode(BetterStackStatus.self, from: data),
-              let state = decoded.data?.attributes?.aggregate_state?.lowercased() else { return .unknown }
+              let state = decoded.data?.attributes?.aggregate_state?.lowercased() else { return nil }
         switch state {
         case "operational":                  return .operational
         case "degraded":                     return .degraded

@@ -156,6 +156,19 @@ struct L10n: Sendable {
 
     // MARK: 게이지 접근성(TerminalGauge)
     func a11yUsed(_ pct: Int) -> String { lang == .ko ? "\(pct)% 사용" : "\(pct)% used" }
+    func a11yRemaining(_ pct: Int) -> String { lang == .ko ? "\(pct)% 남음" : "\(pct)% left" }
+    /// 충전형 게이지가 관측 최고 잔액 기반 추정임을 알리는 안내(상세 화면).
+    var creditApproxNote: String {
+        lang == .ko ? "총액은 관측된 최고 잔액 기준 추정" : "total estimated from highest observed balance"
+    }
+    /// 충전형 추정 게이지의 peak 수동 리셋 어피던스.
+    var creditResetButton: String  { lang == .ko ? "[재설정]" : "[reset]" }
+    var creditResetTitle: String   { lang == .ko ? "게이지 기준 재설정" : "Reset gauge scale" }
+    var creditResetConfirm: String { lang == .ko ? "재설정" : "Reset" }
+    var creditResetMessage: String {
+        lang == .ko ? "현재 잔액을 100%(가득)로 삼아 이 게이지의 기준을 다시 잡습니다. 이상값으로 게이지가 낮게 굳었을 때 사용하세요."
+                    : "Re-baselines this gauge, treating the current balance as 100% (full). Use when a spike has frozen the gauge too low."
+    }
 
     // MARK: 사용량 창 리셋 표기(UsageWindow+Display)
     var resetDone: String { lang == .ko ? "리셋됨" : "reset" }

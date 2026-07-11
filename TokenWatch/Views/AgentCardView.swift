@@ -21,38 +21,55 @@ struct AgentCardView: View {
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     var body: some View {
-        TerminalBox(title: titleText, titleColor: agent.provider.terminalColor) {
+        TerminalBox {
             VStack(alignment: .leading, spacing: 12) {
-                statusLine
+                titleBar
                 content
             }
         }
     }
 
-    /// 서비스 상태 배지 한 줄(`● 정상`). 조회 가능한 provider에서만 표시.
-    @ViewBuilder
-    private var statusLine: some View {
-        if let health = serviceHealth {
-            HStack(spacing: 5) {
-                Text("●")
-                    .font(.term(9))
-                    .foregroundStyle(Term.serviceHealthColor(health))
-                Text(loc.serviceHealthLabel(health))
-                    .font(.term(10))
-                    .foregroundStyle(Term.dim)
-                Spacer(minLength: 0)
+    /// 카드 헤더: `[C] CLAUDE [●] · pro`. 서비스 이름 오른쪽에 서비스 운영 상태를
+    /// 속이 찬 원으로 표시하고, 그 색으로 정상/장애/점검을 나타낸다(조회 가능한 provider만).
+    private var titleBar: some View {
+        HStack(spacing: 6) {
+            Text("\(agent.provider.terminalTag) \(agent.provider.displayName.uppercased())")
+                .foregroundStyle(agent.provider.terminalColor)
+                .terminalGlow(agent.provider.terminalColor, radius: 2)
+                .lineLimit(1)
+            statusCircle
+            if let plan = planSuffix {
+                Text("· \(plan)")
+                    .foregroundStyle(agent.provider.terminalColor)
+                    .lineLimit(1)
             }
+            Spacer(minLength: 0)
+        }
+        .font(.term(12, weight: .semibold))
+    }
+
+    /// 서비스 이름 오른쪽의 상태 배지 `[●]`. 속이 찬 원을 상태색으로, 대괄호는 흐리게.
+    /// 원은 텍스트 글리프 대신 Circle 도형으로 그려(대괄호 텍스트와) 상하 중앙정렬을 맞추고
+    /// 크기를 정확히 제어한다. 엔드포인트가 없는 provider(serviceHealth == nil)에는 표시하지 않는다.
+    @ViewBuilder
+    private var statusCircle: some View {
+        if let health = serviceHealth {
+            HStack(spacing: 1.5) {
+                Text("[").foregroundStyle(Term.dim)
+                Circle()
+                    .fill(Term.serviceHealthDotColor(health))
+                    .frame(width: 8, height: 8)
+                Text("]").foregroundStyle(Term.dim)
+            }
+            .accessibilityElement()
+            .accessibilityLabel(loc.serviceHealthLabel(health))
         }
     }
 
-    /// `[C] CLAUDE · pro` 형태의 박스 타이틀.
-    /// 이메일(@ 포함)은 메인 화면에 노출하지 않는다 — 플랜명 등만 덧붙인다.
-    private var titleText: String {
-        var t = "\(agent.provider.terminalTag) \(agent.provider.displayName.uppercased())"
-        if let label = agent.accountLabel, !label.isEmpty, !label.contains("@") {
-            t += " · \(label)"
-        }
-        return t
+    /// 타이틀에 덧붙일 플랜명 등(있을 때). 이메일(@ 포함)은 메인 화면에 노출하지 않는다.
+    private var planSuffix: String? {
+        guard let label = agent.accountLabel, !label.isEmpty, !label.contains("@") else { return nil }
+        return label
     }
 
     /// "미사용 창 숨김" 설정이 켜져 있으면 사용률 0% 게이지 창을 제외한다.

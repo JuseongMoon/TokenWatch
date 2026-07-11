@@ -35,7 +35,8 @@ enum FalUsageClient {
             let value = String(format: "%.2f %@", c.current_balance ?? 0, c.currency ?? "")
                 .trimmingCharacters(in: .whitespaces)
             return [UsageWindow(label: "Balance", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: c.current_balance)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

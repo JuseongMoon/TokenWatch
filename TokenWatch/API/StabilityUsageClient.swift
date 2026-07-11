@@ -32,7 +32,8 @@ enum StabilityUsageClient {
             let decoded = try JSONDecoder().decode(Response.self, from: data)
             let value = String(format: "%.2f credits", decoded.credits ?? 0)
             return [UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: decoded.credits)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

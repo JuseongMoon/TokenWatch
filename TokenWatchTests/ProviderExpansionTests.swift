@@ -249,7 +249,7 @@ struct ProviderExpansionTests {
 
     // MARK: 서비스 운영 상태 파싱(Atlassian / Instatus / Better Stack)
 
-    private func health(_ platform: StatusPlatform, _ json: String) -> ServiceHealth {
+    private func health(_ platform: StatusPlatform, _ json: String) -> ServiceHealth? {
         ServiceStatusClient.parse(platform, data: Data(json.utf8))
     }
 
@@ -259,10 +259,11 @@ struct ProviderExpansionTests {
         #expect(health(.atlassian, #"{"status":{"indicator":"major"}}"#) == .major)
         #expect(health(.atlassian, #"{"status":{"indicator":"critical"}}"#) == .major)
         #expect(health(.atlassian, #"{"status":{"indicator":"maintenance"}}"#) == .maintenance)
-        // 알 수 없는 값·형식 오류·빈 데이터는 모두 unknown(크래시 없음).
+        // 파싱은 됐으나 앱이 모르는 상태값 → unknown(진짜 미지원 상태).
         #expect(health(.atlassian, #"{"status":{"indicator":"weird"}}"#) == .unknown)
-        #expect(health(.atlassian, #"{}"#) == .unknown)
-        #expect(health(.atlassian, "not json") == .unknown)
+        // 형식 오류·필드 없음 → nil(파싱 실패 → 호출측이 last-good 유지, 크래시 없음).
+        #expect(health(.atlassian, #"{}"#) == nil)
+        #expect(health(.atlassian, "not json") == nil)
     }
 
     @Test func instatusStatusMapping() {
@@ -270,7 +271,8 @@ struct ProviderExpansionTests {
         #expect(health(.instatus, #"{"page":{"status":"HASISSUES"}}"#) == .degraded)
         #expect(health(.instatus, #"{"page":{"status":"UNDERMAINTENANCE"}}"#) == .maintenance)
         #expect(health(.instatus, #"{"page":{"status":"DOWN"}}"#) == .major)
-        #expect(health(.instatus, #"{"page":{}}"#) == .unknown)
+        // 필드 없음 → nil(파싱 실패).
+        #expect(health(.instatus, #"{"page":{}}"#) == nil)
     }
 
     @Test func betterStackStateMapping() {
@@ -278,7 +280,8 @@ struct ProviderExpansionTests {
         #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"degraded"}}}"#) == .degraded)
         #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"downtime"}}}"#) == .major)
         #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"maintenance"}}}"#) == .maintenance)
-        #expect(health(.betterstack, #"{"data":{"attributes":{}}}"#) == .unknown)
+        // 필드 없음 → nil(파싱 실패).
+        #expect(health(.betterstack, #"{"data":{"attributes":{}}}"#) == nil)
     }
 
     // MARK: 상태 페이지 메타데이터 불변식

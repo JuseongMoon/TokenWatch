@@ -30,10 +30,12 @@ enum OpenRouterUsageClient {
         }
         do {
             let decoded = try JSONDecoder().decode(Response.self, from: data)
-            let remaining = (decoded.data?.total_credits ?? 0) - (decoded.data?.total_usage ?? 0)
+            let total = decoded.data?.total_credits ?? 0
+            let remaining = total - (decoded.data?.total_usage ?? 0)
             let value = String(format: "%.2f credits left", max(remaining, 0))
             return [UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: max(remaining, 0), balanceTotal: total)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

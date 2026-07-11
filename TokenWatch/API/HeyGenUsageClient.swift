@@ -35,7 +35,8 @@ enum HeyGenUsageClient {
             let credits = quota / 60.0
             let value = String(format: "%.0f credits", credits)
             return [UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: credits)]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

@@ -33,7 +33,7 @@ enum Term {
         }
     }
 
-    /// 서비스 운영 상태(ServiceHealth) 표시색 — 상태 배지 점(●)·라벨에 공통으로 쓴다.
+    /// 서비스 운영 상태(ServiceHealth) 표시색 — 라벨 텍스트에 쓴다(검은 배경 가독성 유지).
     static func serviceHealthColor(_ health: ServiceHealth) -> Color {
         switch health {
         case .operational: return green
@@ -42,6 +42,13 @@ enum Term {
         case .maintenance: return blue
         case .unknown:     return dim
         }
+    }
+
+    /// 상태 배지 점(●) 전용 색. 조회 불가/미상(unknown) 회색은 투명도를 크게 낮춰
+    /// 검은 배경에 묻히는 "꺼진 점"처럼 표시한다. 정상(초록)·장애(노랑/빨강) 점이 밝게
+    /// 켜져 있는 카드들 사이에서 문제 있는 카드를 한눈에 구분하기 위함(라벨엔 쓰지 않음).
+    static func serviceHealthDotColor(_ health: ServiceHealth) -> Color {
+        health == .unknown ? dim.opacity(0.4) : serviceHealthColor(health)
     }
 }
 

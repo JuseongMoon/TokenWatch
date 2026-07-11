@@ -34,7 +34,8 @@ enum PoeUsageClient {
             let points = decoded.current_point_balance ?? 0
             let value = "\(Self.grouped(points)) pts"
             return [UsageWindow(label: "Compute points", usedPercent: 0, resetsAt: nil,
-                                kind: .weekly, style: .balance, valueText: value)]
+                                kind: .weekly, style: .balance, valueText: value,
+                                balanceRemaining: Double(points))]
         } catch {
             throw UsageError.decode(error.localizedDescription)
         }

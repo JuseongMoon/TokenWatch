@@ -18,6 +18,9 @@ struct TerminalGauge: View {
     let fillColor: Color
     /// 0...1, 창 안에서 현재 시각의 위치. nil이면 마커 미표시.
     let elapsedFraction: Double?
+    /// 채움 방향. false(기본)=구독형(채움=사용량). true=충전형(채움=남은 잔액, 역방향).
+    /// usedFraction엔 두 경우 모두 "소비율"이 들어오므로, 슬라임 트리거(used≥0.995)는 동일하게 동작한다.
+    var fillsRemaining: Bool = false
     /// 그래픽 바의 높이.
     var height: CGFloat = 14
     /// 양 끝 대괄호 폰트 크기.
@@ -30,6 +33,15 @@ struct TerminalGauge: View {
 
     private var used: Double { min(1, max(0, usedFraction)) }
     private var elapsed: Double? { elapsedFraction.map { min(1, max(0, $0)) } }
+    /// 실제 채움 폭 비율 — 구독형은 사용량, 충전형은 남은 잔액.
+    private var fill: Double { Self.fillFraction(used: used, fillsRemaining: fillsRemaining) }
+
+    /// 채움 비율(0...1). 구독형은 사용량(used), 충전형(fillsRemaining)은 남은 잔액(1−used)을 그린다.
+    /// (뷰 밖 순수 함수 — 방향 반전 로직을 단위 테스트로 고정한다.)
+    static func fillFraction(used: Double, fillsRemaining: Bool) -> Double {
+        let u = min(1, max(0, used))
+        return fillsRemaining ? 1 - u : u
+    }
 
     var body: some View {
         HStack(spacing: 3) {
@@ -38,7 +50,9 @@ struct TerminalGauge: View {
             Text("]").font(.term(bracketSize)).foregroundStyle(Term.dim)
         }
         .accessibilityElement()
-        .accessibilityLabel(loc.a11yUsed(Int((used * 100).rounded())))
+        .accessibilityLabel(fillsRemaining
+            ? loc.a11yRemaining(Int(((1 - used) * 100).rounded()))
+            : loc.a11yUsed(Int((used * 100).rounded())))
     }
 
     private var bar: some View {
@@ -47,7 +61,7 @@ struct TerminalGauge: View {
             ZStack(alignment: .leading) {
                 DottedTrack(color: Term.dim)                         // 트랙 ░
                 BlockFill(color: fillColor)                          // 채움 █ (연속 폭)
-                    .frame(width: max(0, w * used))
+                    .frame(width: max(0, w * fill))
                     .clipped()
                 if let elapsed {                                     // 마커 ╎ (정확 위치)
                     // 흰색 + 검은 테두리 — green/yellow/red 채움과 도트 트랙 어디서든 뚜렷하게.

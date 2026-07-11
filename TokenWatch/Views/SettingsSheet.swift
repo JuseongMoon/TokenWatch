@@ -44,6 +44,7 @@ struct SettingsSheet: View {
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
     @AppStorage("tokenwatch.heartbeatTargetAgent") private var heartbeatTargetAgent = ""
@@ -198,22 +199,44 @@ struct SettingsSheet: View {
 
     private var displaySection: some View {
         TerminalBox(title: "DISPLAY") {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    hideUnusedWindows.toggle()
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(hideUnusedWindows ? "[x]" : "[ ]")
-                            .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
-                        Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
-                        Spacer()
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        hideUnusedWindows.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(hideUnusedWindows ? "[x]" : "[ ]")
+                                .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
+                            Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
+                            Spacer()
+                        }
+                        .font(.term(14))
                     }
-                    .font(.term(14))
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Text(loc.settingsHideUnusedHelp)
-                    .font(.term(10)).foregroundStyle(Term.dim)
+                    Text(loc.settingsHideUnusedHelp)
+                        .font(.term(10)).foregroundStyle(Term.dim)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        gaugeCritter.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(gaugeCritter ? "[x]" : "[ ]")
+                                .foregroundStyle(gaugeCritter ? Term.green : Term.dim)
+                            Text("gauge slime").foregroundStyle(Term.fg)
+                            PixelSpriteView(sprite: .slime, frameIndex: 1, cell: 2,
+                                            flatColor: gaugeCritter ? nil : Term.dim)
+                            Spacer()
+                        }
+                        .font(.term(14))
+                    }
+                    .buttonStyle(.plain)
+
+                    Text(loc.settingsGaugeCritterHelp)
+                        .font(.term(10)).foregroundStyle(Term.dim)
+                }
             }
         }
     }

@@ -24,6 +24,8 @@ struct TerminalGauge: View {
     var bracketSize: CGFloat = 13
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    /// 소진 게이지 위 픽셀 슬라임 표시 여부(설정 DISPLAY). 기본 켜짐.
+    @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     private var used: Double { min(1, max(0, usedFraction)) }
@@ -56,7 +58,7 @@ struct TerminalGauge: View {
                         .position(x: min(w - 1, max(1, w * elapsed)), y: geo.size.height / 2)
                         .shadow(color: .black.opacity(0.5), radius: 1.5)
                 }
-                if used >= GaugeCritter.threshold {                  // 소진: 슬라임 행진
+                if gaugeCritter, used >= GaugeCritter.threshold {    // 소진: 슬라임 행진
                     GaugeCritter(barSize: geo.size)
                 }
             }

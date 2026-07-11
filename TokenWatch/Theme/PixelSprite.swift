@@ -57,13 +57,15 @@ struct PixelSpriteView: View {
     let sprite: PixelSprite
     let frameIndex: Int
     let cell: CGFloat
+    /// nil이면 팔레트 색으로 렌더. 값이 있으면 실루엣 전체를 그 색 하나로(설정 off 미리보기 등).
+    var flatColor: Color? = nil
 
     var body: some View {
         let bitmap = sprite.frames[frameIndex % sprite.frames.count]
         Canvas { ctx, _ in
             for (r, row) in bitmap.enumerated() {
                 for (c, v) in row.enumerated() where v != 0 {
-                    guard let color = sprite.palette[v] else { continue }
+                    guard let color = flatColor ?? sprite.palette[v] else { continue }
                     ctx.fill(Path(CGRect(x: CGFloat(c) * cell, y: CGFloat(r) * cell,
                                          width: cell, height: cell)),
                              with: .color(color))

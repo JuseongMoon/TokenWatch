@@ -86,6 +86,10 @@ struct L10n: Sendable {
         lang == .ko ? "사용률이 0%인(전혀 쓰지 않은) 그래프를 목록·상세에서 숨깁니다."
                     : "Hides usage graphs sitting at 0% from the list and detail."
     }
+    var settingsGaugeCritterHelp: String {
+        lang == .ko ? "사용률 100%가 된 게이지 위를 픽셀 슬라임이 통통 튀며 지나갑니다."
+                    : "A pixel slime hops across any gauge that hits 100%."
+    }
     var settingsHeartbeatHelp: String {
         lang == .ko ? "'$ watching …' 뒤 커서를 언더바 대신 하트로 표시합니다."
                     : "Shows a heart instead of the underscore cursor after '$ watching …'."

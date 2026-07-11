@@ -81,6 +81,10 @@ struct L10n: Sendable {
         lang == .ko ? "사용률이 0%인(전혀 쓰지 않은) 그래프를 목록·상세에서 숨깁니다."
                     : "Hides usage graphs sitting at 0% from the list and detail."
     }
+    var settingsHeartbeatHelp: String {
+        lang == .ko ? "'$ watching …' 뒤 커서를 언더바 대신 하트로 표시합니다."
+                    : "Shows a heart instead of the underscore cursor after '$ watching …'."
+    }
     var settingsLanguageHelp: String {
         lang == .ko ? "시스템 언어를 따르거나 직접 선택합니다."
                     : "Follow the system language or pick one manually."

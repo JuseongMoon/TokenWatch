@@ -14,6 +14,7 @@ struct ContentView: View {
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
+    @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -106,7 +107,11 @@ struct ContentView: View {
         HStack(spacing: 6) {
             Text("$").foregroundStyle(Term.dim)
             Text(statusLine).foregroundStyle(Term.fg)
-            BlinkingCursor(symbol: "_", color: Term.green, size: 13)
+            if heartbeatCursor {
+                BlinkingHeart(size: 11)
+            } else {
+                BlinkingCursor(symbol: "_", color: Term.green, size: 13)
+            }
         }
         .font(.term(12))
     }

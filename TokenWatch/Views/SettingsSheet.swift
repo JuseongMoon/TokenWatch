@@ -34,6 +34,7 @@ struct SettingsSheet: View {
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
@@ -172,22 +173,43 @@ struct SettingsSheet: View {
 
     private var displaySection: some View {
         TerminalBox(title: "DISPLAY") {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    hideUnusedWindows.toggle()
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(hideUnusedWindows ? "[x]" : "[ ]")
-                            .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
-                        Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
-                        Spacer()
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        hideUnusedWindows.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(hideUnusedWindows ? "[x]" : "[ ]")
+                                .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
+                            Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
+                            Spacer()
+                        }
+                        .font(.term(14))
                     }
-                    .font(.term(14))
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Text(loc.settingsHideUnusedHelp)
-                    .font(.term(10)).foregroundStyle(Term.dim)
+                    Text(loc.settingsHideUnusedHelp)
+                        .font(.term(10)).foregroundStyle(Term.dim)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        heartbeatCursor.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(heartbeatCursor ? "[x]" : "[ ]")
+                                .foregroundStyle(heartbeatCursor ? Term.green : Term.dim)
+                            Text("heartbeat cursor").foregroundStyle(Term.fg)
+                            PixelHeart(flatColor: heartbeatCursor ? nil : Term.dim, size: 15)
+                            Spacer()
+                        }
+                        .font(.term(14))
+                    }
+                    .buttonStyle(.plain)
+
+                    Text(loc.settingsHeartbeatHelp)
+                        .font(.term(10)).foregroundStyle(Term.dim)
+                }
             }
         }
     }

@@ -70,6 +70,77 @@ struct BlinkingCursor: View {
     }
 }
 
+/// 픽셀 격자 하트. 11×10 비트맵을 작은 사각형으로 그린다. 세 톤(기본·하이라이트·그림자)으로
+/// 위-왼쪽에서 빛을 받는 반사광을 픽셀 음영으로 표현한다. 모노스페이스 텍스트 옆 커서 대체용.
+struct PixelHeart: View {
+    /// 하트 전용 선명한 레드. ANSI 위험색(Term.red, 코랄톤)보다 채도가 높은 별도 색.
+    static let heartRed       = Color(red: 1.0,  green: 0.20, blue: 0.27)    // #FF3345 기본
+    static let heartHighlight = Color(red: 1.0,  green: 0.82, blue: 0.86)    // #FFD1DB 반사광
+    static let heartShadow    = Color(red: 0.76, green: 0.09, blue: 0.19)    // #C21830 그림자
+
+    /// nil이면 3톤 광택 렌더. 값이 있으면 실루엣 전체를 그 색 하나로(설정 off 미리보기 등).
+    var flatColor: Color? = nil
+    /// 하트 높이(대략 폰트 cap-height에 맞춘다). 픽셀 한 칸 = size / 행 수.
+    var size: CGFloat = 11
+
+    // 0=빈칸 1=기본 2=하이라이트 3=그림자. 위 두 돌기→아래 한 점, 왼쪽 위 반사광·오른쪽 아래 그림자.
+    private static let bitmap: [[Int]] = [
+        [0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0],
+        [0, 1, 2, 2, 1, 0, 1, 1, 1, 1, 0],
+        [1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3],
+        [0, 1, 1, 1, 1, 1, 1, 1, 3, 3, 0],
+        [0, 0, 1, 1, 1, 1, 1, 3, 3, 0, 0],
+        [0, 0, 0, 1, 1, 1, 3, 3, 0, 0, 0],
+        [0, 0, 0, 0, 1, 1, 3, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0],
+    ]
+
+    var body: some View {
+        let rows = Self.bitmap.count
+        let cols = Self.bitmap[0].count
+        let cell = size / CGFloat(rows)
+        Canvas { ctx, _ in
+            for (r, row) in Self.bitmap.enumerated() {
+                for (c, v) in row.enumerated() where v != 0 {
+                    let rect = CGRect(x: CGFloat(c) * cell, y: CGFloat(r) * cell,
+                                      width: cell, height: cell)
+                    ctx.fill(Path(rect), with: .color(flatColor ?? Self.tone(v)))
+                }
+            }
+        }
+        .frame(width: cell * CGFloat(cols), height: cell * CGFloat(rows))
+        .accessibilityHidden(true)
+    }
+
+    private static func tone(_ v: Int) -> Color {
+        switch v {
+        case 2:  return heartHighlight
+        case 3:  return heartShadow
+        default: return heartRed
+        }
+    }
+}
+
+/// 하트 커서. BlinkingCursor와 같은 주기로 심장박동처럼 켜졌다 꺼진다.
+/// 상태 프롬프트의 언더바 커서를 대체한다.
+struct BlinkingHeart: View {
+    var size: CGFloat = 11
+    /// 전체 깜빡임 주기(초).
+    var period: Double = 1.0
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: period / 2)) { context in
+            let half = period / 2
+            let phase = Int(context.date.timeIntervalSinceReferenceDate / half) % 2
+            PixelHeart(size: size)
+                .opacity(phase == 0 ? 1 : 0)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 /// 브라유 점 회전 ASCII 스피너. 로딩/조회 중 표시.
 struct TerminalSpinner: View {
     var color: Color = Term.green

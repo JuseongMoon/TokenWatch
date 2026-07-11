@@ -93,16 +93,33 @@ struct ContentView: View {
         .background(Term.bg)
     }
 
-    /// 앱 이름 라인 (`tokenwatch v1.0`).
+    /// `tokenwatch` 타이틀의 글자별 색 — 참조 이미지 `ultrathink`의 파스텔 무지개
+    /// (xterm-256 팔레트)를 글자 순서 그대로 t·o·k·e·n·w·a·t·c·h 에 대응시킨다.
+    private static let titleColors: [Color] = [
+        Color(red: 1.000, green: 0.529, blue: 0.529),   // t  #FF8787
+        Color(red: 1.000, green: 0.686, blue: 0.529),   // o  #FFAF87
+        Color(red: 1.000, green: 0.843, blue: 0.529),   // k  #FFD787
+        Color(red: 0.686, green: 0.843, blue: 0.686),   // e  #AFD7AF
+        Color(red: 0.686, green: 0.686, blue: 0.843),   // n  #AFAFD7
+        Color(red: 0.686, green: 0.686, blue: 0.843),   // w  #AFAFD7
+        Color(red: 0.843, green: 0.686, blue: 0.843),   // a  #D7AFD7
+        Color(red: 1.000, green: 0.529, blue: 0.529),   // t  #FF8787
+        Color(red: 1.000, green: 0.686, blue: 0.529),   // c  #FFAF87
+        Color(red: 1.000, green: 0.843, blue: 0.529),   // h  #FFD787
+    ]
+
+    /// 앱 이름 라인 (`tokenwatch v1.0`). 글자마다 titleColors 색과 같은 색의 글로우.
     private var appNameLine: some View {
         HStack(spacing: 0) {
-            Text("token").foregroundStyle(Term.green)
-            Text("watch").foregroundStyle(Term.cyan)
+            ForEach(Array("tokenwatch".enumerated()), id: \.offset) { i, ch in
+                Text(String(ch))
+                    .foregroundStyle(Self.titleColors[i])
+                    .terminalGlow(Self.titleColors[i], radius: 2)
+            }
             Text("  v\(appVersion)")
                 .font(.term(11)).foregroundStyle(Term.dim)
         }
         .font(.term(19, weight: .bold))
-        .terminalGlow(Term.green, radius: 2)
     }
 
     /// 상태 프롬프트 라인 (`$ watching N agents _`).

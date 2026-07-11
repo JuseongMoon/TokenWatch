@@ -154,12 +154,9 @@ enum ProviderUsage {
 
     /// 게이트/갱신/에러 처리를 포함한 스냅샷 조회(모든 provider 공통).
     static func fetchSnapshot(_ provider: AgentProvider, for agentID: UUID) async -> AgentSnapshot {
-        // 429 backoff 게이트가 닫혀있으면 마지막 성공값을 사용.
+        // 429 backoff 게이트가 닫혀있으면 캐시 그래프를 유지하며 재시도 안내를 표시.
         if let until = await RateLimitGate.shared.blocked(for: agentID) {
-            if let cached = await RateLimitGate.shared.lastGood(for: agentID) { return cached }
-            let mins = max(1, Int(until.timeIntervalSinceNow) / 60 + 1)
-            return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
-                                 error: L10n(lang: currentLang()).errRateLimitedRetry(mins))
+            return await rateLimitedSnapshot(agentID: agentID, until: until)
         }
 
         do {
@@ -177,12 +174,27 @@ enum ProviderUsage {
             return snapshot
         } catch UsageError.rateLimited(let retryAfter) {
             await RateLimitGate.shared.recordRateLimit(for: agentID, retryAfter: retryAfter)
-            if let cached = await RateLimitGate.shared.lastGood(for: agentID) { return cached }
-            return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
-                                 error: L10n(lang: currentLang()).errRateLimited)
+            let until = await RateLimitGate.shared.blocked(for: agentID)
+                ?? Date().addingTimeInterval(300)
+            return await rateLimitedSnapshot(agentID: agentID, until: until)
         } catch {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
+    }
+
+    /// 429 백오프 중 표시할 스냅샷. 캐시된 마지막 성공 그래프가 있으면 그 그래프를 그대로
+    /// 유지하되 "갱신 정지" 안내를 얹고(그래프는 지워지지 않는다), 캐시가 없으면 빈 그래프에
+    /// 재시도 메시지만 표시한다.
+    private static func rateLimitedSnapshot(agentID: UUID, until: Date) async -> AgentSnapshot {
+        let mins = max(1, Int(until.timeIntervalSinceNow) / 60 + 1)
+        let lang = currentLang()
+        if let cached = await RateLimitGate.shared.lastGood(for: agentID) {
+            return AgentSnapshot(windows: cached.windows, planLabel: cached.planLabel,
+                                 fetchedAt: cached.fetchedAt,
+                                 error: L10n(lang: lang).errRateLimitedRetryStale(mins))
+        }
+        return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
+                             error: L10n(lang: lang).errRateLimitedRetry(mins))
     }
 }

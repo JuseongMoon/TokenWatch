@@ -64,6 +64,8 @@ struct AgentCardView: View {
     private var content: some View {
         if let snapshot, !snapshot.windows.isEmpty {
             let windows = visibleWindows(snapshot.windows)
+            // 에러(429 등)는 이름과 그래프 사이에 표시하고, 그래프는 지우지 않고 그대로 유지한다.
+            if let error = snapshot.error { errorRow(error) }
             if windows.isEmpty {
                 // 모든 창이 미사용(0%)이라 숨겨진 경우 — 카드가 비지 않도록 안내.
                 Text(loc.usageAllUnusedHidden)
@@ -74,7 +76,6 @@ struct AgentCardView: View {
                     UsageBar(window: window)
                 }
             }
-            if let error = snapshot.error { errorRow(error) }   // last-good 유지 중 에러
         } else if let error = snapshot?.error {
             errorRow(error)
         } else if isLoading {
@@ -123,6 +124,22 @@ struct AgentCardView: View {
                 agent: Agent(provider: .codex, accountLabel: "dev@sciencefiction.co.kr"),
                 snapshot: nil, isLoading: true,
                 serviceHealth: .degraded)
+            // 429 백오프: 캐시 그래프는 유지하고 이름과 그래프 사이에 안내가 뜬다.
+            AgentCardView(
+                agent: Agent(provider: .claude, accountLabel: "pro"),
+                snapshot: AgentSnapshot(
+                    windows: [
+                        UsageWindow(label: "Current session", usedPercent: 62,
+                                    resetsAt: Date().addingTimeInterval(2 * 3600),
+                                    kind: .session, windowSeconds: 5 * 3600),
+                        UsageWindow(label: "Current week (all models)", usedPercent: 91,
+                                    resetsAt: Date().addingTimeInterval(3 * 86400),
+                                    kind: .weekly, windowSeconds: 7 * 86400),
+                    ],
+                    planLabel: "pro", fetchedAt: Date(),
+                    error: "요청이 많아 대기 중입니다. 약 4분 후 재시도 · 아래 그래프는 갱신되지 않습니다."),
+                isLoading: false,
+                serviceHealth: .operational)
         }
         .padding(16)
     }

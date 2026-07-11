@@ -207,6 +207,12 @@ struct L10n: Sendable {
         lang == .ko ? "요청이 많아 잠시 대기 중입니다. 약 \(mins)분 후 재시도합니다."
                     : "Too many requests. Retrying in ~\(mins) min."
     }
+    /// 429 백오프 중 캐시된 그래프를 계속 보여줄 때: 재시도 안내 + 아래 그래프가 갱신 정지
+    /// 상태임을 함께 알린다(그래프는 이름 아래 이 안내 다음에 그려진다).
+    func errRateLimitedRetryStale(_ mins: Int) -> String {
+        lang == .ko ? "요청이 많아 대기 중입니다. 약 \(mins)분 후 재시도 · 아래 그래프는 갱신되지 않습니다."
+                    : "Too many requests. Retrying in ~\(mins) min · usage below isn't updating."
+    }
     func errTokenExchange(_ m: String) -> String { lang == .ko ? "토큰 교환 실패: \(m)" : "Token exchange failed: \(m)" }
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }

@@ -12,14 +12,19 @@ import Foundation
 enum ClaudeUsageClient {
     static let usageURL = "https://api.anthropic.com/api/oauth/usage"
     static let betaHeader = "oauth-2025-04-20"
+    // oauth/usage는 클라이언트 식별에 민감하다. 공식 Claude Code(참조: TokenBar
+    // agent_usage.rs claude_user_agent) 형식으로 맞춰야 429가 덜 발생한다.
+    // iOS엔 claude CLI가 없어 버전 동적 탐지 불가 → 고정 문자열(추후 갱신 가능).
+    static let userAgent = "claude-code/2.1.0"
 
     static func fetch(tokens: OAuthTokens) async throws -> [UsageWindow] {
         var req = URLRequest(url: URL(string: usageURL)!)
         req.httpMethod = "GET"
         req.setValue("Bearer \(tokens.accessToken)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(betaHeader, forHTTPHeaderField: "anthropic-beta")
-        req.setValue("TokenWatch/1.0", forHTTPHeaderField: "User-Agent")
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: req)
         let http = response as? HTTPURLResponse

@@ -35,6 +35,12 @@ final class AgentStore {
     /// 상태 재조회 최소 간격(초). 사용량 폴링(최소 30초)과 무관하게 상태는 이 간격으로만 갱신.
     @ObservationIgnored private let statusMinInterval: TimeInterval = 60
 
+    /// 에이전트별 마지막 조회 시작 시각 — 짧은 간격 중복/버스트 조회를 막는 스로틀 기준.
+    @ObservationIgnored private var lastFetchAt: [UUID: Date] = [:]
+    /// 사용량 재조회 최소 간격(초). 최소 폴링 하한(30초)보다 낮게 둬 정상 폴링은 막지 않고
+    /// 포그라운드 재진입/중복 트리거 버스트만 흡수한다.
+    @ObservationIgnored private let minFetchSpacing: TimeInterval = 20
+
     private let defaultsKey = "tokenwatch.agents.v1"
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
@@ -118,6 +124,12 @@ final class AgentStore {
     }
 
     func refresh(_ agent: Agent) async {
+        // 이미 조회 중이면 중복 실행 방지.
+        guard !loadingIDs.contains(agent.id) else { return }
+        // 최근 minFetchSpacing 안에 이미 조회했으면 캐시 유지(버스트 흡수).
+        if let last = lastFetchAt[agent.id],
+           Date().timeIntervalSince(last) < minFetchSpacing { return }
+        lastFetchAt[agent.id] = Date()
         loadingIDs.insert(agent.id)
         defer { loadingIDs.remove(agent.id) }
         let snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id)

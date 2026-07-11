@@ -181,7 +181,8 @@ struct ContentView: View {
                             AgentCardView(
                                 agent: agent,
                                 snapshot: store.snapshots[agent.id],
-                                isLoading: store.loadingIDs.contains(agent.id)
+                                isLoading: store.loadingIDs.contains(agent.id),
+                                serviceHealth: store.serviceStatus[agent.provider]
                             )
                         }
                         .buttonStyle(.plain)

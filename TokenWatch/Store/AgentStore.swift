@@ -26,6 +26,15 @@ final class AgentStore {
     private(set) var snapshots: [UUID: AgentSnapshot] = [:]
     private(set) var loadingIDs: Set<UUID> = []
 
+    /// provider별 서비스 운영 상태(정상/장애/점검). 사용량과 별개 축이라 provider 단위로
+    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter·Grok·Leonardo)는 키가 없으며,
+    /// UI는 그 경우를 "알 수 없음"으로 취급한다.
+    private(set) var serviceStatus: [AgentProvider: ServiceHealth] = [:]
+    /// provider별 마지막 상태 조회 시각 — 짧은 간격 중복 조회를 막는 스로틀 기준.
+    @ObservationIgnored private var statusFetchedAt: [AgentProvider: Date] = [:]
+    /// 상태 재조회 최소 간격(초). 사용량 폴링(최소 30초)과 무관하게 상태는 이 간격으로만 갱신.
+    @ObservationIgnored private let statusMinInterval: TimeInterval = 60
+
     private let defaultsKey = "tokenwatch.agents.v1"
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
@@ -135,6 +144,27 @@ final class AgentStore {
 
         // 새 스냅샷이 반영됐으니 다음 리셋 시각의 추가 새로고침을 재예약한다.
         scheduleResetRefresh()
+
+        // 서비스 운영 상태도 함께 최신화(스로틀 — 실제 조회는 최소 간격마다 한 번).
+        await refreshStatus(for: agent.provider)
+    }
+
+    // MARK: 서비스 운영 상태 조회
+
+    /// provider의 상태 페이지 JSON을 조회해 serviceStatus를 갱신한다.
+    /// - 엔드포인트가 없는 provider는 즉시 반환(항상 "알 수 없음"으로 남는다).
+    /// - force가 아니면 statusMinInterval 안에는 재조회하지 않는다.
+    /// - 조회 실패는 ServiceStatusClient가 .unknown으로 흡수한다(예외 없음).
+    func refreshStatus(for provider: AgentProvider, force: Bool = false) async {
+        guard let source = provider.statusSource else { return }
+        let now = Date()
+        if !force, let last = statusFetchedAt[provider],
+           now.timeIntervalSince(last) < statusMinInterval { return }
+        // await 전에 시각을 먼저 찍어, 동시에 여러 에이전트가 같은 provider를 조회할 때
+        // 중복 요청을 막는다.
+        statusFetchedAt[provider] = now
+        let health = await ServiceStatusClient.fetch(source)
+        serviceStatus[provider] = health
     }
 
     // MARK: 자동 새로고침 (포그라운드 전용)

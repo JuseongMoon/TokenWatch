@@ -109,6 +109,7 @@ struct L10n: Sendable {
 
     // MARK: 상세(AgentDetailView)
     var a11yBack: String           { lang == .ko ? "뒤로" : "Back" }
+    var a11yStatusPage: String     { lang == .ko ? "서비스 상태 페이지 열기" : "Open service status page" }
     var logoutConfirmTitle: String { lang == .ko ? "로그아웃하시겠어요?" : "Log out?" }
     var logout: String             { lang == .ko ? "로그아웃" : "Log out" }
     var cancel: String             { lang == .ko ? "취소" : "Cancel" }
@@ -232,6 +233,17 @@ struct L10n: Sendable {
         switch category {
         case .subscription: return lang == .ko ? "구독 사용량" : "subscription"
         case .apiCredit:    return lang == .ko ? "API 크레딧" : "API credit"
+        }
+    }
+
+    // MARK: 서비스 운영 상태(ServiceHealth)
+    func serviceHealthLabel(_ health: ServiceHealth) -> String {
+        switch health {
+        case .operational: return lang == .ko ? "정상" : "operational"
+        case .degraded:    return lang == .ko ? "일부 저하" : "degraded"
+        case .major:       return lang == .ko ? "장애" : "outage"
+        case .maintenance: return lang == .ko ? "점검 중" : "maintenance"
+        case .unknown:     return lang == .ko ? "알 수 없음" : "unknown"
         }
     }
 

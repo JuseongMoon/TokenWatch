@@ -32,6 +32,17 @@ enum Term {
         default:    return green
         }
     }
+
+    /// 서비스 운영 상태(ServiceHealth) 표시색 — 상태 배지 점(●)·라벨에 공통으로 쓴다.
+    static func serviceHealthColor(_ health: ServiceHealth) -> Color {
+        switch health {
+        case .operational: return green
+        case .degraded:    return yellow
+        case .major:       return red
+        case .maintenance: return blue
+        case .unknown:     return dim
+        }
+    }
 }
 
 extension Font {
@@ -70,6 +81,10 @@ struct BlinkingCursor: View {
     }
 }
 
+/// 하트를 세로로 나눈 조각. 반쪽 잔여 표기·부분(오른쪽 반) 깜빡임에 쓴다.
+/// left(가운데 열 포함) + right 를 겹치면 full 하트와 정확히 같다.
+enum HeartPart { case full, left, right }
+
 /// 픽셀 격자 하트. 11×10 비트맵을 작은 사각형으로 그린다. 세 톤(기본·하이라이트·그림자)으로
 /// 위-왼쪽에서 빛을 받는 반사광을 픽셀 음영으로 표현한다. 모노스페이스 텍스트 옆 커서 대체용.
 struct PixelHeart: View {
@@ -80,8 +95,8 @@ struct PixelHeart: View {
 
     /// nil이면 3톤 광택 렌더. 값이 있으면 실루엣 전체를 그 색 하나로(설정 off 미리보기 등).
     var flatColor: Color? = nil
-    /// 세로로 왼쪽 절반만 그린다(반쪽 하트 — 잔여율 10% 단위 표기).
-    var half: Bool = false
+    /// 하트 조각(전체 / 왼쪽 반 / 오른쪽 반). 반쪽은 잔여율 10% 단위·부분 깜빡임에 쓴다.
+    var part: HeartPart = .full
     /// 채움 없이 흰 외곽선만 그린다(사용량 소진 표시).
     var outline: Bool = false
     /// 하트 높이(대략 폰트 cap-height에 맞춘다). 픽셀 한 칸 = size / 행 수.
@@ -109,7 +124,11 @@ struct PixelHeart: View {
         Canvas { ctx, _ in
             for (r, row) in Self.bitmap.enumerated() {
                 for (c, v) in row.enumerated() where v != 0 {
-                    if half && c > centerCol { continue }             // 오른쪽 절반 제거
+                    switch part {                                     // 세로 반쪽 컷(가운데 열은 왼쪽에 포함)
+                    case .full:  break
+                    case .left:  if c > centerCol { continue }
+                    case .right: if c <= centerCol { continue }
+                    }
                     if outline && !Self.isEdge(r, c) { continue }     // 가장자리 칸만
                     let rect = CGRect(x: CGFloat(c) * cell, y: CGFloat(r) * cell,
                                       width: cell, height: cell)
@@ -169,7 +188,8 @@ struct BlinkingHeart: View {
 }
 
 /// 사용량 추적 하트 바. 선택한 그래프의 잔여율을 최대 5개 하트로 표현한다(10%당 반 칸).
-/// 맨 오른쪽 하트만 깜빡이고, 소진(100%)되면 흰 외곽선 하트가 깜빡인다.
+/// 잔여의 "마지막 반 칸"만 깜빡인다 — 맨 오른쪽이 꽉 찬 하트면 그 오른쪽 반만, 반쪽 하트면
+/// 그 반쪽이 통째로. 소진(100%)되면 흰 외곽선 하트가 깜빡인다.
 struct HeartHealthBar: View {
     /// 추적 대상 창의 사용률(0...100).
     var usedPercent: Double
@@ -183,16 +203,19 @@ struct HeartHealthBar: View {
                 // 소진: 흰 외곽선 하트가 깜빡.
                 TerminalBlink { PixelHeart(outline: true, size: size) }
             } else {
-                let full = h / 2
-                let hasHalf = h % 2 == 1
-                let slots = full + (hasHalf ? 1 : 0)          // 표시할 하트 칸 수(1...5)
+                let slots = (h + 1) / 2                        // 표시할 하트 칸 수(1...5, ceil)
                 ForEach(0..<slots, id: \.self) { i in
-                    let isLast = i == slots - 1
-                    let heart = PixelHeart(half: hasHalf && isLast, size: size)
-                    if isLast {
-                        TerminalBlink { heart }               // 맨 오른쪽(잔여 끝)만 깜빡
+                    if i < slots - 1 {
+                        PixelHeart(size: size)                // 앞쪽: 꽉 찬 하트(정지)
+                    } else if h % 2 == 0 {
+                        // 맨 오른쪽이 꽉 찬 하트 → 왼쪽 반 정지 + 오른쪽 반만 깜빡.
+                        ZStack {
+                            PixelHeart(part: .left, size: size)
+                            TerminalBlink { PixelHeart(part: .right, size: size) }
+                        }
                     } else {
-                        heart
+                        // 맨 오른쪽이 반쪽 하트 → 그 반쪽(왼쪽 반)이 통째로 깜빡.
+                        TerminalBlink { PixelHeart(part: .left, size: size) }
                     }
                 }
             }

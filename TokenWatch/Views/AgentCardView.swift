@@ -12,6 +12,9 @@ struct AgentCardView: View {
     let agent: Agent
     let snapshot: AgentSnapshot?
     let isLoading: Bool
+    /// 이 provider의 서비스 운영 상태. nil이면(엔드포인트 미지원 provider) 상태 줄을 감춘다
+    /// — 메인 목록에는 조회 가능한 provider의 상태만 노출한다.
+    var serviceHealth: ServiceHealth? = nil
 
     @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
@@ -20,7 +23,24 @@ struct AgentCardView: View {
     var body: some View {
         TerminalBox(title: titleText, titleColor: agent.provider.terminalColor) {
             VStack(alignment: .leading, spacing: 12) {
+                statusLine
                 content
+            }
+        }
+    }
+
+    /// 서비스 상태 배지 한 줄(`● 정상`). 조회 가능한 provider에서만 표시.
+    @ViewBuilder
+    private var statusLine: some View {
+        if let health = serviceHealth {
+            HStack(spacing: 5) {
+                Text("●")
+                    .font(.term(9))
+                    .foregroundStyle(Term.serviceHealthColor(health))
+                Text(loc.serviceHealthLabel(health))
+                    .font(.term(10))
+                    .foregroundStyle(Term.dim)
+                Spacer(minLength: 0)
             }
         }
     }
@@ -97,10 +117,12 @@ struct AgentCardView: View {
                                     kind: .weekly, windowSeconds: 7 * 86400),
                     ],
                     planLabel: "pro", fetchedAt: Date(), error: nil),
-                isLoading: false)
+                isLoading: false,
+                serviceHealth: .operational)
             AgentCardView(
                 agent: Agent(provider: .codex, accountLabel: "dev@sciencefiction.co.kr"),
-                snapshot: nil, isLoading: true)
+                snapshot: nil, isLoading: true,
+                serviceHealth: .degraded)
         }
         .padding(16)
     }

@@ -56,7 +56,10 @@ struct AgentDetailView: View {
             }
             PlainToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await store.refresh(agent) }
+                    Task {
+                        await store.refresh(agent)
+                        await store.refreshStatus(for: agent.provider, force: true)
+                    }
                 } label: {
                     Text("[refresh]")
                         .font(.term(13, weight: .semibold))
@@ -69,6 +72,7 @@ struct AgentDetailView: View {
             }
         }
         .task { account = await store.accountInfo(for: agent) }
+        .task { await store.refreshStatus(for: agent.provider) }
         .refreshable { await store.refresh(agent) }
         .confirmationDialog(loc.logoutConfirmTitle, isPresented: $showLogoutConfirm, titleVisibility: .visible) {
             Button(loc.logout, role: .destructive) {
@@ -187,6 +191,7 @@ struct AgentDetailView: View {
                     KVRow(key: "updated", value: relativeString(snapshot.fetchedAt), keyWidth: 96)
                 }
                 KVRow(key: "provider", value: agent.provider.displayName, keyWidth: 96)
+                serviceStatusRow
                 KVRow(key: "type", value: loc.usageCategoryLabel(agent.provider.usageCategory), keyWidth: 96)
                 if let account, !account.canRefresh, let exp = account.expiresAt {
                     KVRow(key: "re-login", value: absoluteString(exp),
@@ -194,6 +199,32 @@ struct AgentDetailView: View {
                 }
             }
         }
+    }
+
+    /// 서비스 운영 상태 한 줄: `service : ● 정상        [status ↗]`.
+    /// 상태를 볼 수 있는 공식 페이지가 있으면 오른쪽에 링크를 단다(Leonardo는 링크 없음).
+    private var serviceStatusRow: some View {
+        let health = store.serviceStatus[agent.provider] ?? .unknown
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("service")
+                .foregroundStyle(Term.cyan)
+                .frame(width: 96, alignment: .leading)
+            Text(":").foregroundStyle(Term.dim)
+            Text("●")
+                .font(.term(11))
+                .foregroundStyle(Term.serviceHealthColor(health))
+            Text(loc.serviceHealthLabel(health))
+                .foregroundStyle(Term.serviceHealthColor(health))
+            Spacer(minLength: 8)
+            if let url = agent.provider.statusPageURL {
+                Link(destination: url) {
+                    Text("[status ↗]")
+                        .foregroundStyle(Term.green)
+                }
+                .accessibilityLabel(loc.a11yStatusPage)
+            }
+        }
+        .font(.term(13))
     }
 
     // MARK: LOGOUT

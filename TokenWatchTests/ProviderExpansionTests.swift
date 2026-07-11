@@ -246,4 +246,78 @@ struct ProviderExpansionTests {
         let windows = WindsurfUsageClient.map(Data(json.utf8))
         #expect(windows.first?.usedPercent == 10)
     }
+
+    // MARK: 서비스 운영 상태 파싱(Atlassian / Instatus / Better Stack)
+
+    private func health(_ platform: StatusPlatform, _ json: String) -> ServiceHealth {
+        ServiceStatusClient.parse(platform, data: Data(json.utf8))
+    }
+
+    @Test func atlassianIndicatorMapping() {
+        #expect(health(.atlassian, #"{"status":{"indicator":"none","description":"All Systems Operational"}}"#) == .operational)
+        #expect(health(.atlassian, #"{"status":{"indicator":"minor"}}"#) == .degraded)
+        #expect(health(.atlassian, #"{"status":{"indicator":"major"}}"#) == .major)
+        #expect(health(.atlassian, #"{"status":{"indicator":"critical"}}"#) == .major)
+        #expect(health(.atlassian, #"{"status":{"indicator":"maintenance"}}"#) == .maintenance)
+        // 알 수 없는 값·형식 오류·빈 데이터는 모두 unknown(크래시 없음).
+        #expect(health(.atlassian, #"{"status":{"indicator":"weird"}}"#) == .unknown)
+        #expect(health(.atlassian, #"{}"#) == .unknown)
+        #expect(health(.atlassian, "not json") == .unknown)
+    }
+
+    @Test func instatusStatusMapping() {
+        #expect(health(.instatus, #"{"page":{"name":"fal","status":"UP"}}"#) == .operational)
+        #expect(health(.instatus, #"{"page":{"status":"HASISSUES"}}"#) == .degraded)
+        #expect(health(.instatus, #"{"page":{"status":"UNDERMAINTENANCE"}}"#) == .maintenance)
+        #expect(health(.instatus, #"{"page":{"status":"DOWN"}}"#) == .major)
+        #expect(health(.instatus, #"{"page":{}}"#) == .unknown)
+    }
+
+    @Test func betterStackStateMapping() {
+        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"operational"}}}"#) == .operational)
+        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"degraded"}}}"#) == .degraded)
+        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"downtime"}}}"#) == .major)
+        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"maintenance"}}}"#) == .maintenance)
+        #expect(health(.betterstack, #"{"data":{"attributes":{}}}"#) == .unknown)
+    }
+
+    // MARK: 상태 페이지 메타데이터 불변식
+
+    /// 머신리더블 엔드포인트가 없는(=메인 목록에 상태를 안 띄우는) provider 집합.
+    private let noStatusSource: Set<AgentProvider> = [.openrouter, .grok, .leonardo]
+
+    @Test func onlyProblematicProvidersLackStatusSource() {
+        for p in AgentProvider.allCases {
+            if noStatusSource.contains(p) {
+                #expect(p.statusSource == nil, "\(p)는 상태 소스가 없어야 함")
+            } else {
+                #expect(p.statusSource != nil, "\(p)는 상태 소스가 있어야 함")
+            }
+        }
+    }
+
+    @Test func onlyLeonardoLacksStatusPage() {
+        for p in AgentProvider.allCases {
+            if p == .leonardo {
+                #expect(p.statusPageURL == nil, "Leonardo는 상태 페이지가 없어야 함")
+            } else {
+                #expect(p.statusPageURL != nil, "\(p)는 상태 페이지 URL이 있어야 함")
+            }
+        }
+    }
+
+    @Test func statusSourceEndpointsAreStatusJSON() {
+        // Atlassian은 /api/v2/status.json, Instatus는 /summary.json으로 끝나야 한다.
+        for p in AgentProvider.allCases {
+            guard let source = p.statusSource else { continue }
+            switch source.platform {
+            case .atlassian:
+                #expect(source.jsonURL.absoluteString.hasSuffix("/api/v2/status.json"), "\(p) atlassian 경로")
+            case .instatus:
+                #expect(source.jsonURL.absoluteString.hasSuffix("/summary.json"), "\(p) instatus 경로")
+            case .betterstack:
+                #expect(source.jsonURL.absoluteString.hasSuffix("/index.json"), "\(p) betterstack 경로")
+            }
+        }
+    }
 }

@@ -216,6 +216,71 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .leonardo: return URL(string: "https://app.leonardo.ai/api-access")
         }
     }
+
+    /// 사람이 열어 볼 수 있는 공식 서비스 상태 페이지. 상세 화면의 [status ↗] 링크 대상.
+    /// Leonardo는 공식 상태 페이지가 없어 nil(장애 공지를 Intercom/X로만 안내).
+    var statusPageURL: URL? {
+        switch self {
+        case .claude:     return URL(string: "https://status.claude.com")
+        case .codex:      return URL(string: "https://status.openai.com")
+        case .copilot:    return URL(string: "https://www.githubstatus.com")
+        case .cursor:     return URL(string: "https://status.cursor.com")
+        case .windsurf:   return URL(string: "https://status.windsurf.com")
+        case .deepseek:   return URL(string: "https://status.deepseek.com")
+        case .poe:        return URL(string: "https://status.poe.com")
+        case .elevenlabs: return URL(string: "https://status.elevenlabs.io")
+        case .stability:  return URL(string: "https://status.stability.ai")
+        case .runway:     return URL(string: "https://status.runwayml.com")
+        case .did:        return URL(string: "https://status.d-id.com")
+        case .heygen:     return URL(string: "https://status.heygen.com")
+        case .fal:        return URL(string: "https://status.fal.ai")
+        case .recraft:    return URL(string: "https://status.recraft.ai")
+        case .luma:       return URL(string: "https://status.lumalabs.ai")
+        case .openrouter: return URL(string: "https://status.openrouter.ai")
+        case .grok:       return URL(string: "https://status.x.ai")
+        case .leonardo:   return nil
+        }
+    }
+
+    /// 서비스 운영 상태를 자동 조회할 공개 JSON 엔드포인트(+플랫폼). 없으면 nil.
+    /// nil인 provider(OpenRouter=turbo-stream 전용, Grok=Cloudflare 봇 차단,
+    /// Leonardo=상태 페이지 없음)는 메인 목록에 상태를 표시하지 않고, 상세에서만
+    /// "알 수 없음"으로 표기한다.
+    var statusSource: ServiceStatusSource? {
+        func atlassian(_ host: String) -> ServiceStatusSource {
+            ServiceStatusSource(platform: .atlassian,
+                                jsonURL: URL(string: "https://\(host)/api/v2/status.json")!)
+        }
+        func instatus(_ host: String) -> ServiceStatusSource {
+            ServiceStatusSource(platform: .instatus,
+                                jsonURL: URL(string: "https://\(host)/summary.json")!)
+        }
+        switch self {
+        // Atlassian Statuspage — /api/v2/status.json 공통 스키마.
+        case .claude:     return atlassian("status.claude.com")
+        case .codex:      return atlassian("status.openai.com")
+        case .copilot:    return atlassian("www.githubstatus.com")
+        case .cursor:     return atlassian("status.cursor.com")
+        case .windsurf:   return atlassian("status.windsurf.com")
+        // status.deepseek.com은 지역 DNS 제한으로 해석 실패할 수 있어, 전 세계에서
+        // 뜨는 원 호스트를 직접 조회한다(동일 페이지).
+        case .deepseek:   return atlassian("deepseek.statuspage.io")
+        case .poe:        return atlassian("status.poe.com")
+        case .elevenlabs: return atlassian("status.elevenlabs.io")
+        case .stability:  return atlassian("status.stability.ai")
+        case .runway:     return atlassian("status.runwayml.com")
+        case .did:        return atlassian("status.d-id.com")
+        case .heygen:     return atlassian("status.heygen.com")
+        // Instatus — /summary.json. 커스텀 도메인은 리다이렉트를 피해 원 호스트를 조회.
+        case .fal:        return instatus("status.fal.ai")
+        case .recraft:    return instatus("recraft.instatus.com")
+        // Better Stack — /index.json → data.attributes.aggregate_state.
+        case .luma:       return ServiceStatusSource(platform: .betterstack,
+                                                     jsonURL: URL(string: "https://status.lumalabs.ai/index.json")!)
+        // 신뢰할 만한 머신리더블 엔드포인트 없음.
+        case .openrouter, .grok, .leonardo: return nil
+        }
+    }
 }
 
 /// 사용자가 추가한 에이전트 항목. 리스트의 한 행에 대응한다.

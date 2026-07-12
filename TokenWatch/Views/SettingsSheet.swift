@@ -226,8 +226,8 @@ struct SettingsSheet: View {
                             Text(gaugeCritter ? "[x]" : "[ ]")
                                 .foregroundStyle(gaugeCritter ? Term.green : Term.dim)
                             Text("gauge slime").foregroundStyle(Term.fg)
-                            PixelSpriteView(sprite: .slime, frameIndex: 1, cell: 2,
-                                            flatColor: gaugeCritter ? nil : Term.dim)
+                            AnimatedPixelSpriteView(sprite: .slime, cell: 2,
+                                                    flatColor: gaugeCritter ? nil : Term.dim)
                             Spacer()
                         }
                         .font(.term(14))

@@ -61,6 +61,31 @@ struct GaugeCritterTests {
         #expect(GaugeCritter.offsetX(tick: 5, hop: 10, spriteWidth: 20, barWidth: 0) == -20)
     }
 
+    // MARK: 등장/소멸 8단계 페이드
+
+    @Test func steppedOpacityQuantizesToEighths() {
+        #expect(GaugeCritter.steppedOpacity(0) == 0)
+        #expect(GaugeCritter.steppedOpacity(1) == 1)
+        #expect(GaugeCritter.steppedOpacity(0.5) == 0.5)     // 4/8
+        #expect(GaugeCritter.steppedOpacity(0.1) == 0.0)     // floor(0.8)/8 = 0
+        #expect(GaugeCritter.steppedOpacity(0.2) == 0.125)   // floor(1.6)/8 = 1/8
+        #expect(GaugeCritter.steppedOpacity(0.99) == 0.875)  // floor(7.92)/8 = 7/8
+    }
+
+    @Test func steppedOpacityWalksEightSteps() {
+        // 0→1 진행 동안 나타나는 불투명도 값은 0,1/8,…,7/8,1 의 9개(=8단계)뿐.
+        var levels = Set<Double>()
+        for i in 0...100 { levels.insert(GaugeCritter.steppedOpacity(Double(i) / 100)) }
+        #expect(levels.count == 9)
+        #expect(levels.contains(0))
+        #expect(levels.contains(1))
+    }
+
+    @Test func steppedOpacityClampsOutOfRange() {
+        #expect(GaugeCritter.steppedOpacity(-0.5) == 0)
+        #expect(GaugeCritter.steppedOpacity(1.5) == 1)
+    }
+
     // MARK: 등장 조건
 
     @Test func thresholdMatchesDisplayRounding() {

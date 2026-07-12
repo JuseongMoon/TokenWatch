@@ -35,6 +35,8 @@ struct TerminalGauge: View {
     private var elapsed: Double? { elapsedFraction.map { min(1, max(0, $0)) } }
     /// 실제 채움 폭 비율 — 구독형은 사용량, 충전형은 남은 잔액.
     private var fill: Double { Self.fillFraction(used: used, fillsRemaining: fillsRemaining) }
+    /// 슬라임 표시 조건 — 설정 on & 소진(≈100%). 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
+    private var showCritter: Bool { gaugeCritter && used >= GaugeCritter.threshold }
 
     /// 채움 비율(0...1). 구독형은 사용량(used), 충전형(fillsRemaining)은 남은 잔액(1−used)을 그린다.
     /// (뷰 밖 순수 함수 — 방향 반전 로직을 단위 테스트로 고정한다.)
@@ -72,9 +74,14 @@ struct TerminalGauge: View {
                         .position(x: min(w - 1, max(1, w * elapsed)), y: geo.size.height / 2)
                         .shadow(color: .black.opacity(0.5), radius: 1.5)
                 }
-                if gaugeCritter, used >= GaugeCritter.threshold {    // 소진: 슬라임 행진
-                    GaugeCritter(barSize: geo.size)
+                Group {                                              // 소진: 슬라임 행진
+                    if showCritter {
+                        GaugeCritter(barSize: geo.size)
+                            .transition(.steppedFade)                // 등장/소멸 8단계 페이드
+                    }
                 }
+                // 스코프를 슬라임에만 한정 → 리셋 시 채움 바가 함께 애니메이션되지 않는다.
+                .animation(GaugeCritter.fadeAnimation, value: showCritter)
             }
         }
         .frame(height: height)
@@ -130,6 +137,20 @@ struct GaugeCritter: View {
     /// 짝수 틱 = 착지(0), 홀수 틱 = 도약(1).
     static func frameIndex(tick: Int) -> Int { abs(tick) % 2 }
 
+    // MARK: 등장/소멸 페이드(맨 처음 생길 때·리셋으로 사라질 때)
+
+    /// 페이드 단계 수. 불투명도를 이 칸 수만큼 계단식으로만 밟는다.
+    static let opacitySteps = 8
+    /// 등장/소멸 페이드 시간. 8단계가 고르게 밟히도록 리니어로 재생한다.
+    static let fadeAnimation: Animation = .linear(duration: 0.6)
+
+    /// 진행도 t(0...1)를 opacitySteps단계로 양자화한 불투명도.
+    /// 리니어가 아니라 뚝뚝 끊기는 계단(0, 1/8, …, 7/8, 1)만 나타난다.
+    static func steppedOpacity(_ t: Double) -> Double {
+        let clamped = min(1, max(0, t))
+        return (clamped * Double(opacitySteps)).rounded(.down) / Double(opacitySteps)
+    }
+
     /// 도약 틱에만 한 걸음 나아간 x(스프라이트 왼끝). 완전히 숨은 왼쪽 밖(-spriteWidth)에서
     /// 출발해 오른끝을 다 지나면 다시 왼쪽 밖에서 재등장(랩어라운드).
     static func offsetX(tick: Int, hop: CGFloat, spriteWidth: CGFloat, barWidth: CGFloat) -> CGFloat {
@@ -137,6 +158,27 @@ struct GaugeCritter: View {
         let hopsPerCross = Int(((barWidth + spriteWidth) / hop).rounded(.up))
         let hopIndex = (abs(tick) + 1) / 2 % max(1, hopsPerCross)
         return CGFloat(hopIndex) * hop - spriteWidth
+    }
+}
+
+/// 불투명도를 8단계로 양자화해 적용하는 애니메이터블 모디파이어.
+/// 진행도(animatableData)는 SwiftUI가 연속 보간하지만, 화면 불투명도는 계단만 밟는다.
+private struct SteppedOpacityModifier: ViewModifier, Animatable {
+    var progress: Double     // 0...1 — 애니메이션이 연속 보간
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+    func body(content: Content) -> some View {
+        content.opacity(GaugeCritter.steppedOpacity(progress))
+    }
+}
+
+private extension AnyTransition {
+    /// 등장(0→1)·소멸(1→0) 시 불투명도가 8단계로 뚝뚝 끊겨 나타나고 사라지는 페이드.
+    static var steppedFade: AnyTransition {
+        .modifier(active: SteppedOpacityModifier(progress: 0),
+                  identity: SteppedOpacityModifier(progress: 1))
     }
 }
 

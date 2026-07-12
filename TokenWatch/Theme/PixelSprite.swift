@@ -46,7 +46,7 @@ extension PixelSprite {
         palette: [
             1: Color(red: 0.28, green: 0.85, blue: 0.40),   // #47D966 젤리 몸통
             2: Color(red: 0.75, green: 0.97, blue: 0.78),   // #BFF8C7 반사광
-            3: Color(red: 0.10, green: 0.55, blue: 0.24),   // #1A8C3D 그림자
+            3: Color(red: 0.16, green: 0.65, blue: 0.29),   // #29A64A 그림자(어두운 정도 1/3 완화)
             4: Color(red: 0.02, green: 0.15, blue: 0.08),   // #052614 눈
         ]
     )
@@ -74,6 +74,30 @@ struct PixelSpriteView: View {
         }
         .frame(width: cell * CGFloat(sprite.cols), height: cell * CGFloat(sprite.rows))
         .accessibilityHidden(true)
+    }
+}
+
+/// 제자리에서 프레임을 주기적으로 토글하는 스프라이트 뷰(설정 미리보기 등).
+/// 이동 없이 착지↔도약만 반복한다. GaugeCritter와 같은 TimelineView 무상태 패턴.
+struct AnimatedPixelSpriteView: View {
+    let sprite: PixelSprite
+    let cell: CGFloat
+    /// nil이면 팔레트 색, 값이 있으면 실루엣 단색.
+    var flatColor: Color? = nil
+    /// 프레임 토글 주기(초). 게이지 슬라임(GaugeCritter.tick)과 동일 기본값.
+    var tick: Double = 0.25
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            PixelSpriteView(sprite: sprite, frameIndex: 0, cell: cell, flatColor: flatColor)
+        } else {
+            TimelineView(.periodic(from: .now, by: tick)) { context in
+                let t = Int(context.date.timeIntervalSinceReferenceDate / tick)
+                PixelSpriteView(sprite: sprite, frameIndex: abs(t) % 2, cell: cell, flatColor: flatColor)
+            }
+        }
     }
 }
 

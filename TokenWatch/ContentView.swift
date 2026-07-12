@@ -43,7 +43,8 @@ struct ContentView: View {
             }
         }
         .tint(Term.green)
-        // 씬 라이프사이클: 활성일 때만 자동 새로고침 + 화면 유지.
+        // 씬 라이프사이클: 활성일 때만 자동 새로고침. 화면 유지는 전면(.active/.inactive)에서
+        // 유지하고 백그라운드에서만 해제한다(아래 applyIdleTimer 참고).
         .onChange(of: scenePhase, initial: true) { _, phase in
             applyScenePhase(phase)
         }
@@ -51,7 +52,7 @@ struct ContentView: View {
             if scenePhase == .active { store.startAutoRefresh(interval: refreshInterval) }
         }
         .onChange(of: keepScreenOn) { _, _ in
-            if scenePhase == .active { UIApplication.shared.isIdleTimerDisabled = keepScreenOn }
+            applyIdleTimer(phase: scenePhase)
         }
     }
 
@@ -59,11 +60,18 @@ struct ContentView: View {
         switch phase {
         case .active:
             store.startAutoRefresh(interval: refreshInterval)
-            UIApplication.shared.isIdleTimerDisabled = keepScreenOn
         default:
             store.stopAutoRefresh()
-            UIApplication.shared.isIdleTimerDisabled = false
         }
+        applyIdleTimer(phase: phase)
+    }
+
+    /// 화면 유지 플래그를 현재 상태로부터 재계산해 적용한다.
+    /// 전면(.active/.inactive)에서는 설정대로, 완전한 백그라운드에서만 해제한다.
+    /// `.inactive`(제어센터·알림 배너·시스템 알림·수신 전화 등 일시적 전면 중단)에서 플래그를
+    /// 끄지 않아, 잠깐의 중단이 화면 유지를 무너뜨리지 않게 한다.
+    private func applyIdleTimer(phase: ScenePhase) {
+        UIApplication.shared.isIdleTimerDisabled = keepScreenOn && phase != .background
     }
 
     // MARK: 상단 고정 바

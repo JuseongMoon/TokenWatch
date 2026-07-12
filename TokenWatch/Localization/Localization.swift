@@ -75,8 +75,8 @@ struct L10n: Sendable {
     }
     /// Auto 모드 설명 + 현재 유효 간격(예: "60s") 표기.
     func settingsRefreshAutoHelp(_ current: String) -> String {
-        lang == .ko ? "auto: 사용량이 빠르게 오르면 간격을 줄이고, 멈추면 늘립니다(30초~10분). 현재 \(current)"
-                    : "auto: shortens the interval while usage climbs and relaxes it when idle (30s–10m). now \(current)"
+        lang == .ko ? "auto: 사용량이 빠르게 오르면 간격을 줄이고, 멈추면 늘립니다(10초~5분). 현재 \(current)"
+                    : "auto: shortens the interval while usage climbs and relaxes it when idle (10s–5m). now \(current)"
     }
     var settingsScreenHelp: String {
         lang == .ko ? "켜면 앱을 보는 동안 화면이 꺼지지 않습니다."

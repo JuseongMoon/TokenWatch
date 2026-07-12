@@ -17,8 +17,8 @@ struct AutoRefreshTests {
     // MARK: 사다리 상수
 
     @Test func ladderIsSortedWithExpectedBounds() {
-        #expect(AutoRefreshPolicy.ladder.first == 30)   // 하한: 기존 최소 프리셋과 동일(429 안전)
-        #expect(AutoRefreshPolicy.ladder.last == 600)   // 상한: 방치 시 10분
+        #expect(AutoRefreshPolicy.ladder.first == 10)   // 하한: 급증 구간에서만 잠깐 내려가는 10초
+        #expect(AutoRefreshPolicy.ladder.last == 300)   // 상한: 방치 시 5분
         #expect(AutoRefreshPolicy.ladder == AutoRefreshPolicy.ladder.sorted())
         #expect(AutoRefreshPolicy.ladder[AutoRefreshPolicy.baseIndex] == 60)  // 시작은 1분
     }
@@ -31,10 +31,23 @@ struct AutoRefreshTests {
         #expect(AutoRefreshPolicy.nextLadderIndex(from: 3, maxDelta: 3.9) == 2)
     }
 
-    /// ≥4%p 급증 → 두 단계 단축.
+    /// ≥4%p 급증(그러나 <5) → 두 단계 단축.
     @Test func surgeShrinksTwoSteps() {
         #expect(AutoRefreshPolicy.nextLadderIndex(from: 3, maxDelta: 4.0) == 1)
-        #expect(AutoRefreshPolicy.nextLadderIndex(from: 4, maxDelta: 25.0) == 2)
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 6, maxDelta: 4.5) == 4)
+    }
+
+    /// ≥5%p(중간 급증) → 여러 단계 건너뛰어 곧바로 30초로. 단 이미 더 빠르면 유지.
+    @Test func moderateSurgeSkipsToThirtySeconds() {
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 6, maxDelta: 5.0) == 2)   // 5분→30초
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 4, maxDelta: 9.9) == 2)   // 2분→30초
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 1, maxDelta: 8.0) == 1)   // 이미 20초면 유지
+    }
+
+    /// ≥10%p(폭증) → 몇 단계든 건너뛰어 곧바로 최소 간격(10초)으로.
+    @Test func extremeSurgeCrashesToTenSeconds() {
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 4, maxDelta: 14.0) == 0)  // 2분→10초(사용자 예시)
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 6, maxDelta: 50.0) == 0)
     }
 
     /// ≤1%p(정체) → 한 단계 연장.
@@ -55,10 +68,10 @@ struct AutoRefreshTests {
         #expect(AutoRefreshPolicy.nextLadderIndex(from: 4, maxDelta: nil) == 4)
     }
 
-    /// 사다리 양 끝에서 클램프된다(두 단계 단축 포함).
+    /// 사다리 양 끝에서 클램프된다(두 단계 단축·폭증 포함).
     @Test func clampsAtFastestAndSlowest() {
-        #expect(AutoRefreshPolicy.nextLadderIndex(from: 0, maxDelta: 9.9) == 0)
-        #expect(AutoRefreshPolicy.nextLadderIndex(from: 1, maxDelta: 5.0) == 0)   // -2 → 0
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 0, maxDelta: 25.0) == 0)  // 이미 최소면 폭증에도 유지
+        #expect(AutoRefreshPolicy.nextLadderIndex(from: 1, maxDelta: 4.0) == 0)   // -2 → 클램프 0
         let last = AutoRefreshPolicy.ladder.count - 1
         #expect(AutoRefreshPolicy.nextLadderIndex(from: last, maxDelta: 0.0) == last)
     }

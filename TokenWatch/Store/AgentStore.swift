@@ -53,7 +53,7 @@ final class AgentStore {
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
     /// Auto 모드의 현재 사다리 인덱스. 관찰 대상이라 설정 화면의 "현재 간격" 표기가 따라간다.
-    /// 세션(메모리) 한정 — 앱 재실행 시 기본 60초에서 다시 시작한다.
+    /// 세션(메모리) 한정 — 앱 재실행, 그리고 Auto 진입/재진입(startAutoRefresh)마다 기본 60초로 리셋.
     private var autoLadderIndex = AutoRefreshPolicy.baseIndex
     /// Auto 모드 변화량 비교 기준점: "에이전트UUID|창라벨" -> usedPercent.
     @ObservationIgnored private var autoBaseline: [String: Double] = [:]
@@ -266,6 +266,9 @@ final class AgentStore {
     func startAutoRefresh(interval: Int) {
         autoRefreshTask?.cancel()
         let adaptive = (interval == AutoRefreshPolicy.sentinel)
+        // Auto 진입/재진입 시 사다리를 기본(1분)으로 되돌린다 — 설정에서 다른 값으로
+        // 바꿨다 auto로 돌아오거나 포그라운드로 복귀할 때 항상 1분부터 다시 수렴한다.
+        if adaptive { autoLadderIndex = AutoRefreshPolicy.baseIndex }
         autoRefreshTask = Task { [weak self] in
             guard let self else { return }
             // 진입 즉시 1회. Auto면 이 결과가 변화량 비교의 기준점이 된다.
@@ -352,26 +355,40 @@ enum AutoRefreshPolicy {
     /// Auto 모드를 뜻하는 refreshInterval 저장값. RefreshInterval.auto.rawValue와 같아야 한다.
     static let sentinel = -1
 
-    /// Auto 모드가 오가는 간격 사다리(초).
-    /// - 최소 30초: Claude oauth/usage가 공격적으로 429를 던지므로(RateLimitGate 참고)
-    ///   기존 고정 옵션의 최솟값(30s)을 하한으로 유지한다 — 이미 검증된 값.
-    /// - 최대 600초: 포그라운드 방치 시 배터리·API 절약. 리셋 순간의 갱신은
-    ///   리셋 시각 추가 새로고침이 따로 보장하므로 최대 10분 지연을 감수할 수 있다.
-    static let ladder = [30, 60, 120, 300, 600]
+    /// Auto 모드가 오가는 간격 사다리(초): 10초~5분.
+    /// - 최소 10초: 급증(surge) 구간에서만 잠깐 내려간다. 적응 브레이크상 소비가
+    ///   느려지면 곧 다시 올라가므로, 429가 잦은 Claude라도 10초에 머무는 시간은 짧다
+    ///   (그마저도 RateLimitGate가 백오프로 흡수). 리셋 순간 갱신은 리셋 시각 추가
+    ///   새로고침이 따로 보장한다.
+    /// - 최대 300초(5분): 포그라운드 방치 시 배터리·API 절약. 10분은 방치 체감이
+    ///   너무 길어 상한을 5분으로 낮춘다.
+    static let ladder = [10, 20, 30, 60, 120, 180, 300]
 
     /// 시작 인덱스 — 60초("1분 업데이트 기반").
-    static let baseIndex = 1
+    static let baseIndex = 3
+
+    /// 급증 시 여러 단계를 건너뛰어 곧바로 내려갈 목표 인덱스/임계값(%p).
+    /// 사용량이 한 번에 크게 뛰면(예: 2분 간격인데 +14%p) 한 단계씩 줄이는 대신
+    /// 30초(중간 급증)나 10초(폭증)로 바로 급강하한다.
+    static let quickIndex = 2            // 30초
+    static let surgeToFast: Double = 5   // ≥5%p → 30초로 건너뛰기
+    static let surgeToFastest: Double = 10  // ≥10%p → 10초로 급강하
 
     /// 서버 시계 오차에 대비해 리셋 시각 뒤에 두는 여유(초).
     static let resetSlack: TimeInterval = 1
 
     /// 변화폭(maxDelta, %p)에 따른 다음 사다리 인덱스(작을수록 짧은 간격).
+    /// ≥10은 10초로 급강하, ≥5는 30초로 건너뛰기(단 이미 더 빠르면 유지),
     /// ≥4는 두 단계·≥2는 한 단계 단축, ≤1은 한 단계 연장, (1,2) 구간은 유지(히스테리시스).
     /// nil(겹치는 창 없음·전부 에러)은 현재 유지. 결과는 사다리 범위로 클램프.
     static func nextLadderIndex(from index: Int, maxDelta: Double?) -> Int {
         guard let delta = maxDelta else { return index }
         var next = index
-        if delta >= 4 {
+        if delta >= surgeToFastest {
+            next = 0                       // 폭증 → 곧바로 최소 간격(10초)
+        } else if delta >= surgeToFast {
+            next = min(next, quickIndex)   // 급증 → 30초로 건너뛰되, 이미 더 빠르면 유지
+        } else if delta >= 4 {
             next -= 2
         } else if delta >= 2 {
             next -= 1

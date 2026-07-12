@@ -57,7 +57,7 @@ struct SettingsSheet: View {
         NavigationStack {
             ZStack {
                 Term.bg.ignoresSafeArea()
-                ScrollView {
+                ScrollView(.vertical) {
                     VStack(spacing: 16) {
                         accountSection
                         languageSection
@@ -68,6 +68,8 @@ struct SettingsSheet: View {
                         infoSection
                     }
                     .padding(16)
+                    // 콘텐츠 폭을 스크롤 컨테이너 폭에 고정 → 가로 스크롤 여지 제거(상하 전용)
+                    .containerRelativeFrame(.horizontal)
                 }
             }
             .navigationTitle("SETTINGS")
@@ -350,7 +352,7 @@ struct SettingsSheet: View {
                         toggleTarget(g.id)
                     } label: {
                         HStack(spacing: 8) {
-                            Text(selected ? "[x]" : "[ ]")
+                            Text(selected ? "[v]" : "[ ]")
                                 .foregroundStyle(selected ? Term.green : Term.dim)
                             Text(g.agent.provider.terminalTag)
                                 .foregroundStyle(g.agent.provider.terminalColor)

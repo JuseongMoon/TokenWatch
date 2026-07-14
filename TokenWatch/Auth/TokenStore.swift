@@ -25,6 +25,13 @@ actor TokenStore {
         Keychain.delete(account: account(for: agentID))
     }
 
+    /// 저장된 토큰의 plan만 갱신(라이브 plan 조회 결과 반영). 토큰이 없으면 무시.
+    func updatePlan(_ plan: String, for agentID: UUID) {
+        guard var t = tokens(for: agentID) else { return }
+        t.plan = plan
+        save(t, for: agentID)
+    }
+
     /// 유효한 토큰을 반환. 만료됐고 refresh token이 있으면 갱신 후 저장.
     func validTokens(for agentID: UUID, provider: AgentProvider) async throws -> OAuthTokens {
         guard var tokens = tokens(for: agentID) else { throw OAuthError.notAuthenticated }

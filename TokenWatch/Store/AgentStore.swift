@@ -147,16 +147,19 @@ final class AgentStore {
         }
     }
 
-    func refresh(_ agent: Agent) async {
+    /// - Parameter manual: 사용자가 직접 [refresh]를 눌렀을 때 true. 버스트 스로틀을 우회하고,
+    ///   Codex는 이때 accounts/check에서 현재 plan을 라이브로 읽어 갱신한다(Pro→Free 반영).
+    func refresh(_ agent: Agent, manual: Bool = false) async {
         // 이미 조회 중이면 중복 실행 방지.
         guard !loadingIDs.contains(agent.id) else { return }
         // 최근 minFetchSpacing 안에 이미 조회했으면 캐시 유지(버스트 흡수).
-        if let last = lastFetchAt[agent.id],
+        // 단, 수동 새로고침은 방금 조회했더라도 항상 실행한다.
+        if !manual, let last = lastFetchAt[agent.id],
            Date().timeIntervalSince(last) < minFetchSpacing { return }
         lastFetchAt[agent.id] = Date()
         loadingIDs.insert(agent.id)
         defer { loadingIDs.remove(agent.id) }
-        var snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id)
+        var snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id, manual: manual)
         // 충전형 잔액 창을 게이지로 승격(peak 갱신 포함). RateLimitGate 캐시는 승격 이전 원본을
         // 저장하므로, 캐시로 돌아온 스냅샷도 매번 여기서 승격해야 표시가 일관된다.
         snapshot.windows = promoteCreditWindows(snapshot.windows, agentID: agent.id)
@@ -173,12 +176,17 @@ final class AgentStore {
             snapshots[agent.id] = snapshot
         }
 
-        // 플랜 라벨을 얻으면 accountLabel 보강(이메일이 없을 때).
+        // 플랜 라벨을 얻으면 accountLabel 보강. 이메일을 표시 중이면 건드리지 않고,
+        // (a) 비어있거나 (b) 기존에 plan을 표시 중(=이메일이 아님)인데 plan이 바뀐 경우 갱신.
+        // → Pro→Free 전환 시 리스트 카드 배지가 stale하게 남지 않는다.
         if let plan = snapshot.planLabel,
-           let idx = agents.firstIndex(where: { $0.id == agent.id }),
-           (agents[idx].accountLabel ?? "").isEmpty {
-            agents[idx].accountLabel = plan
-            persist()
+           let idx = agents.firstIndex(where: { $0.id == agent.id }) {
+            let current = agents[idx].accountLabel ?? ""
+            let isEmail = current.contains("@")
+            if !isEmail, current != plan {
+                agents[idx].accountLabel = plan
+                persist()
+            }
         }
 
         // 새 스냅샷이 반영됐으니 다음 리셋 시각의 추가 새로고침을 재예약한다.

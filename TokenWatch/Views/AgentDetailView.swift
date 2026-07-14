@@ -56,10 +56,7 @@ struct AgentDetailView: View {
             }
             PlainToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task {
-                        await store.refresh(agent)
-                        await store.refreshStatus(for: agent.provider, force: true)
-                    }
+                    Task { await manualRefresh() }
                 } label: {
                     Text("[refresh]")
                         .font(.term(13, weight: .semibold))
@@ -73,7 +70,7 @@ struct AgentDetailView: View {
         }
         .task { account = await store.accountInfo(for: agent) }
         .task { await store.refreshStatus(for: agent.provider) }
-        .refreshable { await store.refresh(agent) }
+        .refreshable { await manualRefresh() }
         .confirmationDialog(loc.logoutConfirmTitle, isPresented: $showLogoutConfirm, titleVisibility: .visible) {
             Button(loc.logout, role: .destructive) {
                 store.remove(agent)
@@ -83,6 +80,14 @@ struct AgentDetailView: View {
         } message: {
             Text(loc.logoutMessage(provider: agent.provider.displayName))
         }
+    }
+
+    /// 수동 새로고침: 사용량을 갱신하고(Codex는 현재 plan을 라이브로 조회해 반영),
+    /// Keychain에서 계정 정보를 다시 읽어 ACCOUNT 카드의 plan 표시까지 즉시 갱신한다.
+    private func manualRefresh() async {
+        await store.refresh(agent, manual: true)
+        await store.refreshStatus(for: agent.provider, force: true)
+        account = await store.accountInfo(for: agent)
     }
 
     // MARK: ACCOUNT

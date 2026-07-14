@@ -153,7 +153,12 @@ enum ProviderUsage {
     }
 
     /// 게이트/갱신/에러 처리를 포함한 스냅샷 조회(모든 provider 공통).
-    static func fetchSnapshot(_ provider: AgentProvider, for agentID: UUID) async -> AgentSnapshot {
+    ///
+    /// - Parameter manual: 사용자가 직접 [refresh]를 눌렀을 때 true. 버스트 스로틀을 우회하고,
+    ///   Codex는 이때 accounts/check에서 현재 plan을 라이브로 읽어 갱신한다(아래 설명 참고).
+    ///   자동 새로고침은 false로 두어 여분의 호출을 매 틱 하지 않는다.
+    static func fetchSnapshot(_ provider: AgentProvider, for agentID: UUID,
+                             manual: Bool = false) async -> AgentSnapshot {
         // 429 backoff 게이트가 닫혀있으면 캐시 그래프를 유지하며 재시도 안내를 표시.
         if let until = await RateLimitGate.shared.blocked(for: agentID) {
             return await rateLimitedSnapshot(agentID: agentID, until: until)
@@ -168,6 +173,17 @@ enum ProviderUsage {
                 tokens = try await TokenStore.shared.forceRefresh(for: agentID, provider: provider)
                 windows = try await fetchWindows(provider, tokens: tokens)
             }
+
+            // Codex plan 라이브 갱신: id_token(JWT)의 chatgpt_plan_type은 최초 로그인 시점
+            // 값에 고정되어 refresh로도 안 바뀐다(실증됨). 그래서 수동 새로고침 시에는
+            // accounts/check 엔드포인트에서 현재 plan을 읽어 토큰(Keychain)까지 갱신한다.
+            if provider == .codex, manual,
+               let livePlan = try? await CodexAccountClient.fetchPlan(tokens: tokens),
+               livePlan != tokens.plan {
+                tokens.plan = livePlan
+                await TokenStore.shared.updatePlan(livePlan, for: agentID)
+            }
+
             let snapshot = AgentSnapshot(windows: windows, planLabel: tokens.plan,
                                          fetchedAt: Date(), error: nil)
             await RateLimitGate.shared.recordSuccess(for: agentID, snapshot)

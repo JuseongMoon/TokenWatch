@@ -25,6 +25,8 @@ struct TerminalGauge: View {
     var height: CGFloat = 14
     /// 양 끝 대괄호 폰트 크기.
     var bracketSize: CGFloat = 13
+    /// 소진 게이지 위 슬라임 변종 — 창 종류에 따라 색·속도가 다르다. 기본은 weekly(기존 초록).
+    var critterVariant: GaugeCritterVariant = .weekly
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     /// 소진 게이지 위 픽셀 슬라임 표시 여부(설정 DISPLAY). 기본 켜짐.
@@ -76,7 +78,7 @@ struct TerminalGauge: View {
                 }
                 Group {                                              // 소진: 슬라임 행진
                     if showCritter {
-                        GaugeCritter(barSize: geo.size)
+                        GaugeCritter(barSize: geo.size, variant: critterVariant)
                             .transition(.steppedFade)                // 등장/소멸 8단계 페이드
                     }
                 }
@@ -88,21 +90,54 @@ struct TerminalGauge: View {
     }
 }
 
-/// 100% 소진된 바를 무대 삼아 행진하는 픽셀 크리터(기본: 슬라임).
+/// 게이지 위 슬라임 변종 — 창 종류에 따라 색과 애니메이션 속도가 다르다.
+/// - weekly: 가장 긴 세션(주간). 기존 초록 슬라임, 약간 느리게.
+/// - session: 일반 세션. 하늘색 슬라임, 약간 빠르게(초록의 약 1.3배 속도).
+enum GaugeCritterVariant {
+    case weekly
+    case session
+
+    /// 창 종류 매핑 — session만 하늘색(빠름), 나머지(주간/충전형 등)는 기존 초록.
+    init(kind: WindowKind) { self = (kind == .session) ? .session : .weekly }
+
+    var sprite: PixelSprite {
+        switch self {
+        case .weekly:  return .slime
+        case .session: return .slimeSky
+        }
+    }
+
+    /// 기본 프레임/전진 주기(초). 값이 작을수록 빠르다. 기존 0.25 기준을 기하평균으로 벌려
+    /// session(하늘색)이 weekly(초록)보다 약 1.3배 빠르게: 0.285 / 0.219 ≈ 1.30.
+    var baseTick: Double {
+        switch self {
+        case .weekly:  return 0.285   // 초록: 기준보다 살짝 느림
+        case .session: return 0.219   // 하늘색: 기준보다 살짝 빠름
+        }
+    }
+}
+
+/// 100% 소진된 바를 무대 삼아 행진하는 픽셀 크리터(슬라임).
 /// 도약 프레임에 한 걸음 전진하고 착지 프레임에 제자리에서 눌린다 — 통통 튀는 호핑.
 /// TimelineView 기반 무상태: 시각에서 위치·프레임을 순수 계산한다(BlinkingCursor와 같은 패턴).
 struct GaugeCritter: View {
     let barSize: CGSize
-    var sprite: PixelSprite = .slime
+    var variant: GaugeCritterVariant = .weekly
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// 등장(스폰) 시 1회 뽑는 개별 속도 배율(±5% → 슬라임 간 최대 ~10% 속도차). 무상태 뷰라
+    /// @State 기본값이 슬라임이 새로 나타날 때마다 새로 추첨된다 → 제각각 통통 튄다.
+    @State private var speedFactor = Double.random(in: 0.95...1.05)
+
     /// 슬라임 등장 사용률(0...1). 표시 반올림상 100%가 되는 지점과 맞춘다.
     static let threshold = 0.995
-    /// 프레임 토글 주기(초). 한 틱마다 착지↔도약이 바뀐다.
-    static let tick: Double = 0.25
     /// 도약 한 번에 전진하는 스프라이트 픽셀 칸 수.
     static let hopCells = 4
+
+    private var sprite: PixelSprite { variant.sprite }
+    /// 이 슬라임의 프레임/전진 주기(초) — 변종 기본값에 스폰 시 속도 지터를 적용(빠를수록 짧다).
+    private var period: Double { variant.baseTick / speedFactor }
 
     /// 픽셀 한 칸 pt — 스프라이트가 바 안에서 위아래 1pt씩 여유를 갖는 크기.
     private var cell: CGFloat { max(0, barSize.height - 2) / CGFloat(sprite.rows) }
@@ -111,8 +146,8 @@ struct GaugeCritter: View {
         if reduceMotion {
             place(frameIndex: 0, x: barSize.width * 0.6)     // 모션 최소화: 제자리 슬라임
         } else {
-            TimelineView(.periodic(from: .now, by: Self.tick)) { context in
-                let tick = Int(context.date.timeIntervalSinceReferenceDate / Self.tick)
+            TimelineView(.periodic(from: .now, by: period)) { context in
+                let tick = Int(context.date.timeIntervalSinceReferenceDate / period)
                 let x = Self.offsetX(tick: tick,
                                      hop: cell * CGFloat(Self.hopCells),
                                      spriteWidth: cell * CGFloat(sprite.cols),

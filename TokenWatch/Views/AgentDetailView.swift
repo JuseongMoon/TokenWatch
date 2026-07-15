@@ -300,7 +300,8 @@ private struct DetailUsageRow: View {
             }
             TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
                           elapsedFraction: nil, fillsRemaining: true,
-                          height: 20, bracketSize: 15)
+                          height: 20, bracketSize: 15,
+                          critterVariant: GaugeCritterVariant(kind: window.kind))
             KVRow(key: "remaining", value: window.valueText ?? "—",
                   valueColor: statusColor, keyWidth: 84)
             if window.estimatedTotal {
@@ -359,7 +360,8 @@ private struct DetailUsageRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
                                   elapsedFraction: window.elapsedFraction(at: now),
-                                  height: 20, bracketSize: 15)
+                                  height: 20, bracketSize: 15,
+                                  critterVariant: GaugeCritterVariant(kind: window.kind))
 
                     KVRow(key: "remaining",
                           value: "\(Int(window.remainingPercent.rounded()))%",

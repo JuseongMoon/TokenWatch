@@ -46,7 +46,8 @@ struct UsageBar: View {
                 TerminalGauge(usedFraction: usedFraction,
                               fillColor: statusColor,
                               elapsedFraction: window.elapsedFraction(at: context.date),
-                              height: 14, bracketSize: 13)
+                              height: 14, bracketSize: 13,
+                              critterVariant: GaugeCritterVariant(kind: window.kind))
                 // 퍼센트는 오른쪽 고정 — 3자리(100%)까지 자리를 확보해 바 길이가 흔들리지 않게.
                 Text("\(String(format: "%3d", Int(window.usedPercent.rounded())))% used")
                     .font(.term(12))
@@ -64,7 +65,8 @@ struct UsageBar: View {
                           fillColor: statusColor,
                           elapsedFraction: nil,
                           fillsRemaining: true,
-                          height: 14, bracketSize: 13)
+                          height: 14, bracketSize: 13,
+                          critterVariant: GaugeCritterVariant(kind: window.kind))
             Text(balanceText)
                 .font(.term(12))
                 .foregroundStyle(statusColor)

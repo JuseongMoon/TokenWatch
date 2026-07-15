@@ -50,6 +50,17 @@ extension PixelSprite {
             4: Color(red: 0.02, green: 0.15, blue: 0.08),   // #052614 눈
         ]
     )
+
+    /// 하늘색 슬라임 — 일반 세션(비-주간) 창용. 프레임은 slime과 동일, 팔레트만 하늘색 계열로 교체.
+    static let slimeSky = PixelSprite(
+        frames: slime.frames,
+        palette: [
+            1: Color(red: 0.31, green: 0.74, blue: 0.98),   // #4FBCFA 하늘색 몸통
+            2: Color(red: 0.80, green: 0.94, blue: 0.99),   // #CCF0FD 반사광
+            3: Color(red: 0.13, green: 0.50, blue: 0.76),   // #2180C2 그림자
+            4: Color(red: 0.02, green: 0.10, blue: 0.16),   // #051A29 눈
+        ]
+    )
 }
 
 /// 스프라이트 한 프레임을 그리는 뷰. cell = 픽셀 한 칸의 pt 크기.
@@ -84,7 +95,7 @@ struct AnimatedPixelSpriteView: View {
     let cell: CGFloat
     /// nil이면 팔레트 색, 값이 있으면 실루엣 단색.
     var flatColor: Color? = nil
-    /// 프레임 토글 주기(초). 게이지 슬라임(GaugeCritter.tick)과 동일 기본값.
+    /// 프레임 토글 주기(초). 게이지 슬라임 기본 주기(0.25 부근)와 유사한 기본값.
     var tick: Double = 0.25
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

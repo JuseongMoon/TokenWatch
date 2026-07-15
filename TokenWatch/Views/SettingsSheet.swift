@@ -53,6 +53,9 @@ struct SettingsSheet: View {
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
+    /// 로그아웃 확인 다이얼로그의 대상 에이전트. nil이면 다이얼로그 미표시.
+    @State private var pendingLogout: Agent?
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -91,6 +94,15 @@ struct SettingsSheet: View {
             }
         }
         .tint(Term.green)
+        .terminalConfirm(
+            item: $pendingLogout,
+            title: { _ in loc.logoutConfirmTitle },
+            accountLabel: { $0.accountLabel },
+            message: { loc.logoutMessage(provider: $0.provider.displayName) },
+            confirmLabel: "[ \(loc.logout) ]",
+            cancelLabel: "[ \(loc.cancel) ]",
+            onConfirm: { store.remove($0) }
+        )
     }
 
     // MARK: 계정
@@ -115,7 +127,7 @@ struct SettingsSheet: View {
                             }
                             Spacer()
                             Button {
-                                store.remove(agent)
+                                pendingLogout = agent
                             } label: {
                                 Text("[logout]").font(.term(12)).foregroundStyle(Term.red)
                             }

@@ -238,11 +238,12 @@ struct HeartHealthBar: View {
     }
 }
 
-/// 브라유 점 회전 ASCII 스피너. 로딩/조회 중 표시.
+/// 브라유 6점(2×3) 회전 스피너 — 4점이 켜진 채 꺼진 2점 호가 시계방향으로 돈다. 로딩/조회 중 표시.
 struct TerminalSpinner: View {
     var color: Color = Term.green
     var size: CGFloat = 14
-    private let frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+    // 꺼진 2점 호가 좌상→우상→우중→우하→좌하→좌중으로 이동(시계방향).
+    private let frames = ["⠶", "⠧", "⠏", "⠛", "⠹", "⠼"]
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.1)) { context in

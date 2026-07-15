@@ -71,15 +71,18 @@ struct AgentDetailView: View {
         .task { account = await store.accountInfo(for: agent) }
         .task { await store.refreshStatus(for: agent.provider) }
         .refreshable { await manualRefresh() }
-        .confirmationDialog(loc.logoutConfirmTitle, isPresented: $showLogoutConfirm, titleVisibility: .visible) {
-            Button(loc.logout, role: .destructive) {
+        .terminalConfirm(
+            isPresented: $showLogoutConfirm,
+            title: loc.logoutConfirmTitle,
+            accountLabel: account?.email ?? agent.accountLabel,
+            message: loc.logoutMessage(provider: agent.provider.displayName),
+            confirmLabel: "[ \(loc.logout) ]",
+            cancelLabel: "[ \(loc.cancel) ]",
+            onConfirm: {
                 store.remove(agent)
                 dismiss()
             }
-            Button(loc.cancel, role: .cancel) {}
-        } message: {
-            Text(loc.logoutMessage(provider: agent.provider.displayName))
-        }
+        )
     }
 
     /// 수동 새로고침: 사용량을 갱신하고(Codex는 현재 plan을 라이브로 조회해 반영),

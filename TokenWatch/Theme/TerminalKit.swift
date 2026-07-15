@@ -106,3 +106,213 @@ struct KVRow: View {
         .font(.term(13))
     }
 }
+
+// MARK: - 확인 다이얼로그 (터미널 스타일 커스텀 모달)
+
+/// 터미널 톤앤매너의 확인 다이얼로그 카드(파괴적 액션 확인용).
+/// 시스템 `.confirmationDialog`/`.alert`는 색·폰트를 커스터마이즈할 수 없어 OS 기본 UI가
+/// 노출되므로, 검은 배경 위 罫선 박스로 직접 그린다. `terminalConfirm(...)` 모디파이어로 띄운다.
+struct TerminalDialog: View {
+    let title: String
+    var titleColor: Color = Term.red
+    /// 대상 계정 식별용 라벨(주로 이메일). nil/빈 값이면 해당 줄을 생략한다.
+    var accountLabel: String? = nil
+    let message: String
+    let confirmLabel: String
+    var confirmColor: Color = Term.red
+    let cancelLabel: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.term(15, weight: .bold))
+                .foregroundStyle(titleColor)
+                .terminalGlow(titleColor, radius: 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Rectangle().fill(Term.dim.opacity(0.35)).frame(height: 1)
+
+            if let accountLabel, !accountLabel.isEmpty {
+                HStack(spacing: 6) {
+                    Text("▸").foregroundStyle(Term.dim)
+                    Text(accountLabel)
+                        .font(.term(13, weight: .semibold))
+                        .foregroundStyle(Term.cyan)
+                        .lineLimit(1)
+                        .truncationMode(.middle)   // 긴 이메일은 앞뒤를 남기고 가운데 생략
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                }
+            }
+
+            Text(message)
+                .font(.term(12))
+                .foregroundStyle(Term.dim)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                dialogButton(cancelLabel, color: Term.fg, action: onCancel)
+                dialogButton(confirmLabel, color: confirmColor, action: onConfirm)
+            }
+            .padding(.top, 4)
+        }
+        .padding(18)
+        .background(Term.bg)
+        .overlay(Rectangle().stroke(confirmColor.opacity(0.7), lineWidth: 1.5))
+        .frame(maxWidth: 320)
+    }
+
+    private func dialogButton(_ label: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.term(14, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .overlay(Rectangle().stroke(color.opacity(0.55), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// `terminalConfirm(isPresented:)`의 실체. scrim(반투명 배경) + 중앙 카드를 오버레이하고,
+/// scrim 탭이나 [cancel]로 닫는다. 등장/소멸은 scrim 페이드 + 카드 스케일로 부드럽게.
+private struct TerminalConfirmModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let title: String
+    var accountLabel: String? = nil
+    let message: String
+    let confirmLabel: String
+    var confirmColor: Color = Term.red
+    let cancelLabel: String
+    let onConfirm: () -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            ZStack {
+                if isPresented {
+                    dialogScrim { isPresented = false }
+                    TerminalDialog(
+                        title: title, accountLabel: accountLabel, message: message,
+                        confirmLabel: confirmLabel, confirmColor: confirmColor,
+                        cancelLabel: cancelLabel,
+                        onConfirm: { isPresented = false; onConfirm() },
+                        onCancel: { isPresented = false }
+                    )
+                    .padding(32)
+                    .transition(.scale(scale: 0.94).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.22), value: isPresented)
+        }
+    }
+}
+
+/// `terminalConfirm(item:)`의 실체 — 여러 후보 중 하나(예: 계정 목록의 한 행)를 대상으로 띄운다.
+/// 대상이 `item`에 담기면 표시하고, 확정/취소 시 `item`을 nil로 되돌려 닫는다.
+private struct TerminalConfirmItemModifier<Item: Identifiable>: ViewModifier {
+    @Binding var item: Item?
+    let title: (Item) -> String
+    var accountLabel: (Item) -> String? = { _ in nil }
+    let message: (Item) -> String
+    let confirmLabel: String
+    var confirmColor: Color = Term.red
+    let cancelLabel: String
+    let onConfirm: (Item) -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            ZStack {
+                if let current = item {
+                    dialogScrim { item = nil }
+                    TerminalDialog(
+                        title: title(current), accountLabel: accountLabel(current),
+                        message: message(current),
+                        confirmLabel: confirmLabel, confirmColor: confirmColor,
+                        cancelLabel: cancelLabel,
+                        onConfirm: { onConfirm(current); item = nil },
+                        onCancel: { item = nil }
+                    )
+                    .padding(32)
+                    .transition(.scale(scale: 0.94).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.22), value: item?.id)
+        }
+    }
+}
+
+/// 다이얼로그 뒤를 덮는 반투명 scrim. 탭하면 취소로 닫힌다.
+@ViewBuilder
+private func dialogScrim(onTap: @escaping () -> Void) -> some View {
+    Color.black.opacity(0.72)
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .transition(.opacity)
+}
+
+extension View {
+    /// 터미널 스타일 확인 다이얼로그를 오버레이한다(단일 대상, Bool 바인딩).
+    func terminalConfirm(
+        isPresented: Binding<Bool>,
+        title: String,
+        accountLabel: String? = nil,
+        message: String,
+        confirmLabel: String,
+        confirmColor: Color = Term.red,
+        cancelLabel: String,
+        onConfirm: @escaping () -> Void
+    ) -> some View {
+        modifier(TerminalConfirmModifier(
+            isPresented: isPresented, title: title, accountLabel: accountLabel,
+            message: message, confirmLabel: confirmLabel, confirmColor: confirmColor,
+            cancelLabel: cancelLabel, onConfirm: onConfirm))
+    }
+
+    /// 터미널 스타일 확인 다이얼로그를 오버레이한다(후보 중 하나를 `item`으로 지정).
+    func terminalConfirm<Item: Identifiable>(
+        item: Binding<Item?>,
+        title: @escaping (Item) -> String,
+        accountLabel: @escaping (Item) -> String? = { _ in nil },
+        message: @escaping (Item) -> String,
+        confirmLabel: String,
+        confirmColor: Color = Term.red,
+        cancelLabel: String,
+        onConfirm: @escaping (Item) -> Void
+    ) -> some View {
+        modifier(TerminalConfirmItemModifier(
+            item: item, title: title, accountLabel: accountLabel, message: message,
+            confirmLabel: confirmLabel, confirmColor: confirmColor,
+            cancelLabel: cancelLabel, onConfirm: onConfirm))
+    }
+}
+
+#Preview("확인 다이얼로그") {
+    ZStack {
+        // 뒤에 깔리는 화면(scrim 대비 확인용)
+        VStack(spacing: 12) {
+            TerminalBox(title: "ACCOUNTS") {
+                KVRow(key: "email", value: "hisnote@me.com")
+            }
+            Spacer()
+        }
+        .padding(16)
+
+        Color.black.opacity(0.72).ignoresSafeArea()
+
+        TerminalDialog(
+            title: "로그아웃하시겠어요?",
+            accountLabel: "hisnote@me.com",
+            message: "CLAUDE 계정의 저장된 토큰이 이 기기에서 삭제됩니다.",
+            confirmLabel: "[ 로그아웃 ]",
+            cancelLabel: "[ 취소 ]",
+            onConfirm: {}, onCancel: {}
+        )
+        .padding(32)
+    }
+    .background(Term.bg)
+}

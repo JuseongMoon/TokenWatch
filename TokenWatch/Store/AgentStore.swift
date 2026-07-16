@@ -47,9 +47,15 @@ final class AgentStore {
 
     private let defaultsKey = "tokenwatch.agents.v1"
     private let creditPeaksKey = "tokenwatch.creditPeaks.v1"
+    private let resetBaselineKey = "tokenwatch.resetBaseline.v1"
     /// 충전형 창의 관측 최고 잔액. key = "에이전트UUID|창라벨". API가 총액을 안 주는 provider의
     /// 게이지 분모 추정에 쓴다. (영속 — 세션 간 유지해야 추정이 안정적.)
     @ObservationIgnored private var creditPeaks: [String: Double] = [:]
+    /// 리셋 감지용 창별 마지막 관측(resetsAt·usedPercent). key = "에이전트UUID|창라벨".
+    /// (영속 — 앱 재시작·업데이트를 넘어 유지해야 정시 리셋 재감지를 억제할 수 있다.)
+    @ObservationIgnored private var resetBaseline: [String: WindowObservation] = [:]
+    /// 예약 재조정 재진입 가드 — refreshAll의 병렬 refresh가 pending 조회를 인터리브하지 않게.
+    @ObservationIgnored private var rescheduleInFlight = false
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
     /// Auto 모드의 현재 사다리 인덱스. 관찰 대상이라 설정 화면의 "현재 간격" 표기가 따라간다.
@@ -64,6 +70,7 @@ final class AgentStore {
     init() {
         load()
         creditPeaks = loadCreditPeaks()
+        resetBaseline = loadResetBaseline()
     }
 
     // MARK: 영속화
@@ -90,6 +97,17 @@ final class AgentStore {
         UserDefaults.standard.set(data, forKey: creditPeaksKey)
     }
 
+    private func loadResetBaseline() -> [String: WindowObservation] {
+        guard let data = UserDefaults.standard.data(forKey: resetBaselineKey),
+              let decoded = try? JSONDecoder().decode([String: WindowObservation].self, from: data) else { return [:] }
+        return decoded
+    }
+
+    private func saveResetBaseline() {
+        guard let data = try? JSONEncoder().encode(resetBaseline) else { return }
+        UserDefaults.standard.set(data, forKey: resetBaselineKey)
+    }
+
     // MARK: 변경
 
     /// 로그인 성공 후 호출: 토큰을 저장하고 에이전트를 목록에 추가한 뒤 새로고침.
@@ -99,6 +117,9 @@ final class AgentStore {
         await TokenStore.shared.save(tokens, for: agent.id)
         agents.append(agent)
         persist()
+        // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
+        await NotificationManager.shared.requestAuthorizationIfNeeded()
+        // 이 refresh는 직전 관측이 없어 자동으로 baseline만 기록한다(처음 추가 시 무알림).
         await refresh(agent)
     }
 
@@ -109,8 +130,13 @@ final class AgentStore {
         let prefix = "\(agent.id.uuidString)|"
         let pruned = creditPeaks.filter { !$0.key.hasPrefix(prefix) }
         if pruned.count != creditPeaks.count { creditPeaks = pruned; saveCreditPeaks(pruned) }
+        // 리셋 감지 baseline도 함께 정리(고아 키 방지).
+        let prunedBaseline = resetBaseline.filter { !$0.key.hasPrefix(prefix) }
+        if prunedBaseline.count != resetBaseline.count { resetBaseline = prunedBaseline; saveResetBaseline() }
         persist()
         Task { await TokenStore.shared.delete(for: agent.id) }
+        // 이 에이전트에 걸려 있던 예약 리셋 알림도 제거.
+        Task { await NotificationManager.shared.removePending(forAgentID: agent.id) }
     }
 
     // MARK: 정렬(순서 변경)
@@ -145,6 +171,8 @@ final class AgentStore {
                 group.addTask { await self.refresh(agent) }
             }
         }
+        // 전 에이전트 갱신이 끝난 뒤 예약형 알림을 확정적으로 한 번 재조정한다.
+        await rescheduleResetNotifications()
     }
 
     /// - Parameter manual: 사용자가 직접 [refresh]를 눌렀을 때 true. 버스트 스로틀을 우회하고,
@@ -191,6 +219,10 @@ final class AgentStore {
 
         // 새 스냅샷이 반영됐으니 다음 리셋 시각의 추가 새로고침을 재예약한다.
         scheduleResetRefresh()
+
+        // 리셋 감지(서프라이즈 즉시 알림 + baseline 갱신) 후 예약형 알림을 재조정한다.
+        await detectAndNotifyResets(agentID: agent.id)
+        await rescheduleResetNotifications()
 
         // 서비스 운영 상태도 함께 최신화(스로틀 — 실제 조회는 최소 간격마다 한 번).
         await refreshStatus(for: agent.provider)
@@ -350,6 +382,113 @@ final class AgentStore {
             self.scheduledResetRefreshAt = nil
             await self.refreshAll()
         }
+    }
+
+    // MARK: 리셋 알림(감지형 발화 + 예약형 재조정)
+
+    /// BGAppRefreshTask 핸들러가 호출 — 전 에이전트를 갱신하면 refresh 훅이 감지/예약을 처리한다.
+    func performBackgroundRefresh() async {
+        await refreshAll()
+    }
+
+    /// 백그라운드 스케줄용: 전 에이전트 통틀어 가장 이른 미래 리셋 시각. 없으면 nil.
+    func nextResetDate(after now: Date = Date()) -> Date? {
+        AutoRefreshPolicy.nextResetDate(in: Array(snapshots.values), after: now)
+    }
+
+    /// 설정에서 알림 토글을 바꿨을 때 즉시 예약 알림을 재조정한다(끈 창의 예약은 바로 제거).
+    func reapplyNotificationSchedule() async {
+        await rescheduleResetNotifications()
+    }
+
+    /// 이 에이전트의 새 스냅샷을 직전 baseline과 비교해 "서프라이즈(예정보다 이른) 리셋"을
+    /// 즉시 알림한다. 정시 리셋은 예약형이 소유하므로 ResetDetector가 억제한다.
+    /// 에러(빈 windows) 스냅샷은 baseline을 오염시키지 않도록 건너뛴다.
+    private func detectAndNotifyResets(agentID: UUID) async {
+        guard let windows = snapshots[agentID]?.windows, !windows.isEmpty else { return }
+
+        let prefix = "\(agentID.uuidString)|"
+        let previous = resetBaseline.filter { $0.key.hasPrefix(prefix) }
+        let current = observations(from: windows, agentID: agentID)
+
+        var kindByKey: [String: WindowKind] = [:]
+        for w in windows where w.style == .gauge {
+            kindByKey["\(agentID.uuidString)|\(w.label)"] = w.kind
+        }
+
+        let (events, baseline) = ResetDetector.detect(previous: previous, current: current,
+                                                      now: Date()) { kindByKey[$0] ?? .session }
+
+        // baseline 갱신: 이 에이전트의 옛 키를 지우고 새 관측으로 교체(사라진 창 키도 정리).
+        for key in previous.keys { resetBaseline[key] = nil }
+        for (key, obs) in baseline { resetBaseline[key] = obs }
+        saveResetBaseline()
+
+        guard !events.isEmpty, let agent = agents.first(where: { $0.id == agentID }) else { return }
+        let loc = L10n(lang: currentLang())
+        let fired = events.map { event -> FiredNotification in
+            let id = "\(ResetSchedulePolicy.idPrefix)\(agentID.uuidString)|fired|\(Int(event.fireTime.timeIntervalSince1970 / 60))"
+            return FiredNotification(
+                identifier: id,
+                title: loc.notifResetTitle(provider: agent.provider.displayName, account: agent.accountLabel),
+                body: loc.notifResetBody(session: event.kinds.contains(.session),
+                                         weekly: event.kinds.contains(.weekly)),
+                agentID: agentID.uuidString)
+        }
+        await NotificationManager.shared.fire(fired)
+    }
+
+    /// 스냅샷 창들을 리셋 감지용 관측 맵으로. 구독 게이지(.gauge)만 대상(충전형·잔액 제외).
+    private func observations(from windows: [UsageWindow], agentID: UUID) -> [String: WindowObservation] {
+        var out: [String: WindowObservation] = [:]
+        for w in windows where w.style == .gauge {
+            out["\(agentID.uuidString)|\(w.label)"] = WindowObservation(resetsAt: w.resetsAt,
+                                                                        usedPercent: w.usedPercent)
+        }
+        return out
+    }
+
+    /// 전 에이전트의 미래 리셋을 예약형 알림으로 재조정한다(desired vs pending diff).
+    /// refreshAll의 병렬 refresh가 pending 조회를 인터리브하지 않도록 재진입 가드로 하나만 실행한다.
+    private func rescheduleResetNotifications() async {
+        guard !rescheduleInFlight else { return }
+        rescheduleInFlight = true
+        defer { rescheduleInFlight = false }
+
+        let now = Date()
+        let sessionOn = notifySessionEnabled
+        let weeklyOn = notifyWeeklyEnabled
+        var all: [ScheduleTarget] = []
+        for agent in agents {
+            guard let windows = snapshots[agent.id]?.windows else { continue }
+            all += ResetSchedulePolicy.targets(agentID: agent.id, windows: windows, now: now,
+                                               sessionOn: sessionOn, weeklyOn: weeklyOn)
+        }
+        let clamped = ResetSchedulePolicy.clampGlobal(all)
+
+        let loc = L10n(lang: currentLang())
+        let scheduled = clamped.map { target -> ScheduledNotification in
+            let agent = agents.first { $0.id == target.agentID }
+            return ScheduledNotification(
+                identifier: target.identifier,
+                fireTime: target.fireTime,
+                title: agent.map { loc.notifResetTitle(provider: $0.provider.displayName, account: $0.accountLabel) }
+                    ?? loc.notifDefaultTitle,
+                body: loc.notifResetBody(session: target.kinds.contains(.session),
+                                         weekly: target.kinds.contains(.weekly)),
+                agentID: target.agentID.uuidString)
+        }
+        await NotificationManager.shared.applyScheduled(scheduled, now: now)
+    }
+
+    /// 세션 리셋 알림 on/off(기본 OFF — 5시간마다라 잦음). 키 부재 시 false.
+    private var notifySessionEnabled: Bool {
+        UserDefaults.standard.bool(forKey: NotificationDefaults.sessionKey)
+    }
+    /// 주간 리셋 알림 on/off(기본 ON). 키 부재 시 true.
+    private var notifyWeeklyEnabled: Bool {
+        UserDefaults.standard.object(forKey: NotificationDefaults.weeklyKey) == nil
+            ? true : UserDefaults.standard.bool(forKey: NotificationDefaults.weeklyKey)
     }
 }
 

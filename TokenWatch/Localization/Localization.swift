@@ -210,6 +210,41 @@ struct L10n: Sendable {
         }
     }
 
+    // MARK: 사용량 리셋 알림(NotificationManager)
+    /// 알림 제목 — 어느 에이전트인지. 계정 라벨(이메일/플랜)이 있으면 덧붙인다.
+    func notifResetTitle(provider: String, account: String?) -> String {
+        guard let a = account, !a.isEmpty else { return provider }
+        return "\(provider) · \(a)"
+    }
+    /// 알림 본문 — 리셋된 창 종류에 따라. 에이전트별로 묶인 뒤 호출된다.
+    func notifResetBody(session: Bool, weekly: Bool) -> String {
+        switch lang {
+        case .ko:
+            if session && weekly { return "사용량 한도가 리셋되었습니다. 다시 사용할 수 있어요." }
+            if session { return "세션 한도가 리셋되었습니다. 다시 사용할 수 있어요." }
+            return "주간 한도가 리셋되었습니다. 다시 사용할 수 있어요."
+        case .en:
+            if session && weekly { return "Your usage limits have reset — you're good to go." }
+            if session { return "Your session limit has reset — you're good to go." }
+            return "Your weekly limit has reset — you're good to go."
+        }
+    }
+    /// 에이전트를 못 찾았을 때(삭제 직후 등) 예약 알림 제목 fallback.
+    var notifDefaultTitle: String { lang == .ko ? "TokenWatch" : "TokenWatch" }
+
+    // MARK: 알림 설정(SettingsSheet)
+    var settingsNotifHelp: String {
+        lang == .ko ? "사용량 한도가 리셋되면 알림을 보냅니다. 세션은 5시간마다 리셋되어 자주 올 수 있습니다."
+                    : "Notifies you when a usage limit resets. Sessions reset every 5 hours, so they can be frequent."
+    }
+    var settingsNotifDenied: String {
+        lang == .ko ? "알림이 꺼져 있습니다. 아래에서 iOS 설정을 열어 켜세요."
+                    : "Notifications are off. Open iOS Settings below to turn them on."
+    }
+    var settingsNotifOpenSettings: String {
+        lang == .ko ? "[ iOS 설정 열기 ↗ ]" : "[ open iOS Settings ↗ ]"
+    }
+
     // MARK: 에러(ProviderDispatch · OAuth 등)
     var errAuthExpired: String { lang == .ko ? "인증이 만료되었습니다. 다시 로그인해 주세요." : "Authentication expired. Please log in again." }
     var errRateLimited: String { lang == .ko ? "요청이 많아 잠시 대기 중입니다." : "Too many requests. Waiting a moment." }

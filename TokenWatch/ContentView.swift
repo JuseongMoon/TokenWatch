@@ -63,6 +63,10 @@ struct ContentView: View {
         default:
             store.stopAutoRefresh()
         }
+        // 백그라운드로 나갈 때, 이벤트성 리셋 감지를 위한 백그라운드 새로고침을 예약한다.
+        if phase == .background {
+            BackgroundRefreshScheduler.schedule(earliestBegin: store.nextResetDate())
+        }
         applyIdleTimer(phase: phase)
     }
 

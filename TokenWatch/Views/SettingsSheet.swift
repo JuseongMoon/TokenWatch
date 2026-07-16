@@ -43,6 +43,8 @@ struct SettingsSheet: View {
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
+    @AppStorage(NotificationDefaults.sessionKey) private var notifySession = false
+    @AppStorage(NotificationDefaults.weeklyKey) private var notifyWeekly = true
     @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
     @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
@@ -55,6 +57,8 @@ struct SettingsSheet: View {
 
     /// 로그아웃 확인 다이얼로그의 대상 에이전트. nil이면 다이얼로그 미표시.
     @State private var pendingLogout: Agent?
+    /// 알림 권한이 거부된 상태인지(설정 안내 표시용). NOTIFICATIONS 박스가 나타날 때 갱신.
+    @State private var notifDenied = false
 
     var body: some View {
         NavigationStack {
@@ -67,6 +71,7 @@ struct SettingsSheet: View {
                         refreshSection
                         displaySection
                         heartbeatSection
+                        notificationSection
                         screenSection
                         infoSection
                     }
@@ -94,6 +99,8 @@ struct SettingsSheet: View {
             }
         }
         .tint(Term.green)
+        .onChange(of: notifySession) { _, _ in Task { await store.reapplyNotificationSchedule() } }
+        .onChange(of: notifyWeekly) { _, _ in Task { await store.reapplyNotificationSchedule() } }
         .terminalConfirm(
             item: $pendingLogout,
             title: { _ in loc.logoutConfirmTitle },
@@ -385,6 +392,50 @@ struct SettingsSheet: View {
                     .font(.term(10)).foregroundStyle(Term.dim)
             }
         }
+    }
+
+    // MARK: 알림 (체크박스)
+
+    private var notificationSection: some View {
+        TerminalBox(title: "NOTIFICATIONS") {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    notifToggle("session resets", isOn: notifySession) { notifySession.toggle() }
+                    notifToggle("weekly resets", isOn: notifyWeekly) { notifyWeekly.toggle() }
+                    Text(loc.settingsNotifHelp)
+                        .font(.term(10)).foregroundStyle(Term.dim)
+                }
+                if notifDenied {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(loc.settingsNotifDenied)
+                            .font(.term(10)).foregroundStyle(Term.red)
+                        Button {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            Text(loc.settingsNotifOpenSettings)
+                                .font(.term(12)).foregroundStyle(Term.cyan)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .task { notifDenied = await NotificationManager.shared.isDenied() }
+    }
+
+    private func notifToggle(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(isOn ? "[x]" : "[ ]")
+                    .foregroundStyle(isOn ? Term.green : Term.dim)
+                Text(title).foregroundStyle(Term.fg)
+                Spacer()
+            }
+            .font(.term(14))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: 화면 (체크박스)

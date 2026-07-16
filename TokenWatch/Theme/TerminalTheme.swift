@@ -99,6 +99,10 @@ struct PixelHeart: View {
     static let heartRed       = Color(red: 1.0,  green: 0.20, blue: 0.27)    // #FF3345 기본
     static let heartHighlight = Color(red: 1.0,  green: 0.82, blue: 0.86)    // #FFD1DB 반사광
     static let heartShadow    = Color(red: 0.76, green: 0.09, blue: 0.19)    // #C21830 그림자
+    static let heartRim       = Color(white: 0.85)                           // #D9D9D9 회색기 있는 흰 테두리
+
+    /// rim 라인 굵기(픽셀 한 칸 대비). 한 칸을 꽉 채우는 outline보다 눈에 띄게 얇다.
+    private static let rimWidthRatio: CGFloat = 0.45
 
     /// nil이면 3톤 광택 렌더. 값이 있으면 실루엣 전체를 그 색 하나로(설정 off 미리보기 등).
     var flatColor: Color? = nil
@@ -106,6 +110,8 @@ struct PixelHeart: View {
     var part: HeartPart = .full
     /// 채움 없이 흰 외곽선만 그린다(사용량 소진 표시).
     var outline: Bool = false
+    /// 실루엣 경계에 얇은 라인만 그린다(채운 하트 위에 겹쳐 미사용 표시). flatColor·part는 무시한다.
+    var rim: Bool = false
     /// 하트 높이(대략 폰트 cap-height에 맞춘다). 픽셀 한 칸 = size / 행 수.
     var size: CGFloat = 11
 
@@ -129,6 +135,10 @@ struct PixelHeart: View {
         let cell = size / CGFloat(rows)
         let centerCol = cols / 2                              // 세로 반쪽 컷 경계(가운데 열 포함)
         Canvas { ctx, _ in
+            if rim {
+                Self.drawRim(&ctx, cell: cell)
+                return
+            }
             for (r, row) in Self.bitmap.enumerated() {
                 for (c, v) in row.enumerated() where v != 0 {
                     switch part {                                     // 세로 반쪽 컷(가운데 열은 왼쪽에 포함)
@@ -158,13 +168,32 @@ struct PixelHeart: View {
 
     /// 채워진 칸 중 상하좌우 이웃에 빈칸(또는 격자 밖)이 있는 가장자리 칸인지 — 외곽선 렌더용.
     private static func isEdge(_ r: Int, _ c: Int) -> Bool {
-        let rows = bitmap.count, cols = bitmap[0].count
-        for (dr, dc) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-            let nr = r + dr, nc = c + dc
-            if nr < 0 || nr >= rows || nc < 0 || nc >= cols { return true }
-            if bitmap[nr][nc] == 0 { return true }
+        isEmpty(r - 1, c) || isEmpty(r + 1, c) || isEmpty(r, c - 1) || isEmpty(r, c + 1)
+    }
+
+    /// 격자 밖이거나 빈칸인가 — 실루엣 경계 판정용.
+    private static func isEmpty(_ r: Int, _ c: Int) -> Bool {
+        guard r >= 0, r < bitmap.count, c >= 0, c < bitmap[0].count else { return true }
+        return bitmap[r][c] == 0
+    }
+
+    /// 실루엣 경계(빈칸과 맞닿은 칸 모서리)만 얇은 라인으로 그린다. 실루엣으로 클립한 뒤 두 배 굵기로
+    /// 스트로크해서 안쪽 절반만 남긴다 — 라인이 하트 밖으로 번지지 않아 프레임·간격이 그대로다.
+    private static func drawRim(_ ctx: inout GraphicsContext, cell: CGFloat) {
+        var silhouette = Path()
+        var edges = Path()
+        for (r, row) in bitmap.enumerated() {
+            for (c, v) in row.enumerated() where v != 0 {
+                let x = CGFloat(c) * cell, y = CGFloat(r) * cell
+                silhouette.addRect(CGRect(x: x, y: y, width: cell, height: cell))
+                if isEmpty(r - 1, c) { edges.move(to: CGPoint(x: x, y: y));               edges.addLine(to: CGPoint(x: x + cell, y: y)) }
+                if isEmpty(r + 1, c) { edges.move(to: CGPoint(x: x, y: y + cell));        edges.addLine(to: CGPoint(x: x + cell, y: y + cell)) }
+                if isEmpty(r, c - 1) { edges.move(to: CGPoint(x: x, y: y));               edges.addLine(to: CGPoint(x: x, y: y + cell)) }
+                if isEmpty(r, c + 1) { edges.move(to: CGPoint(x: x + cell, y: y));        edges.addLine(to: CGPoint(x: x + cell, y: y + cell)) }
+            }
         }
-        return false
+        ctx.clip(to: silhouette)
+        ctx.stroke(edges, with: .color(heartRim), lineWidth: cell * rimWidthRatio * 2)
     }
 }
 
@@ -196,7 +225,8 @@ struct BlinkingHeart: View {
 
 /// 사용량 추적 하트 바. 선택한 그래프의 잔여율을 최대 5개 하트로 표현한다(10%당 반 칸).
 /// 잔여의 "마지막 반 칸"만 깜빡인다 — 맨 오른쪽이 꽉 찬 하트면 그 오른쪽 반만, 반쪽 하트면
-/// 그 반쪽이 통째로. 소진(100%)되면 흰 외곽선 하트가 깜빡인다.
+/// 그 반쪽이 통째로. 미사용(0%)이면 5개 하트가 모두 켜진 채 얇은 테두리 라인만 깜빡이고,
+/// 소진(100%)되면 흰 외곽선 하트가 깜빡인다.
 struct HeartHealthBar: View {
     /// 추적 대상 창의 사용률(0...100).
     var usedPercent: Double
@@ -209,6 +239,14 @@ struct HeartHealthBar: View {
             if h == 0 {
                 // 소진: 흰 외곽선 하트가 깜빡.
                 TerminalBlink { PixelHeart(outline: true, size: size) }
+            } else if usedPercent <= 0 {
+                // 미사용: 5개 하트는 그대로 두고 얇은 테두리 라인만 같은 리듬으로 깜빡.
+                ForEach(0..<5, id: \.self) { _ in
+                    ZStack {
+                        PixelHeart(size: size)
+                        TerminalBlink { PixelHeart(rim: true, size: size) }
+                    }
+                }
             } else {
                 let slots = (h + 1) / 2                        // 표시할 하트 칸 수(1...5, ceil)
                 ForEach(0..<slots, id: \.self) { i in

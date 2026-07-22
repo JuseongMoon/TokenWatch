@@ -221,9 +221,7 @@ struct AgentDetailView: View {
                 .foregroundStyle(Term.cyan)
                 .frame(width: 96, alignment: .leading)
             Text(":").foregroundStyle(Term.dim)
-            Text("●")
-                .font(.term(11))
-                .foregroundStyle(Term.serviceHealthDotColor(health))
+            detailStatusGlyph(health)
             Text(loc.serviceHealthLabel(health))
                 .foregroundStyle(Term.serviceHealthColor(health))
             Spacer(minLength: 8)
@@ -236,6 +234,24 @@ struct AgentDetailView: View {
             }
         }
         .font(.term(13))
+    }
+
+    /// 상태 글리프: 이상만 점멸 `●`, 그 외(정상·주의·전체이상·전체점검)는 정적 `●`.
+    /// (전체점검은 라벨 "전체 점검중"이 상태를 설명하므로 상세에선 주황 점으로 통일)
+    @ViewBuilder
+    private func detailStatusGlyph(_ health: ServiceHealth) -> some View {
+        switch health {
+        case .major:
+            TerminalBlink { statusDotGlyph(health) }
+        default:
+            statusDotGlyph(health)
+        }
+    }
+
+    private func statusDotGlyph(_ health: ServiceHealth) -> some View {
+        Text("●")
+            .font(.term(11))
+            .foregroundStyle(Term.serviceHealthDotColor(health))
     }
 
     // MARK: LOGOUT

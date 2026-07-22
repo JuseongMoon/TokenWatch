@@ -298,12 +298,16 @@ struct L10n: Sendable {
     func serviceHealthLabel(_ health: ServiceHealth) -> String {
         switch health {
         case .operational: return lang == .ko ? "정상" : "operational"
-        case .degraded:    return lang == .ko ? "일부 저하" : "degraded"
-        case .major:       return lang == .ko ? "장애" : "outage"
-        case .maintenance: return lang == .ko ? "점검 중" : "maintenance"
+        case .caution:     return lang == .ko ? "주의" : "caution"
+        case .major:       return lang == .ko ? "이상" : "outage"
+        case .totalOutage: return lang == .ko ? "전체 이상" : "total outage"
+        case .maintenance: return lang == .ko ? "전체 점검중" : "under maintenance"
         case .unknown:     return lang == .ko ? "알 수 없음" : "unknown"
         }
     }
+
+    /// 메인 카드 신호등 배지에 인라인으로 띄우는 점검 표시(전체점검 전용).
+    var serviceMaintenanceBadge: String { lang == .ko ? "점검중" : "maintenance" }
 
     // MARK: 날짜/시간 포맷
     var dateLocale: Locale { Locale(identifier: lang == .ko ? "ko_KR" : "en_US") }

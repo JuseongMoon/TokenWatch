@@ -14,8 +14,8 @@ enum Term {
     static let fg     = Color(red: 0.84, green: 0.86, blue: 0.82)     // #D6DBD1 본문
     static let dim    = Color(red: 0.42, green: 0.48, blue: 0.42)     // #6B7A6B 보조/트랙
     static let cyan   = Color(red: 0.34, green: 0.84, blue: 0.84)     // #56D6D6 라벨/헤더/키
-    static let green  = Color(red: 0.30, green: 0.82, blue: 0.48)     // #4CD07A 정상/프롬프트/커서
-    static let yellow = Color(red: 0.90, green: 0.76, blue: 0.30)     // #E6C34D 주의/현재시각 마커
+    static let green  = Color(red: 0.24, green: 0.82, blue: 0.60)     // #3DD199 정상/프롬프트/커서 (적녹색약 구별용 청록빛 가미)
+    static let yellow = Color(red: 0.90, green: 0.76, blue: 0.30)     // #E6C34D 주의/현재시각 마커 (게이지 등 공용)
     static let red    = Color(red: 0.94, green: 0.34, blue: 0.30)     // #F0574C 위험/에러
     static let orange = Color(red: 0.95, green: 0.58, blue: 0.30)     // #F2944D provider 구분색
     static let magenta = Color(red: 0.80, green: 0.52, blue: 0.90)    // #CC85E6 provider 구분색
@@ -23,6 +23,8 @@ enum Term {
     static let pink   = Color(red: 0.95, green: 0.45, blue: 0.65)     // #F273A6 provider 구분색
     static let teal   = Color(red: 0.30, green: 0.78, blue: 0.70)     // #4CC7B3 provider 구분색
     static let track  = Color(red: 0.14, green: 0.17, blue: 0.13)     // 게이지 빈 칸 배경(거의 안 씀)
+    static let graveGray = Color(white: 0.22)                         // #383838 전체이상 — 검정에 가까운 회색(정적·점멸 없음, 배경과는 구별)
+    static let signalCaution = Color(red: 1.0, green: 0.84, blue: 0.10) // #FFD61A 신호등 '주의' 전용 쨍한 노랑(공용 yellow와 분리)
 
     /// 잔여율(0...100) 기준 상태색. 게이지 채움·수치 색을 통일한다.
     static func statusColor(remainingPercent: Double) -> Color {
@@ -34,18 +36,20 @@ enum Term {
     }
 
     /// 서비스 운영 상태(ServiceHealth) 표시색 — 라벨 텍스트에 쓴다(검은 배경 가독성 유지).
+    /// 전체점검(maintenance)은 점 대신 "공사중" 픽셀아트로 표시하므로 색은 라벨 텍스트용(주황).
     static func serviceHealthColor(_ health: ServiceHealth) -> Color {
         switch health {
-        case .operational: return green
-        case .degraded:    return yellow
-        case .major:       return red
-        case .maintenance: return blue
+        case .operational: return green         // 정상
+        case .caution:     return signalCaution // 주의 (신호등 전용 쨍한 노랑)
+        case .major:       return red        // 이상
+        case .totalOutage: return graveGray  // 전체이상
+        case .maintenance: return orange     // 전체점검(라벨용)
         case .unknown:     return dim
         }
     }
 
     /// 상태 배지 점(●) 전용 색. 조회 불가/미상(unknown) 회색은 투명도를 크게 낮춰
-    /// 검은 배경에 묻히는 "꺼진 점"처럼 표시한다. 정상(초록)·장애(노랑/빨강) 점이 밝게
+    /// 검은 배경에 묻히는 "꺼진 점"처럼 표시한다. 정상(초록)·이상(노랑/빨강/회색) 점이
     /// 켜져 있는 카드들 사이에서 문제 있는 카드를 한눈에 구분하기 위함(라벨엔 쓰지 않음).
     static func serviceHealthDotColor(_ health: ServiceHealth) -> Color {
         health == .unknown ? dim.opacity(0.4) : serviceHealthColor(health)

@@ -249,14 +249,14 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     var statusSource: ServiceStatusSource? {
         func atlassian(_ host: String) -> ServiceStatusSource {
             ServiceStatusSource(platform: .atlassian,
-                                jsonURL: URL(string: "https://\(host)/api/v2/status.json")!)
+                                jsonURL: URL(string: "https://\(host)/api/v2/components.json")!)
         }
         func instatus(_ host: String) -> ServiceStatusSource {
             ServiceStatusSource(platform: .instatus,
-                                jsonURL: URL(string: "https://\(host)/summary.json")!)
+                                jsonURL: URL(string: "https://\(host)/v2/components.json")!)
         }
         switch self {
-        // Atlassian Statuspage — /api/v2/status.json 공통 스키마.
+        // Atlassian Statuspage — /api/v2/components.json 공통 스키마.
         case .claude:     return atlassian("status.claude.com")
         case .codex:      return atlassian("status.openai.com")
         case .copilot:    return atlassian("www.githubstatus.com")
@@ -271,10 +271,10 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .runway:     return atlassian("status.runwayml.com")
         case .did:        return atlassian("status.d-id.com")
         case .heygen:     return atlassian("status.heygen.com")
-        // Instatus — /summary.json. 커스텀 도메인은 리다이렉트를 피해 원 호스트를 조회.
+        // Instatus — /v2/components.json. 커스텀 도메인은 리다이렉트를 피해 원 호스트를 조회.
         case .fal:        return instatus("status.fal.ai")
         case .recraft:    return instatus("recraft.instatus.com")
-        // Better Stack — /index.json → data.attributes.aggregate_state.
+        // Better Stack — /index.json → included[status_page_resource].attributes.status.
         case .luma:       return ServiceStatusSource(platform: .betterstack,
                                                      jsonURL: URL(string: "https://status.lumalabs.ai/index.json")!)
         // 신뢰할 만한 머신리더블 엔드포인트 없음.

@@ -247,41 +247,67 @@ struct ProviderExpansionTests {
         #expect(windows.first?.usedPercent == 10)
     }
 
-    // MARK: 서비스 운영 상태 파싱(Atlassian / Instatus / Better Stack)
+    // MARK: 서비스 운영 상태 — 컴포넌트 개수 집계 판정
 
     private func health(_ platform: StatusPlatform, _ json: String) -> ServiceHealth? {
         ServiceStatusClient.parse(platform, data: Data(json.utf8))
     }
 
-    @Test func atlassianIndicatorMapping() {
-        #expect(health(.atlassian, #"{"status":{"indicator":"none","description":"All Systems Operational"}}"#) == .operational)
-        #expect(health(.atlassian, #"{"status":{"indicator":"minor"}}"#) == .degraded)
-        #expect(health(.atlassian, #"{"status":{"indicator":"major"}}"#) == .major)
-        #expect(health(.atlassian, #"{"status":{"indicator":"critical"}}"#) == .major)
-        #expect(health(.atlassian, #"{"status":{"indicator":"maintenance"}}"#) == .maintenance)
-        // 파싱은 됐으나 앱이 모르는 상태값 → unknown(진짜 미지원 상태).
-        #expect(health(.atlassian, #"{"status":{"indicator":"weird"}}"#) == .unknown)
-        // 형식 오류·필드 없음 → nil(파싱 실패 → 호출측이 last-good 유지, 크래시 없음).
+    /// 해석②(operational이 아니면 전부 "다운") + 점검도 다운 카운트, 전부 점검만 별도.
+    @Test func classifyThresholds() {
+        #expect(ServiceStatusClient.classify([.operational, .operational, .operational]) == .operational)
+        // 3개 중 1다운(절반 미만) → 주의
+        #expect(ServiceStatusClient.classify([.down, .operational, .operational]) == .caution)
+        // 절반 이상 다운 → 이상 (3개 중 2, 4개 중 2)
+        #expect(ServiceStatusClient.classify([.down, .down, .operational]) == .major)
+        #expect(ServiceStatusClient.classify([.down, .down, .operational, .operational]) == .major)
+        // 전부 다운 → 전체이상
+        #expect(ServiceStatusClient.classify([.down, .down]) == .totalOutage)
+        // 전부 점검중 → 전체점검(공사중)
+        #expect(ServiceStatusClient.classify([.maintenance, .maintenance]) == .maintenance)
+        // 점검도 다운으로 카운트(B): 점검2+정상1(3개) → 절반 이상 → 이상
+        #expect(ServiceStatusClient.classify([.maintenance, .maintenance, .operational]) == .major)
+        // 점검1+정상2 → 주의(절반 미만)
+        #expect(ServiceStatusClient.classify([.maintenance, .operational, .operational]) == .caution)
+        // 컴포넌트 0개 → nil(판정 불가 → last-good 유지)
+        #expect(ServiceStatusClient.classify([]) == nil)
+    }
+
+    /// C 결정: stability(1개)는 곧바로 전체이상, deepseek·poe(2개)는 주의 없이 바로 이상.
+    @Test func edgeCaseSmallComponentCounts() {
+        #expect(ServiceStatusClient.classify([.operational]) == .operational)
+        #expect(ServiceStatusClient.classify([.down]) == .totalOutage)          // 1개 다운 = 전체이상
+        #expect(ServiceStatusClient.classify([.maintenance]) == .maintenance)   // 1개 점검 = 전체점검
+        #expect(ServiceStatusClient.classify([.down, .operational]) == .major)  // 2개 1다운 = 이상(주의 없음)
+    }
+
+    @Test func atlassianComponentParsing() {
+        // 정상2 + partial1(3개 중 1다운) → 주의
+        #expect(health(.atlassian, #"{"components":[{"status":"operational","group":false},{"status":"operational","group":false},{"status":"partial_outage","group":false}]}"#) == .caution)
+        // 그룹 헤더(group=true)는 leaf 집계에서 제외 → 정상 leaf 1개만 → 정상
+        #expect(health(.atlassian, #"{"components":[{"status":"major_outage","group":true},{"status":"operational","group":false}]}"#) == .operational)
+        // under_maintenance = 점검, 전부 점검 → 전체점검
+        #expect(health(.atlassian, #"{"components":[{"status":"under_maintenance"}]}"#) == .maintenance)
+        // 형식 오류·필드 없음 → nil
         #expect(health(.atlassian, #"{}"#) == nil)
         #expect(health(.atlassian, "not json") == nil)
     }
 
-    @Test func instatusStatusMapping() {
-        #expect(health(.instatus, #"{"page":{"name":"fal","status":"UP"}}"#) == .operational)
-        #expect(health(.instatus, #"{"page":{"status":"HASISSUES"}}"#) == .degraded)
-        #expect(health(.instatus, #"{"page":{"status":"UNDERMAINTENANCE"}}"#) == .maintenance)
-        #expect(health(.instatus, #"{"page":{"status":"DOWN"}}"#) == .major)
-        // 필드 없음 → nil(파싱 실패).
-        #expect(health(.instatus, #"{"page":{}}"#) == nil)
+    @Test func instatusComponentParsing() {
+        // 대문자 상태값 + 그룹 부모("g1") 제외(자식 group.id로 참조됨). leaf c1(다운)+c2(정상)=이상.
+        let json = #"{"components":[{"id":"g1","status":"OPERATIONAL","group":null},{"id":"c1","status":"MAJOROUTAGE","group":{"id":"g1"}},{"id":"c2","status":"OPERATIONAL","group":{"id":"g1"}}]}"#
+        #expect(health(.instatus, json) == .major)
+        #expect(health(.instatus, #"{"components":[{"id":"c","status":"UNDERMAINTENANCE"}]}"#) == .maintenance)
+        #expect(health(.instatus, #"{"page":{}}"#) == nil)   // components 키 없음 → nil
     }
 
-    @Test func betterStackStateMapping() {
-        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"operational"}}}"#) == .operational)
-        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"degraded"}}}"#) == .degraded)
-        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"downtime"}}}"#) == .major)
-        #expect(health(.betterstack, #"{"data":{"attributes":{"aggregate_state":"maintenance"}}}"#) == .maintenance)
-        // 필드 없음 → nil(파싱 실패).
-        #expect(health(.betterstack, #"{"data":{"attributes":{}}}"#) == nil)
+    @Test func betterStackComponentParsing() {
+        // resource 2개(정상1+downtime1) → 이상. status_page_section은 집계에서 무시.
+        let json = #"{"included":[{"type":"status_page_resource","attributes":{"status":"operational"}},{"type":"status_page_resource","attributes":{"status":"downtime"}},{"type":"status_page_section","attributes":{"name":"x"}}]}"#
+        #expect(health(.betterstack, json) == .major)
+        // maintenance 리소스 전부 → 전체점검
+        #expect(health(.betterstack, #"{"included":[{"type":"status_page_resource","attributes":{"status":"maintenance"}}]}"#) == .maintenance)
+        #expect(health(.betterstack, #"{"data":{"attributes":{}}}"#) == nil)   // included 없음 → nil
     }
 
     // MARK: 상태 페이지 메타데이터 불변식
@@ -309,15 +335,16 @@ struct ProviderExpansionTests {
         }
     }
 
-    @Test func statusSourceEndpointsAreStatusJSON() {
-        // Atlassian은 /api/v2/status.json, Instatus는 /summary.json으로 끝나야 한다.
+    @Test func statusSourceEndpointsAreComponentLists() {
+        // 컴포넌트 개수 집계용: Atlassian은 /api/v2/components.json, Instatus는
+        // /v2/components.json, Better Stack은 /index.json(included 리소스)으로 끝나야 한다.
         for p in AgentProvider.allCases {
             guard let source = p.statusSource else { continue }
             switch source.platform {
             case .atlassian:
-                #expect(source.jsonURL.absoluteString.hasSuffix("/api/v2/status.json"), "\(p) atlassian 경로")
+                #expect(source.jsonURL.absoluteString.hasSuffix("/api/v2/components.json"), "\(p) atlassian 경로")
             case .instatus:
-                #expect(source.jsonURL.absoluteString.hasSuffix("/summary.json"), "\(p) instatus 경로")
+                #expect(source.jsonURL.absoluteString.hasSuffix("/v2/components.json"), "\(p) instatus 경로")
             case .betterstack:
                 #expect(source.jsonURL.absoluteString.hasSuffix("/index.json"), "\(p) betterstack 경로")
             }

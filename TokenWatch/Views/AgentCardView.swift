@@ -50,20 +50,45 @@ struct AgentCardView: View {
 
     /// 서비스 이름 오른쪽의 상태 배지 `[●]`. 속이 찬 원을 상태색으로, 대괄호는 흐리게.
     /// 원은 텍스트 글리프 대신 Circle 도형으로 그려(대괄호 텍스트와) 상하 중앙정렬을 맞추고
-    /// 크기를 정확히 제어한다. 엔드포인트가 없는 provider(serviceHealth == nil)에는 표시하지 않는다.
+    /// 크기를 정확히 제어한다. 엔드포인트가 없는 provider(serviceHealth == nil)와 판정 불가
+    /// (unknown)에는 표시하지 않는다 — 메인 목록엔 확정된 상태만 노출한다.
     @ViewBuilder
     private var statusCircle: some View {
-        if let health = serviceHealth {
-            HStack(spacing: 1.5) {
-                Text("[").foregroundStyle(Term.dim)
-                Circle()
-                    .fill(Term.serviceHealthDotColor(health))
-                    .frame(width: 8, height: 8)
-                Text("]").foregroundStyle(Term.dim)
-            }
-            .accessibilityElement()
-            .accessibilityLabel(loc.serviceHealthLabel(health))
+        if let health = serviceHealth, health != .unknown {
+            statusBadge(health)
         }
+    }
+
+    /// 상태 배지 `[●]`(대괄호는 흐리게). 실제/테스트 공통 렌더.
+    private func statusBadge(_ health: ServiceHealth) -> some View {
+        HStack(spacing: 1.5) {
+            Text("[").foregroundStyle(Term.dim)
+            statusGlyph(health)
+            Text("]").foregroundStyle(Term.dim)
+        }
+        .accessibilityElement()
+        .accessibilityLabel(loc.serviceHealthLabel(health))
+    }
+
+    /// 상태별 배지 글리프: 이상만 점멸, 전체점검은 "점검중" 텍스트, 그 외(정상·주의·전체이상)는 정적 점.
+    @ViewBuilder
+    private func statusGlyph(_ health: ServiceHealth) -> some View {
+        switch health {
+        case .maintenance:
+            Text(loc.serviceMaintenanceBadge)
+                .font(.term(10, weight: .semibold))
+                .foregroundStyle(Term.orange)
+        case .major:
+            TerminalBlink { statusDot(health) }
+        default:
+            statusDot(health)
+        }
+    }
+
+    private func statusDot(_ health: ServiceHealth) -> some View {
+        Circle()
+            .fill(Term.serviceHealthDotColor(health))
+            .frame(width: 8, height: 8)
     }
 
     /// 타이틀에 덧붙일 플랜명 등(있을 때). 이메일(@ 포함)은 메인 화면에 노출하지 않는다.
@@ -140,7 +165,15 @@ struct AgentCardView: View {
             AgentCardView(
                 agent: Agent(provider: .codex, accountLabel: "dev@sciencefiction.co.kr"),
                 snapshot: nil, isLoading: true,
-                serviceHealth: .degraded)
+                serviceHealth: .caution)
+            AgentCardView(
+                agent: Agent(provider: .stability),
+                snapshot: nil, isLoading: false,
+                serviceHealth: .totalOutage)
+            AgentCardView(
+                agent: Agent(provider: .fal),
+                snapshot: nil, isLoading: false,
+                serviceHealth: .maintenance)
             // 429 백오프: 캐시 그래프는 유지하고 이름과 그래프 사이에 안내가 뜬다.
             AgentCardView(
                 agent: Agent(provider: .claude, accountLabel: "pro"),

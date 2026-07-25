@@ -12,10 +12,24 @@ struct UsageBar: View {
     let window: UsageWindow
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    /// 업무시간 스케줄(주간 마커용). 비어 있으면 nil → 균일 흐름.
+    @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
+
+    /// 주간 창의 마커 위치. 업무시간 스케줄이 있으면 그 시간에만 흐르고, 없거나 세션 창이면 실시간 균일.
+    private func markerFraction(at now: Date) -> Double? {
+        guard window.kind == .weekly else { return window.elapsedFraction(at: now) }
+        return window.markerFraction(at: now, schedule: WorkHoursSchedule.active(from: workHoursRaw))
+    }
+
+    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — 주간 창 + 스케줄 활성 + 지금이 업무시간 밖일 때만.
+    private func markerPaused(at now: Date) -> Bool {
+        guard window.kind == .weekly, let schedule = WorkHoursSchedule.active(from: workHoursRaw) else { return false }
+        return !WorkHours.isWorkingTime(at: now, schedule: schedule)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -45,7 +59,8 @@ struct UsageBar: View {
                 // 반응형: 남은 가로폭을 게이지가 최대한 채운다.
                 TerminalGauge(usedFraction: usedFraction,
                               fillColor: statusColor,
-                              elapsedFraction: window.elapsedFraction(at: context.date),
+                              elapsedFraction: markerFraction(at: context.date),
+                              markerPaused: markerPaused(at: context.date),
                               height: 14, bracketSize: 13,
                               critterVariant: GaugeCritterVariant(kind: window.kind))
                 // 퍼센트는 오른쪽 고정 — 3자리(100%)까지 자리를 확보해 바 길이가 흔들리지 않게.

@@ -47,6 +47,8 @@ struct SettingsSheet: View {
     @AppStorage(NotificationDefaults.weeklyKey) private var notifyWeekly = true
     @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
     @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
+    /// 업무시간 스케줄(168자 "0/1"). 비어 있으면 기능 꺼짐(주간 마커 균일 흐름).
+    @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
     /// 다중 선택된 추적 대상. GraphOption.id("uuid|label")들을 개행으로 이어 저장.
@@ -59,6 +61,8 @@ struct SettingsSheet: View {
     @State private var pendingLogout: Agent?
     /// 알림 권한이 거부된 상태인지(설정 안내 표시용). NOTIFICATIONS 박스가 나타날 때 갱신.
     @State private var notifDenied = false
+    /// 업무시간 설정 모달 표시 여부.
+    @State private var showingWorkHours = false
 
     var body: some View {
         NavigationStack {
@@ -70,6 +74,7 @@ struct SettingsSheet: View {
                         languageSection
                         refreshSection
                         displaySection
+                        workHoursSection
                         heartbeatSection
                         notificationSection
                         screenSection
@@ -110,6 +115,12 @@ struct SettingsSheet: View {
             cancelLabel: "[ \(loc.cancel) ]",
             onConfirm: { store.remove($0) }
         )
+        .overlay {
+            if showingWorkHours {
+                WorkHoursEditor(isPresented: $showingWorkHours)
+            }
+        }
+        .animation(.snappy(duration: 0.22), value: showingWorkHours)
     }
 
     // MARK: 계정
@@ -258,6 +269,35 @@ struct SettingsSheet: View {
                     Text(loc.settingsGaugeCritterHelp)
                         .font(.term(10)).foregroundStyle(Term.dim)
                 }
+            }
+        }
+    }
+
+    // MARK: 업무시간
+
+    /// 설정 버튼 옆 요약 라벨("설정 안 됨" 또는 "주 N시간").
+    private var workHoursSummaryLabel: String {
+        let s = WorkHoursSchedule(encoded: workHoursRaw)
+        return s.isEmpty ? loc.workHoursNotSet : loc.workHoursSummary(hours: s.onHours)
+    }
+
+    private var workHoursSection: some View {
+        TerminalBox(title: "WORK HOURS") {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    showingWorkHours = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(loc.workHoursButton).foregroundStyle(Term.green)
+                        Spacer()
+                        Text(workHoursSummaryLabel).foregroundStyle(Term.dim)
+                    }
+                    .font(.term(14))
+                }
+                .buttonStyle(.plain)
+
+                Text(loc.settingsWorkHoursHelp)
+                    .font(.term(10)).foregroundStyle(Term.dim)
             }
         }
     }

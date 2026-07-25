@@ -106,6 +106,22 @@ struct UsageWindow: Identifiable, Sendable, Hashable {
         guard let elapsed = elapsedFraction(at: now) else { return nil }
         return usedPercent - elapsed * 100
     }
+
+    /// 업무시간 스케줄을 반영한 "현재 시각" 세로선 위치(0…1).
+    /// 스케줄이 비어있거나(nil) 계산 불가면 기존 `elapsedFraction`(균일 흐름)으로 폴백한다.
+    /// 업무시간이 아닌 구간에선 값이 고정되어 마커가 멈춘다. (주간 창에만 배선 — 세션은 실시간 유지.)
+    func markerFraction(at now: Date = Date(), schedule: WorkHoursSchedule?,
+                        calendar: Calendar = .current) -> Double? {
+        guard let resetsAt, let windowSeconds, windowSeconds > 0 else { return nil }
+        if let schedule, !schedule.isEmpty {
+            let start = resetsAt.addingTimeInterval(-windowSeconds)
+            if let f = WorkHours.markerFraction(windowStart: start, windowEnd: resetsAt,
+                                                now: now, schedule: schedule, calendar: calendar) {
+                return f
+            }
+        }
+        return elapsedFraction(at: now)
+    }
 }
 
 /// 한 에이전트의 사용량 스냅샷 (성공 또는 실패).

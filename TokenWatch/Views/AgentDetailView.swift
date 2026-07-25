@@ -296,8 +296,23 @@ private struct DetailUsageRow: View {
 
     @State private var showResetConfirm = false
 
+    /// 업무시간 스케줄(주간 마커용). 비어 있으면 nil → 균일 흐름.
+    @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
+
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
+
+    /// 주간 창의 마커 위치. 업무시간 스케줄이 있으면 그 시간에만 흐르고, 없거나 세션 창이면 실시간 균일.
+    private func markerFraction(at now: Date) -> Double? {
+        guard window.kind == .weekly else { return window.elapsedFraction(at: now) }
+        return window.markerFraction(at: now, schedule: WorkHoursSchedule.active(from: workHoursRaw))
+    }
+
+    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — 주간 창 + 스케줄 활성 + 지금이 업무시간 밖일 때만.
+    private func markerPaused(at now: Date) -> Bool {
+        guard window.kind == .weekly, let schedule = WorkHoursSchedule.active(from: workHoursRaw) else { return false }
+        return !WorkHours.isWorkingTime(at: now, schedule: schedule)
+    }
 
     var body: some View {
         switch window.style {
@@ -378,7 +393,8 @@ private struct DetailUsageRow: View {
                 let now = context.date
                 VStack(alignment: .leading, spacing: 8) {
                     TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
-                                  elapsedFraction: window.elapsedFraction(at: now),
+                                  elapsedFraction: markerFraction(at: now),
+                                  markerPaused: markerPaused(at: now),
                                   height: 20, bracketSize: 15,
                                   critterVariant: GaugeCritterVariant(kind: window.kind))
 

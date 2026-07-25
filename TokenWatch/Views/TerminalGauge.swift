@@ -18,6 +18,8 @@ struct TerminalGauge: View {
     let fillColor: Color
     /// 0...1, 창 안에서 현재 시각의 위치. nil이면 마커 미표시.
     let elapsedFraction: Double?
+    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — true면 흐릿하게(꺼진 듯) 그려 정지 느낌을 준다.
+    var markerPaused: Bool = false
     /// 채움 방향. false(기본)=구독형(채움=사용량). true=충전형(채움=남은 잔액, 역방향).
     /// usedFraction엔 두 경우 모두 "소비율"이 들어오므로, 슬라임 트리거(used≥0.995)는 동일하게 동작한다.
     var fillsRemaining: Bool = false
@@ -68,13 +70,15 @@ struct TerminalGauge: View {
                     .frame(width: max(0, w * fill))
                     .clipped()
                 if let elapsed {                                     // 마커 ╎ (정확 위치)
-                    // 흰색 + 검은 테두리 — green/yellow/red 채움과 도트 트랙 어디서든 뚜렷하게.
+                    // 흐름: 흰색 + 검은 테두리 + glow — 어디서든 뚜렷하게.
+                    // 멈춤(업무시간 밖): dim 회색 + glow 제거 + 낮은 투명도 — "꺼진 듯" 정지 느낌.
                     Rectangle()
-                        .fill(Color.white)
-                        .overlay(Rectangle().stroke(Color.black.opacity(0.45), lineWidth: 0.5))
+                        .fill(markerPaused ? Term.dim : Color.white)
+                        .overlay(Rectangle().stroke(Color.black.opacity(markerPaused ? 0.2 : 0.45), lineWidth: 0.5))
                         .frame(width: 2)
+                        .opacity(markerPaused ? 0.5 : 1)
                         .position(x: min(w - 1, max(1, w * elapsed)), y: geo.size.height / 2)
-                        .shadow(color: .black.opacity(0.5), radius: 1.5)
+                        .shadow(color: .black.opacity(markerPaused ? 0 : 0.5), radius: markerPaused ? 0 : 1.5)
                 }
                 Group {                                              // 소진: 슬라임 행진
                     if showCritter {

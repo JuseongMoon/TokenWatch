@@ -90,6 +90,33 @@ struct L10n: Sendable {
         lang == .ko ? "사용률 100%가 된 게이지 위를 픽셀 슬라임이 통통 튀며 지나갑니다."
                     : "A pixel slime hops across any gauge that hits 100%."
     }
+
+    // MARK: 업무시간(WorkHours)
+    var settingsWorkHoursHelp: String {
+        lang == .ko ? "주간 그래프의 현재 시각 세로선이 설정한 업무시간에만 흐릅니다. 비워 두면 한 주 내내 균일하게 흐릅니다."
+                    : "The current-time line on weekly graphs advances only during your work hours. Leave empty to flow evenly across the whole week."
+    }
+    var workHoursButton: String { lang == .ko ? "[ 업무시간 설정 ]" : "[ set work hours ]" }
+    var workHoursNotSet: String { lang == .ko ? "설정 안 됨" : "not set" }
+    /// 설정 버튼 옆 요약(예: "주 40시간").
+    func workHoursSummary(hours h: Int) -> String {
+        lang == .ko ? "주 \(h)시간" : "\(h) h/week"
+    }
+    /// 모달 카드 안내.
+    var workHoursEditorHelp: String {
+        lang == .ko ? "블록을 탭하면 켜고/끄고, 누른 채 드래그하면 범위를 한 번에 칠합니다."
+                    : "Tap a block to toggle it; press and drag to paint a range at once."
+    }
+    var workHoursSave: String   { lang == .ko ? "[ 저장 ]" : "[ save ]" }
+    var workHoursCancel: String { lang == .ko ? "[ 취소 ]" : "[ cancel ]" }
+    var workHoursClear: String  { lang == .ko ? "[ 지우기 ]" : "[ clear ]" }
+    /// 요일 헤더(0=월 … 6=일).
+    func weekdayShort(_ i: Int) -> String {
+        let ko = ["월", "화", "수", "목", "금", "토", "일"]
+        let en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        guard i >= 0, i < 7 else { return "" }
+        return lang == .ko ? ko[i] : en[i]
+    }
     var settingsHeartbeatHelp: String {
         lang == .ko ? "'$ watching …' 뒤 커서를 언더바 대신 하트로 표시합니다."
                     : "Shows a heart instead of the underscore cursor after '$ watching …'."

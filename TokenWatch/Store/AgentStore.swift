@@ -427,7 +427,9 @@ final class AgentStore {
         guard !events.isEmpty, let agent = agents.first(where: { $0.id == agentID }) else { return }
         let loc = L10n(lang: currentLang())
         let fired = events.map { event -> FiredNotification in
-            let id = "\(ResetSchedulePolicy.idPrefix)\(agentID.uuidString)|fired|\(Int(event.fireTime.timeIntervalSince1970 / 60))"
+            // 예약형과 접두어를 분리한다 — reconcile이 "reset|" pending을 자기 소유로 보고
+            // desired에 없으면 지우기 때문에, 접두어를 공유하면 방금 낸 알림이 제거 대상이 된다.
+            let id = "\(ResetDetector.firedIDPrefix)\(agentID.uuidString)|\(Int(event.fireTime.timeIntervalSince1970 / 60))"
             return FiredNotification(
                 identifier: id,
                 title: loc.notifResetTitle(provider: agent.provider.displayName, account: agent.accountLabel),
@@ -439,11 +441,14 @@ final class AgentStore {
     }
 
     /// 스냅샷 창들을 리셋 감지용 관측 맵으로. 구독 게이지(.gauge)만 대상(충전형·잔액 제외).
+    /// 창 주기는 API가 안 주면 종류별 기본값으로 채운다 — 주 신호의 최소 전진 폭 기준이 된다.
     private func observations(from windows: [UsageWindow], agentID: UUID) -> [String: WindowObservation] {
         var out: [String: WindowObservation] = [:]
         for w in windows where w.style == .gauge {
-            out["\(agentID.uuidString)|\(w.label)"] = WindowObservation(resetsAt: w.resetsAt,
-                                                                        usedPercent: w.usedPercent)
+            out["\(agentID.uuidString)|\(w.label)"] = WindowObservation(
+                resetsAt: w.resetsAt,
+                usedPercent: w.usedPercent,
+                windowSeconds: w.windowSeconds ?? w.kind.defaultSeconds)
         }
         return out
     }

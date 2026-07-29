@@ -14,6 +14,9 @@ import Foundation
 struct WindowObservation: Codable, Sendable, Equatable {
     var resetsAt: Date?
     var usedPercent: Double
+    /// 이 창의 전체 주기(초). 주 신호가 요구하는 최소 전진 폭 계산에 쓴다.
+    /// 옵셔널인 이유는 구버전 baseline 디코딩 호환 — 없으면 하한(minAdvanceFloor)만 적용한다.
+    var windowSeconds: TimeInterval? = nil
 }
 
 /// 즉시 발화할 리셋 이벤트 하나. 한 에이전트에서 이번에 감지된 서프라이즈 리셋 창들을
@@ -35,6 +38,21 @@ enum ResetDetector {
     static let usedLandingCeiling: Double = 5
     /// 정시/서프라이즈 판정에 허용하는 서버-기기 시계 오차(초).
     static let clockSkew: TimeInterval = 120
+    /// 주 신호가 요구하는 resetsAt 최소 전진 폭의 하한(초) — 창 주기를 모를 때 쓴다.
+    static let minAdvanceFloor: TimeInterval = 300
+
+    /// 감지형(즉시 발화) 알림 identifier 접두어.
+    /// 예약형(`ResetSchedulePolicy.idPrefix`)과 반드시 달라야 한다 — reconcile은 자기 접두어를
+    /// 가진 pending을 "desired에 없으면 제거"하므로, 접두어를 공유하면 스케줄러가 만들지도 않은
+    /// 알림의 소유권을 주장하게 된다.
+    static let firedIDPrefix = "resetfired|"
+
+    /// 주 신호(resetsAt 전진)를 리셋으로 인정하기 위한 최소 전진 폭.
+    /// 진짜 리셋은 경계를 대략 한 주기만큼 밀지만(주간 7일·세션 5시간·월간 ~30일), 서버측
+    /// 지터나 창 재앵커는 초~분 단위로 움직인다. 주기의 절반을 임계로 두면 둘이 겹치지 않는다.
+    static func minAdvance(windowSeconds: TimeInterval?) -> TimeInterval {
+        max(minAdvanceFloor, (windowSeconds ?? 0) / 2)
+    }
 
     /// 한 에이전트의 (직전 baseline → 현재) 관측을 비교한다.
     /// - Parameters:
@@ -43,7 +61,7 @@ enum ResetDetector {
     ///   - kindOf: key → WindowKind (본문 문구용).
     /// - Returns: (즉시 발화할 이벤트 0~1개, 저장할 새 baseline = current)
     ///   - 직전 관측이 없는 창(첫 fetch·새 창)은 이벤트 없이 baseline만 → **처음 추가 시 무알림**.
-    ///   - resetsAt 전진(주 신호) 또는 usedPercent 급감(보조 신호)이면 리셋.
+    ///   - resetsAt 전진 + 사용률 감소(주 신호), 또는 usedPercent 급감(보조 신호)이면 리셋.
     ///   - 단, `now >= 직전 resetsAt - skew`(정시)면 예약형이 이미 발화했으므로 억제한다.
     static func detect(previous: [String: WindowObservation],
                        current: [String: WindowObservation],
@@ -71,10 +89,20 @@ enum ResetDetector {
     }
 
     /// 리셋 경계 시각을 판정한다. 리셋이 아니면 nil.
-    /// - 주 신호: resetsAt 전진(직전 < 현재) → 경계 = 직전 resetsAt(예약형이 소유했던 시각).
+    /// - 주 신호: resetsAt이 **한 주기의 절반 이상** 전진 + 사용률이 **실제로 감소** →
+    ///   경계 = 직전 resetsAt(예약형이 소유했던 시각).
+    ///   두 조건을 함께 요구한다. 서버는 리셋 없이도 resetsAt만 앞으로 밀 수 있기 때문이다:
+    ///   사용률 0%인 창의 reset_at을 응답할 때마다 `now + 주기`로 다시 계산해 주는 provider가
+    ///   있고(관측: Codex의 미사용 부가 한도 창), 그러면 resetsAt이 벽시계와 1:1로 미끄러진다.
+    ///   전진만으로 판정하면 새로고침마다 "리셋"이 되어 알림이 폭주한다.
+    ///   사용률 감소를 강부등호로 요구하므로 0%→0%인 미끄러짐은 자동으로 걸러진다.
     /// - 보조 신호: 대폭 급감 → 경계 = 직전 resetsAt ?? now. (resetsAt 없는 창의 유일한 감지 수단)
     static func resetBoundary(previous p: WindowObservation, current c: WindowObservation, now: Date) -> Date? {
-        if let pr = p.resetsAt, let cr = c.resetsAt, cr > pr { return pr }
+        if let pr = p.resetsAt, let cr = c.resetsAt,
+           cr.timeIntervalSince(pr) >= minAdvance(windowSeconds: p.windowSeconds),
+           c.usedPercent < p.usedPercent {
+            return pr
+        }
         if p.usedPercent - c.usedPercent >= usedDropThreshold, c.usedPercent <= usedLandingCeiling {
             return p.resetsAt ?? now
         }

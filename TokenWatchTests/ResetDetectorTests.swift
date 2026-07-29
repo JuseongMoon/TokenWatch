@@ -17,7 +17,14 @@ struct ResetDetectorTests {
     private func obs(_ resetsAt: Date?, _ used: Double) -> WindowObservation {
         WindowObservation(resetsAt: resetsAt, usedPercent: used)
     }
+    /// 창 주기를 명시한 관측 — 주 신호의 최소 전진 폭이 걸리는지 보는 테스트용.
+    private func obs(_ resetsAt: Date?, _ used: Double, window: TimeInterval) -> WindowObservation {
+        WindowObservation(resetsAt: resetsAt, usedPercent: used, windowSeconds: window)
+    }
     private func kindOf(_ key: String) -> WindowKind { key.contains("week") ? .weekly : .session }
+
+    private let week: TimeInterval = 604_800
+    private let session: TimeInterval = 18_000
 
     // MARK: detect
 
@@ -103,6 +110,70 @@ struct ResetDetectorTests {
         #expect(events.count == 1)
         #expect(events.first?.kinds == [.session, .weekly])
         #expect(events.first?.labels.count == 2)
+    }
+
+    // MARK: 주 신호 조이기 회귀 — resetsAt 전진 단독은 리셋이 아니다
+
+    /// **핵심 회귀(알림 폭주 재현)**: 사용률 0%인 창의 resetsAt이 폴링 간격만큼 미끄러져도
+    /// 리셋이 아니다. 서버가 미사용 창의 reset_at을 `now + 주기`로 매번 다시 계산해 주면
+    /// resetsAt이 벽시계와 1:1로 전진하는데, 이걸 리셋으로 보면 새로고침마다 알림이 나간다.
+    @Test func slidingResetOnUnusedWindowIsNotAReset() {
+        let r = now.addingTimeInterval(week)
+        for slide in [1.0, 60.0, 300.0] as [TimeInterval] {
+            #expect(ResetDetector.resetBoundary(previous: obs(r, 0, window: week),
+                                                current: obs(r + slide, 0, window: week),
+                                                now: now) == nil)
+        }
+        // 전진 폭이 임계를 넘겨도(앱을 오래 꺼뒀다 켠 경우) 0%→0%면 여전히 리셋이 아니다.
+        #expect(ResetDetector.resetBoundary(previous: obs(r, 0, window: week),
+                                            current: obs(r + week, 0, window: week),
+                                            now: now) == nil)
+    }
+
+    /// detect 수준 재현: 미끄러지는 미사용 주간 창은 이벤트를 내지 않고 baseline만 갱신한다.
+    @Test func slidingUnusedWindowProducesNoEvent() {
+        let r = now.addingTimeInterval(week)
+        let prev = ["a|week (spark)": obs(r, 0, window: week)]
+        let cur = ["a|week (spark)": obs(r.addingTimeInterval(60), 0, window: week)]
+        let (events, baseline) = ResetDetector.detect(previous: prev, current: cur, now: now, kindOf: kindOf)
+        #expect(events.isEmpty)
+        #expect(baseline == cur)
+    }
+
+    /// 사용 중인 창의 초 단위 지터도 리셋이 아니다(최소 전진 폭에 걸린다).
+    @Test func secondScaleJitterIsNotAReset() {
+        let r = now.addingTimeInterval(week)
+        #expect(ResetDetector.resetBoundary(previous: obs(r, 40, window: week),
+                                            current: obs(r.addingTimeInterval(1), 40, window: week),
+                                            now: now) == nil)
+    }
+
+    /// 사용률이 오히려 늘었는데 resetsAt만 한 주기 전진 → 리셋 아님(창 재앵커).
+    @Test func advanceWithoutUsageDropIsNotAReset() {
+        let r = now.addingTimeInterval(week)
+        #expect(ResetDetector.resetBoundary(previous: obs(r, 40, window: week),
+                                            current: obs(r + week, 45, window: week),
+                                            now: now) == nil)
+    }
+
+    // MARK: 주 신호가 지켜야 할 진짜 리셋 (급감 조건만으론 못 잡는 대역)
+
+    /// 적게 쓴 창의 이른 리셋: 12%→0%는 급감 임계(20%p)에 못 미쳐 보조 신호로는 안 잡힌다.
+    /// 주 신호가 살아 있어야 알림이 나간다.
+    @Test func lowUsageEarlyResetStillFires() {
+        let r = now.addingTimeInterval(3600)
+        #expect(ResetDetector.resetBoundary(previous: obs(r, 12, window: week),
+                                            current: obs(r + week, 0, window: week),
+                                            now: now) == r)
+    }
+
+    /// 이른 리셋 직후 곧바로 사용해 착지가 높은 경우(70%→25%): 착지 천장(5%)을 넘어
+    /// 보조 신호로는 안 잡힌다. 주 신호가 잡아야 한다.
+    @Test func earlyResetFollowedByImmediateUseStillFires() {
+        let r = now.addingTimeInterval(3600)
+        #expect(ResetDetector.resetBoundary(previous: obs(r, 70, window: session),
+                                            current: obs(r + session, 25, window: session),
+                                            now: now) == r)
     }
 
     /// resetBoundary: 전진→직전 resetsAt, nil+급감→now, 변화없음→nil.
@@ -202,5 +273,15 @@ struct ResetSchedulePolicyTests {
         let (add, remove) = ResetSchedulePolicy.reconcile(desired: desired, pending: pending)
         #expect(add == ["reset|X|200"])
         #expect(remove == ["reset|X|999"])
+    }
+
+    /// 감지형 identifier는 예약형 네임스페이스 밖에 있어야 한다 — reconcile이 자기 접두어
+    /// pending을 desired에 없다는 이유로 지우므로, 접두어를 공유하면 방금 발화한 알림이
+    /// 제거 대상이 된다.
+    @Test func firedIDsAreOutsideScheduleNamespace() {
+        #expect(!ResetDetector.firedIDPrefix.hasPrefix(ResetSchedulePolicy.idPrefix))
+        let firedID = "\(ResetDetector.firedIDPrefix)\(agentA.uuidString)|100"
+        let (_, remove) = ResetSchedulePolicy.reconcile(desired: [], pending: [firedID])
+        #expect(remove.isEmpty)
     }
 }

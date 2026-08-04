@@ -292,10 +292,6 @@ struct L10n: Sendable {
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
-    /// 아직 구현되지 않은 인증 방식(sessionCapture)을 고른 경우.
-    var errAuthMethodUnavailable: String {
-        lang == .ko ? "이 로그인 방식은 곧 지원됩니다." : "This sign-in method is coming soon."
-    }
 
     // MARK: 디바이스 플로우(GitHub Copilot 등)
     var deviceFlowRequesting: String { lang == .ko ? "코드 요청 중…" : "requesting code…" }

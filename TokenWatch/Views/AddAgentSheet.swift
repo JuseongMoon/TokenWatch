@@ -20,7 +20,6 @@ struct AddAgentSheet: View {
         case login(AgentProvider)        // oauthCode: WKWebView 콜백 code 캡처
         case apiKey(AgentProvider)       // apiKey: 사용자 키 붙여넣기
         case deviceFlow(AgentProvider)   // oauthDeviceFlow: user code 발급 + 폴링
-        case sessionLogin(AgentProvider) // sessionCapture: 로그인 후 쿠키 캡처
         case exchanging
         case failed(String)
     }
@@ -66,8 +65,6 @@ struct AddAgentSheet: View {
             apiKeyView(provider)
         case .deviceFlow(let provider):
             deviceFlowView(provider)
-        case .sessionLogin(let provider):
-            sessionLoginView(provider)
         case .exchanging:
             exchangingView
         case .failed(let message):
@@ -145,12 +142,6 @@ struct AddAgentSheet: View {
             phase = .apiKey(provider)
         case .oauthDeviceFlow:
             phase = .deviceFlow(provider)
-        case .sessionCapture:
-            if ProviderAuth.sessionLoginURL(provider) != nil {
-                phase = .sessionLogin(provider)
-            } else {
-                phase = .failed(loc.errAuthMethodUnavailable)
-            }
         }
     }
 
@@ -208,41 +199,6 @@ struct AddAgentSheet: View {
         let tokens = ProviderAuth.credential(provider, apiKey: key)
         await store.addAgent(provider: provider, tokens: tokens)
         dismiss()
-    }
-
-    // MARK: 세션 로그인 (로그인 후 쿠키 또는 localStorage 캡처)
-
-    @ViewBuilder
-    private func sessionLoginView(_ provider: AgentProvider) -> some View {
-        let startURL = ProviderAuth.sessionLoginURL(provider) ?? URL(string: "https://example.com")!
-        switch ProviderAuth.sessionCaptureMode(provider) {
-        case .cookie:
-            LoginWebView(
-                provider: provider, startURL: startURL,
-                sessionProbe: { ProviderAuth.sessionProbe(provider, cookies: $0) },
-                onSession: { completeSession(provider, $0) },
-                onError: { phase = .failed($0) }
-            )
-            .background(Term.bg)
-            .ignoresSafeArea(edges: .bottom)
-        case .localStorage:
-            LoginWebView(
-                provider: provider, startURL: startURL,
-                localStorageProbe: { ProviderAuth.localStorageProbe(provider, store: $0) },
-                onSession: { completeSession(provider, $0) },
-                onError: { phase = .failed($0) }
-            )
-            .background(Term.bg)
-            .ignoresSafeArea(edges: .bottom)
-        }
-    }
-
-    private func completeSession(_ provider: AgentProvider, _ tokens: OAuthTokens) {
-        phase = .exchanging
-        Task {
-            await store.addAgent(provider: provider, tokens: tokens)
-            dismiss()
-        }
     }
 
     // MARK: 디바이스 플로우 (GitHub Copilot 등)

@@ -20,15 +20,15 @@ struct ReorderTests {
     // MARK: 정상 이동
 
     @Test func moveUpSwapsWithPrevious() {
-        let l = list([.claude, .codex, .cursor])
+        let l = list([.claude, .codex, .copilot])
         let moved = l.reordered(movingID: l[1].id, by: -1)
-        #expect(moved.map(\.provider) == [.codex, .claude, .cursor])
+        #expect(moved.map(\.provider) == [.codex, .claude, .copilot])
     }
 
     @Test func moveDownSwapsWithNext() {
-        let l = list([.claude, .codex, .cursor])
+        let l = list([.claude, .codex, .copilot])
         let moved = l.reordered(movingID: l[1].id, by: 1)
-        #expect(moved.map(\.provider) == [.claude, .cursor, .codex])
+        #expect(moved.map(\.provider) == [.claude, .copilot, .codex])
     }
 
     // MARK: 경계(무시되어야 함)
@@ -61,7 +61,7 @@ struct ReorderTests {
 
     /// 위로 올렸다 다시 내리면 원래 순서로 복귀한다(왕복 불변식).
     @Test func moveUpThenDownRestoresOrder() {
-        let l = list([.claude, .codex, .cursor])
+        let l = list([.claude, .codex, .copilot])
         let up = l.reordered(movingID: l[2].id, by: -1)
         let backDown = up.reordered(movingID: l[2].id, by: 1)
         #expect(backDown.map(\.id) == l.map(\.id))

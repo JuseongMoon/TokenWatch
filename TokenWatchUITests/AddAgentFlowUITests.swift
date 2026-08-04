@@ -3,7 +3,7 @@
 //  TokenWatchUITests
 //
 //  실제 앱을 구동해 add-agent 플로우를 end-to-end로 검증한다:
-//  메인 → 추가 → 18개 provider 목록 → apiKey 화면 → 가짜 키로 실제 네트워크 호출 → 카드 등장.
+//  메인 → 추가 → 7개 provider 목록 → apiKey 화면 → 가짜 키로 실제 네트워크 호출 → 카드 등장.
 //  (성공 값 매핑은 실제 유효 키가 필요하므로, 여기서는 플로우와 에러 경로까지 확인한다.)
 //
 
@@ -30,9 +30,9 @@ final class AddAgentFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["select a service to login"].waitForExistence(timeout: 5),
                       "provider 선택 화면이 떠야 함")
 
-        // 3) 대표 provider들이 각 인증방식별로 목록에 존재
-        for name in ["claude", "elevenlabs", "copilot", "cursor", "openrouter",
-                     "deepseek", "poe", "fal", "grok", "windsurf"] {
+        // 3) 지원 provider 7개가 전부 목록에 존재
+        for name in ["claude", "codex", "copilot", "openrouter",
+                     "deepseek", "poe", "elevenlabs"] {
             XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 3),
                           "\(name) 행이 목록에 있어야 함")
         }
@@ -58,7 +58,7 @@ final class AddAgentFlowUITests: XCTestCase {
     }
 
     @MainActor
-    func testDeviceFlowAndSessionScreensOpen() throws {
+    func testDeviceFlowScreenOpens() throws {
         let app = XCUIApplication()
         app.launch()
 

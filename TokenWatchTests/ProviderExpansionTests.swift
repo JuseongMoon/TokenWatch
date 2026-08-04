@@ -2,7 +2,7 @@
 //  ProviderExpansionTests.swift
 //  TokenWatchTests
 //
-//  provider 확장(인증 추상화 + 잔액 표시 + 세션 캡처)의 순수 로직 검증.
+//  provider 메타데이터·인증 추상화·잔액 표시·서비스 상태 판정의 순수 로직 검증.
 //  네트워크 없이 결정적으로 돌아가는 부분만 테스트한다.
 //
 
@@ -21,47 +21,6 @@ struct ProviderExpansionTests {
         #expect(t.expiresAt == nil)
         #expect(t.isExpired == false)               // 만료 없음 → 항상 유효
         #expect(t.scopes.isEmpty)
-    }
-
-    @Test func sessionCredentialCarriesAccountId() {
-        let t = OAuthTokens.session("cookievalue", accountId: "user_42")
-        #expect(t.accessToken == "cookievalue")
-        #expect(t.accountId == "user_42")
-        #expect(t.refreshToken == nil)
-        #expect(t.isExpired == false)
-    }
-
-    // MARK: Cursor 세션 쿠키 파싱
-
-    private func cookie(name: String, value: String) -> HTTPCookie {
-        HTTPCookie(properties: [
-            .name: name, .value: value, .domain: "cursor.com", .path: "/",
-        ])!
-    }
-
-    @Test func cursorProbeExtractsUserIdFromPlainToken() {
-        let cookies = [cookie(name: "WorkosCursorSessionToken", value: "user_abc::jwtpayload")]
-        let t = CursorAuth.sessionProbe(cookies)
-        #expect(t != nil)
-        #expect(t?.accountId == "user_abc")
-        #expect(t?.accessToken == "user_abc::jwtpayload")   // 쿠키 값 전체 보존
-    }
-
-    @Test func cursorProbeHandlesUrlEncodedSeparator() {
-        let cookies = [cookie(name: "WorkosCursorSessionToken", value: "user_xyz%3A%3Ajwt")]
-        let t = CursorAuth.sessionProbe(cookies)
-        #expect(t?.accountId == "user_xyz")
-    }
-
-    @Test func cursorProbeRejectsPreAuthAndMissingCookies() {
-        // "::" 없는 임시/불완전 쿠키는 세션으로 인정하지 않음.
-        #expect(CursorAuth.sessionProbe([cookie(name: "WorkosCursorSessionToken", value: "pending")]) == nil)
-        // 빈 값.
-        #expect(CursorAuth.sessionProbe([cookie(name: "WorkosCursorSessionToken", value: "")]) == nil)
-        // 다른 쿠키만 존재.
-        #expect(CursorAuth.sessionProbe([cookie(name: "other", value: "user_a::jwt")]) == nil)
-        // 쿠키 없음.
-        #expect(CursorAuth.sessionProbe([]) == nil)
     }
 
     // MARK: Retry-After 파싱
@@ -111,140 +70,46 @@ struct ProviderExpansionTests {
         }
     }
 
-    @Test func oauthAndSessionProvidersHaveNoApiKeyURL() {
+    @Test func nonAPIKeyProvidersHaveNoApiKeyURL() {
         for p in AgentProvider.allCases where p.authKind != .apiKey {
             #expect(p.apiKeyURL == nil, "\(p)는 apiKey 방식이 아닌데 apiKeyURL이 있음")
         }
     }
 
     @Test func providerCountMatchesExpectation() {
-        // 확장 결과 스냅샷: 18개 provider가 등록돼 있어야 한다.
-        #expect(AgentProvider.allCases.count == 18)
+        // 2026-08 정리 결과 스냅샷: 공식 API 기반 7개만 남긴다.
+        // (Claude·Codex=OAuth, Copilot=device flow, OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
+        #expect(AgentProvider.allCases.count == 7)
     }
 
-    // MARK: protobuf 리더 (Grok gRPC-web 응답 파싱용)
+    // MARK: 저장 데이터 마이그레이션 (지원 종료 provider 걸러내기)
 
-    // 테스트용 최소 protobuf 인코더.
-    private func varint(_ v: UInt64) -> [UInt8] {
-        var v = v; var out: [UInt8] = []
-        repeat {
-            var b = UInt8(v & 0x7F); v >>= 7
-            if v != 0 { b |= 0x80 }
-            out.append(b)
-        } while v != 0
-        return out
-    }
-    private func tag(_ field: Int, _ wire: Int) -> [UInt8] { varint(UInt64(field << 3 | wire)) }
-    private func fixed64LE(_ v: UInt64) -> [UInt8] { (0..<8).map { UInt8((v >> (8 * $0)) & 0xFF) } }
-
-    /// field1=varint42, field2=double12.5, field3={ nested field1=varint 1_700_000_000 }
-    private func sampleMessage() -> Data {
-        var msg: [UInt8] = []
-        msg += tag(1, 0) + varint(42)
-        msg += tag(2, 1) + fixed64LE((12.5).bitPattern)
-        let inner = tag(1, 0) + varint(1_700_000_000)
-        msg += tag(3, 2) + varint(UInt64(inner.count)) + inner
-        return Data(msg)
+    @Test func decodeAgentsDropsUnsupportedProviders() {
+        // 구버전 저장 데이터에 지원 종료된 provider(cursor)가 섞여 있어도
+        // 나머지 에이전트는 살아남고, 걸러진 ID는 고아 정리 대상으로 반환돼야 한다.
+        let json = #"""
+        [{"id":"11111111-1111-1111-1111-111111111111","provider":"claude","accountLabel":"pro"},
+         {"id":"22222222-2222-2222-2222-222222222222","provider":"cursor"},
+         {"id":"33333333-3333-3333-3333-333333333333","provider":"codex","accountLabel":"dev@x.io"}]
+        """#
+        let (kept, dropped) = AgentStore.decodeAgents(from: Data(json.utf8))
+        #expect(kept.map(\.provider) == [.claude, .codex])
+        #expect(kept.first?.accountLabel == "pro")
+        #expect(dropped == [UUID(uuidString: "22222222-2222-2222-2222-222222222222")!])
     }
 
-    @Test func protobufParsesScalarAndNestedFields() {
-        let fields = Protobuf.fields(sampleMessage())
-        #expect(fields.count == 3)
-        #expect(fields[0].varint == 42)
-        #expect(fields[1].fixed64.map { Double(bitPattern: $0) } == 12.5)
-        #expect(fields[2].bytes != nil)          // 중첩 메시지 바이트
+    @Test func decodeAgentsKeepsAllSupportedProviders() {
+        // 지원 provider만 있으면 그대로 전부 유지.
+        let json = #"[{"id":"44444444-4444-4444-4444-444444444444","provider":"poe"}]"#
+        let (kept, dropped) = AgentStore.decodeAgents(from: Data(json.utf8))
+        #expect(kept.count == 1)
+        #expect(dropped.isEmpty)
     }
 
-    @Test func protobufCollectNumbersRecurses() {
-        let (doubles, varints) = Protobuf.collectNumbers(sampleMessage())
-        #expect(doubles.contains(12.5))
-        #expect(varints.contains(42))
-        #expect(varints.contains(1_700_000_000))   // 중첩에서 회수
-    }
-
-    @Test func grpcWebFrameExtractsMessage() {
-        let payload = sampleMessage()
-        let len = payload.count
-        var framed: [UInt8] = [0x00,                              // 압축 플래그(메시지)
-                               UInt8((len >> 24) & 0xFF), UInt8((len >> 16) & 0xFF),
-                               UInt8((len >> 8) & 0xFF), UInt8(len & 0xFF)]
-        framed += [UInt8](payload)
-        // trailer 프레임 하나 덧붙임(무시돼야 함).
-        framed += [0x80, 0, 0, 0, 0]
-        #expect(Protobuf.grpcWebMessage(Data(framed)) == payload)
-    }
-
-    // MARK: Grok 사용량 매핑(휴리스틱)
-
-    @Test func grokMapPicksPercentAndReset() {
-        let windows = GrokUsageClient.map(sampleMessage())
-        #expect(windows.count == 1)
-        #expect(windows.first?.usedPercent == 12.5)           // 0~100 double 우선
-        #expect(windows.first?.style == .gauge)
-        let reset = windows.first?.resetsAt?.timeIntervalSince1970
-        #expect(reset == 1_700_000_000)                        // 타임스탬프 범위 varint
-    }
-
-    @Test func grokMapReturnsEmptyWhenNoSignal() {
-        // 퍼센트로 볼 값이 없으면 빈 창(크래시 없음).
-        #expect(GrokUsageClient.map(Data()).isEmpty)
-    }
-
-    // MARK: Grok 세션 쿠키 캡처
-
-    private func grokCookie(_ name: String, _ value: String) -> HTTPCookie {
-        HTTPCookie(properties: [
-            .name: name, .value: value, .domain: ".grok.com", .path: "/",
-        ])!
-    }
-
-    @Test func grokProbeIgnoresInfraCookies() {
-        // 인프라 쿠키만 있으면 로그인 전으로 간주 → nil.
-        let infra = [grokCookie("grok_device_id", "abc"), grokCookie("__cf_bm", "xyz")]
-        #expect(GrokAuth.sessionProbe(infra) == nil)
-    }
-
-    @Test func grokProbeCapturesSessionCookies() {
-        let cookies = [grokCookie("grok_device_id", "abc"), grokCookie("sso", "sessiontoken")]
-        let t = GrokAuth.sessionProbe(cookies)
-        #expect(t != nil)
-        #expect(t?.accessToken.contains("sso=sessiontoken") == true)   // Cookie 헤더 직렬화
-    }
-
-    // MARK: Windsurf localStorage 캡처 + 사용량 매핑
-
-    @Test func windsurfProbeNeedsAuthToken() {
-        // 인증 토큰이 없으면 nil.
-        #expect(WindsurfAuth.localStorageProbe(["theme": "dark"]) == nil)
-    }
-
-    @Test func windsurfProbePacksHeaders() {
-        let store = [
-            "x-auth-token": "AUTH", "x-devin-account-id": "acc1",
-            "x-devin-primary-org-id": "org1", "unrelated": "x",
-        ]
-        let t = WindsurfAuth.localStorageProbe(store)
-        #expect(t != nil)
-        // accessToken엔 헤더 dict가 JSON으로 패킹된다.
-        let headers = (try? JSONSerialization.jsonObject(with: Data((t?.accessToken ?? "").utf8)))
-            as? [String: String]
-        #expect(headers?["x-auth-token"] == "AUTH")
-        #expect(headers?["x-devin-account-id"] == "acc1")
-    }
-
-    @Test func windsurfMapsDailyWeeklyQuota() {
-        // remaining% → used% 변환(100 - remaining), 두 창.
-        let json = #"{"dailyQuotaRemainingPercent": 70, "weeklyQuotaRemainingPercent": 40}"#
-        let windows = WindsurfUsageClient.map(Data(json.utf8))
-        #expect(windows.count == 2)
-        #expect(windows.first(where: { $0.label == "Daily quota" })?.usedPercent == 30)
-        #expect(windows.first(where: { $0.label == "Weekly quota" })?.usedPercent == 60)
-    }
-
-    @Test func windsurfMapAcceptsSnakeCase() {
-        let json = #"{"daily_quota_remaining_percent": 90}"#
-        let windows = WindsurfUsageClient.map(Data(json.utf8))
-        #expect(windows.first?.usedPercent == 10)
+    @Test func decodeAgentsToleratesGarbage() {
+        let (kept, dropped) = AgentStore.decodeAgents(from: Data("not json".utf8))
+        #expect(kept.isEmpty)
+        #expect(dropped.isEmpty)
     }
 
     // MARK: 서비스 운영 상태 — 컴포넌트 개수 집계 판정
@@ -273,7 +138,7 @@ struct ProviderExpansionTests {
         #expect(ServiceStatusClient.classify([]) == nil)
     }
 
-    /// C 결정: stability(1개)는 곧바로 전체이상, deepseek·poe(2개)는 주의 없이 바로 이상.
+    /// C 결정: 컴포넌트가 1~2개뿐인 페이지(deepseek·poe=2개)는 주의 단계 없이 바로 이상/전체이상.
     @Test func edgeCaseSmallComponentCounts() {
         #expect(ServiceStatusClient.classify([.operational]) == .operational)
         #expect(ServiceStatusClient.classify([.down]) == .totalOutage)          // 1개 다운 = 전체이상
@@ -293,29 +158,12 @@ struct ProviderExpansionTests {
         #expect(health(.atlassian, "not json") == nil)
     }
 
-    @Test func instatusComponentParsing() {
-        // 대문자 상태값 + 그룹 부모("g1") 제외(자식 group.id로 참조됨). leaf c1(다운)+c2(정상)=이상.
-        let json = #"{"components":[{"id":"g1","status":"OPERATIONAL","group":null},{"id":"c1","status":"MAJOROUTAGE","group":{"id":"g1"}},{"id":"c2","status":"OPERATIONAL","group":{"id":"g1"}}]}"#
-        #expect(health(.instatus, json) == .major)
-        #expect(health(.instatus, #"{"components":[{"id":"c","status":"UNDERMAINTENANCE"}]}"#) == .maintenance)
-        #expect(health(.instatus, #"{"page":{}}"#) == nil)   // components 키 없음 → nil
-    }
-
-    @Test func betterStackComponentParsing() {
-        // resource 2개(정상1+downtime1) → 이상. status_page_section은 집계에서 무시.
-        let json = #"{"included":[{"type":"status_page_resource","attributes":{"status":"operational"}},{"type":"status_page_resource","attributes":{"status":"downtime"}},{"type":"status_page_section","attributes":{"name":"x"}}]}"#
-        #expect(health(.betterstack, json) == .major)
-        // maintenance 리소스 전부 → 전체점검
-        #expect(health(.betterstack, #"{"included":[{"type":"status_page_resource","attributes":{"status":"maintenance"}}]}"#) == .maintenance)
-        #expect(health(.betterstack, #"{"data":{"attributes":{}}}"#) == nil)   // included 없음 → nil
-    }
-
     // MARK: 상태 페이지 메타데이터 불변식
 
     /// 머신리더블 엔드포인트가 없는(=메인 목록에 상태를 안 띄우는) provider 집합.
-    private let noStatusSource: Set<AgentProvider> = [.openrouter, .grok, .leonardo]
+    private let noStatusSource: Set<AgentProvider> = [.openrouter]
 
-    @Test func onlyProblematicProvidersLackStatusSource() {
+    @Test func onlyOpenRouterLacksStatusSource() {
         for p in AgentProvider.allCases {
             if noStatusSource.contains(p) {
                 #expect(p.statusSource == nil, "\(p)는 상태 소스가 없어야 함")
@@ -325,28 +173,19 @@ struct ProviderExpansionTests {
         }
     }
 
-    @Test func onlyLeonardoLacksStatusPage() {
+    @Test func everyProviderHasStatusPage() {
         for p in AgentProvider.allCases {
-            if p == .leonardo {
-                #expect(p.statusPageURL == nil, "Leonardo는 상태 페이지가 없어야 함")
-            } else {
-                #expect(p.statusPageURL != nil, "\(p)는 상태 페이지 URL이 있어야 함")
-            }
+            #expect(p.statusPageURL != nil, "\(p)는 상태 페이지 URL이 있어야 함")
         }
     }
 
     @Test func statusSourceEndpointsAreComponentLists() {
-        // 컴포넌트 개수 집계용: Atlassian은 /api/v2/components.json, Instatus는
-        // /v2/components.json, Better Stack은 /index.json(included 리소스)으로 끝나야 한다.
+        // 컴포넌트 개수 집계용: Atlassian은 /api/v2/components.json으로 끝나야 한다.
         for p in AgentProvider.allCases {
             guard let source = p.statusSource else { continue }
             switch source.platform {
             case .atlassian:
                 #expect(source.jsonURL.absoluteString.hasSuffix("/api/v2/components.json"), "\(p) atlassian 경로")
-            case .instatus:
-                #expect(source.jsonURL.absoluteString.hasSuffix("/v2/components.json"), "\(p) instatus 경로")
-            case .betterstack:
-                #expect(source.jsonURL.absoluteString.hasSuffix("/index.json"), "\(p) betterstack 경로")
             }
         }
     }

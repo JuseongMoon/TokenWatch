@@ -6,7 +6,7 @@
 //
 //  `OAuthTokens`는 이름은 OAuth지만 실제로는 "provider 호출에 쓰는 Bearer 토큰 +
 //  계정 메타데이터"를 담는 일반 자격증명 컨테이너다. refresh/만료가 없는
-//  API 키·세션 토큰도 그대로 담을 수 있다(만료가 nil이면 `isExpired == false`라
+//  API 키도 그대로 담을 수 있다(만료가 nil이면 `isExpired == false`라
 //  `TokenStore.validTokens`가 그대로 반환한다).
 //
 
@@ -23,21 +23,6 @@ extension OAuthTokens {
             scopes: [],
             accountEmail: email,
             plan: plan
-        )
-    }
-
-    /// WKWebView 로그인에서 캡처한 세션 토큰/쿠키 값을 자격증명으로 감싼다(refresh·만료 없음).
-    static func session(_ token: String, email: String? = nil, plan: String? = nil,
-                        accountId: String? = nil) -> OAuthTokens {
-        OAuthTokens(
-            accessToken: token,
-            refreshToken: nil,
-            expiresAt: nil,
-            scopes: [],
-            accountEmail: email,
-            plan: plan,
-            idToken: nil,
-            accountId: accountId
         )
     }
 }

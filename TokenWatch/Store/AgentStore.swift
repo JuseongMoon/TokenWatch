@@ -27,7 +27,7 @@ final class AgentStore {
     private(set) var loadingIDs: Set<UUID> = []
 
     /// provider별 서비스 운영 상태(정상/장애/점검). 사용량과 별개 축이라 provider 단위로
-    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter·Grok·Leonardo)는 키가 없으며,
+    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter)는 키가 없으며,
     /// UI는 그 경우를 "알 수 없음"으로 취급한다.
     private(set) var serviceStatus: [AgentProvider: ServiceHealth] = [:]
     /// provider별 마지막 "성공한" 상태 조회 시각 — 짧은 간격 중복 조회를 막는 스로틀 기준.
@@ -68,17 +68,60 @@ final class AgentStore {
     @ObservationIgnored private var scheduledResetRefreshAt: Date?
 
     init() {
-        load()
+        let dropped = load()
         creditPeaks = loadCreditPeaks()
         resetBaseline = loadResetBaseline()
+        pruneDroppedProviders(dropped)
     }
 
     // MARK: 영속화
 
-    private func load() {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
-              let decoded = try? JSONDecoder().decode([Agent].self, from: data) else { return }
-        agents = decoded
+    /// 저장된 목록 데이터에서 지원 중인 provider만 채택한다(순수 함수 — 마이그레이션 테스트 대상).
+    /// provider를 문자열로 읽어, 지원이 끊긴 provider가 섞여 있어도 전체 디코딩이 실패하지
+    /// 않게 한다. (`AgentProvider`는 String enum이라 통째로 `[Agent]`를 디코딩하면
+    /// 미지의 rawValue 하나가 목록 전체를 날린다.)
+    nonisolated static func decodeAgents(from data: Data) -> (kept: [Agent], droppedIDs: [UUID]) {
+        struct RawAgent: Decodable {
+            let id: UUID
+            let provider: String
+            let accountLabel: String?
+        }
+        guard let raw = try? JSONDecoder().decode([RawAgent].self, from: data) else { return ([], []) }
+        var kept: [Agent] = []
+        var droppedIDs: [UUID] = []
+        for entry in raw {
+            if let provider = AgentProvider(rawValue: entry.provider) {
+                kept.append(Agent(id: entry.id, provider: provider, accountLabel: entry.accountLabel))
+            } else {
+                droppedIDs.append(entry.id)
+            }
+        }
+        return (kept, droppedIDs)
+    }
+
+    /// 저장된 목록을 읽어 지원 중인 provider만 채택한다.
+    /// - Returns: 지원이 끊긴 provider라 걸러낸 에이전트 ID들(고아 데이터 정리용).
+    private func load() -> [UUID] {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return [] }
+        let (kept, droppedIDs) = Self.decodeAgents(from: data)
+        agents = kept
+        return droppedIDs
+    }
+
+    /// 지원 종료된 provider 에이전트의 흔적을 정리한다: 걸러진 목록을 다시 저장하고
+    /// Keychain 토큰·예약 알림·창별 추정치(creditPeaks/resetBaseline)를 지운다.
+    private func pruneDroppedProviders(_ droppedIDs: [UUID]) {
+        guard !droppedIDs.isEmpty else { return }
+        persist()
+        let prefixes = droppedIDs.map { "\($0.uuidString)|" }
+        let prunedPeaks = creditPeaks.filter { key in !prefixes.contains { key.key.hasPrefix($0) } }
+        if prunedPeaks.count != creditPeaks.count { creditPeaks = prunedPeaks; saveCreditPeaks(prunedPeaks) }
+        let prunedBaseline = resetBaseline.filter { key in !prefixes.contains { key.key.hasPrefix($0) } }
+        if prunedBaseline.count != resetBaseline.count { resetBaseline = prunedBaseline; saveResetBaseline() }
+        for id in droppedIDs {
+            Task { await TokenStore.shared.delete(for: id) }
+            Task { await NotificationManager.shared.removePending(forAgentID: id) }
+        }
     }
 
     private func persist() {

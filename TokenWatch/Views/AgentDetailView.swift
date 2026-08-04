@@ -213,7 +213,7 @@ struct AgentDetailView: View {
     }
 
     /// 서비스 운영 상태 한 줄: `service : ● 정상        [status ↗]`.
-    /// 상태를 볼 수 있는 공식 페이지가 있으면 오른쪽에 링크를 단다(Leonardo는 링크 없음).
+    /// 상태를 볼 수 있는 공식 페이지가 있으면 오른쪽에 링크를 단다.
     private var serviceStatusRow: some View {
         let health = store.serviceStatus[agent.provider] ?? .unknown
         return HStack(alignment: .firstTextBaseline, spacing: 6) {

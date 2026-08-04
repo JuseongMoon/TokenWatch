@@ -167,11 +167,11 @@ struct AgentCardView: View {
                 snapshot: nil, isLoading: true,
                 serviceHealth: .caution)
             AgentCardView(
-                agent: Agent(provider: .stability),
+                agent: Agent(provider: .deepseek),
                 snapshot: nil, isLoading: false,
                 serviceHealth: .totalOutage)
             AgentCardView(
-                agent: Agent(provider: .fal),
+                agent: Agent(provider: .poe),
                 snapshot: nil, isLoading: false,
                 serviceHealth: .maintenance)
             // 429 백오프: 캐시 그래프는 유지하고 이름과 그래프 사이에 안내가 뜬다.

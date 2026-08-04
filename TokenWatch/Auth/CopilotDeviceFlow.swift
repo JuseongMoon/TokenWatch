@@ -70,7 +70,10 @@ enum CopilotDeviceFlow {
             let json = try await postForm(tokenURL, body: body)
 
             if let token = json["access_token"] as? String, !token.isEmpty {
-                return OAuthTokens.session(token)
+                // GitHub device flow 토큰은 만료/refresh가 없어 그대로 담는다.
+                return OAuthTokens(accessToken: token, refreshToken: nil,
+                                   expiresAt: nil, scopes: [],
+                                   accountEmail: nil, plan: nil)
             }
             switch json["error"] as? String {
             case "authorization_pending":

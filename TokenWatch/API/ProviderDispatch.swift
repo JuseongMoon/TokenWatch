@@ -84,45 +84,6 @@ enum ProviderAuth {
     static func credential(_ provider: AgentProvider, apiKey: String) -> OAuthTokens {
         OAuthTokens.apiKey(apiKey)
     }
-
-    // MARK: sessionCapture 디스패치
-
-    /// sessionCapture provider가 무엇을 관찰해 토큰을 잡는지.
-    enum SessionCaptureMode { case cookie, localStorage }
-
-    static func sessionCaptureMode(_ provider: AgentProvider) -> SessionCaptureMode {
-        switch provider {
-        case .windsurf: return .localStorage
-        default: return .cookie
-        }
-    }
-
-    /// sessionCapture provider의 로그인 웹뷰 시작 URL. 미지원이면 nil.
-    static func sessionLoginURL(_ provider: AgentProvider) -> URL? {
-        switch provider {
-        case .cursor: return CursorAuth.loginURL
-        case .grok: return GrokAuth.loginURL
-        case .windsurf: return WindsurfAuth.loginURL
-        default: return nil
-        }
-    }
-
-    /// 로그인 후 쿠키에서 세션 자격증명을 추출한다(cookie 모드).
-    static func sessionProbe(_ provider: AgentProvider, cookies: [HTTPCookie]) -> OAuthTokens? {
-        switch provider {
-        case .cursor: return CursorAuth.sessionProbe(cookies)
-        case .grok: return GrokAuth.sessionProbe(cookies)
-        default: return nil
-        }
-    }
-
-    /// 로그인 후 localStorage에서 세션 자격증명을 추출한다(localStorage 모드).
-    static func localStorageProbe(_ provider: AgentProvider, store: [String: String]) -> OAuthTokens? {
-        switch provider {
-        case .windsurf: return WindsurfAuth.localStorageProbe(store)
-        default: return nil
-        }
-    }
 }
 
 // MARK: - Usage 디스패치 + 공통 오케스트레이션
@@ -133,22 +94,11 @@ enum ProviderUsage {
         switch provider {
         case .claude: return try await ClaudeUsageClient.fetch(tokens: tokens)
         case .codex: return try await CodexUsageClient.fetch(tokens: tokens)
-        case .elevenlabs: return try await ElevenLabsUsageClient.fetch(tokens: tokens)
         case .copilot: return try await CopilotUsageClient.fetch(tokens: tokens)
-        case .cursor: return try await CursorUsageClient.fetch(tokens: tokens)
         case .openrouter: return try await OpenRouterUsageClient.fetch(tokens: tokens)
         case .deepseek: return try await DeepSeekUsageClient.fetch(tokens: tokens)
         case .poe: return try await PoeUsageClient.fetch(tokens: tokens)
-        case .fal: return try await FalUsageClient.fetch(tokens: tokens)
-        case .stability: return try await StabilityUsageClient.fetch(tokens: tokens)
-        case .recraft: return try await RecraftUsageClient.fetch(tokens: tokens)
-        case .luma: return try await LumaUsageClient.fetch(tokens: tokens)
-        case .runway: return try await RunwayUsageClient.fetch(tokens: tokens)
-        case .did: return try await DIDUsageClient.fetch(tokens: tokens)
-        case .heygen: return try await HeyGenUsageClient.fetch(tokens: tokens)
-        case .leonardo: return try await LeonardoUsageClient.fetch(tokens: tokens)
-        case .grok: return try await GrokUsageClient.fetch(tokens: tokens)
-        case .windsurf: return try await WindsurfUsageClient.fetch(tokens: tokens)
+        case .elevenlabs: return try await ElevenLabsUsageClient.fetch(tokens: tokens)
         }
     }
 

@@ -16,12 +16,11 @@
 //    전체점검 : 전 컴포넌트가 점검중          (UI: 신호등 대신 "공사중" 픽셀아트)
 //  점검(maintenance)도 "다운"으로 카운트하되, 전부 점검일 때만 별도 상태로 뺀다.
 //
-//  세 가지 상태 페이지 플랫폼을 지원한다(컴포넌트 목록 엔드포인트가 각각 다르다):
+//  현재 지원 provider는 전부 Atlassian Statuspage를 쓴다:
 //   - Atlassian Statuspage: GET /api/v2/components.json → components[].status (소문자_언더스코어)
-//   - Instatus:            GET /v2/components.json      → components[].status (대문자)
-//   - Better Stack:        GET /index.json              → included[type=status_page_resource].attributes.status
+//  (Instatus·Better Stack 파서는 해당 플랫폼을 쓰던 provider들이 정리되면서 함께 제거했다.)
 //
-//  머신리더블 엔드포인트가 없는 provider(OpenRouter·Grok·Leonardo)는 statusSource가
+//  머신리더블 엔드포인트가 없는 provider(OpenRouter)는 statusSource가
 //  nil이라 이 클라이언트를 타지 않고, 메인 목록에 상태 점을 아예 그리지 않는다.
 //
 
@@ -47,8 +46,6 @@ enum ComponentStatus: Sendable, Equatable {
 /// provider의 상태 페이지가 쓰는 플랫폼. 컴포넌트 목록 파싱 방식을 결정한다.
 enum StatusPlatform: Sendable, Equatable {
     case atlassian     // components[].status: operational/degraded_performance/partial_outage/major_outage/under_maintenance
-    case instatus      // components[].status: OPERATIONAL/DEGRADEDPERFORMANCE/PARTIALOUTAGE/MAJOROUTAGE/UNDERMAINTENANCE
-    case betterstack   // included[status_page_resource].attributes.status: operational/degraded/downtime/maintenance
 }
 
 /// provider의 컴포넌트 목록을 조회할 공개 JSON 엔드포인트 + 그 파싱 플랫폼.
@@ -85,9 +82,7 @@ enum ServiceStatusClient {
     static func parse(_ platform: StatusPlatform, data: Data) -> ServiceHealth? {
         let statuses: [ComponentStatus]?
         switch platform {
-        case .atlassian:   statuses = atlassianComponents(data)
-        case .instatus:    statuses = instatusComponents(data)
-        case .betterstack: statuses = betterstackComponents(data)
+        case .atlassian: statuses = atlassianComponents(data)
         }
         guard let statuses else { return nil }
         return classify(statuses)
@@ -133,61 +128,6 @@ enum ServiceStatusClient {
         case "operational":       return .operational
         case "under_maintenance": return .maintenance
         default:                  return .down   // degraded_performance/partial_outage/major_outage/미상
-        }
-    }
-
-    // Instatus: /v2/components.json. 그룹 "부모"(다른 컴포넌트의 group.id로 참조되는 항목)는
-    // 롤업 카테고리라 leaf 집계에서 제외한다.
-    private struct InstatusComponents: Decodable {
-        struct Component: Decodable {
-            struct Group: Decodable { let id: String? }
-            let id: String?
-            let status: String?
-            let group: Group?
-        }
-        let components: [Component]?
-    }
-
-    static func instatusComponents(_ data: Data) -> [ComponentStatus]? {
-        guard let decoded = try? JSONDecoder().decode(InstatusComponents.self, from: data),
-              let components = decoded.components else { return nil }
-        let parentIDs = Set(components.compactMap { $0.group?.id })
-        return components
-            .filter { comp in comp.id.map { !parentIDs.contains($0) } ?? true }
-            .map { instatusStatus($0.status) }
-    }
-
-    private static func instatusStatus(_ s: String?) -> ComponentStatus {
-        switch s?.uppercased() {
-        case "OPERATIONAL":      return .operational
-        case "UNDERMAINTENANCE": return .maintenance
-        default:                 return .down   // DEGRADEDPERFORMANCE/PARTIALOUTAGE/MAJOROUTAGE/미상
-        }
-    }
-
-    // Better Stack: /index.json. 실제 리소스는 included[] 안의 type=status_page_resource.
-    private struct BetterStackPage: Decodable {
-        struct Included: Decodable {
-            struct Attributes: Decodable { let status: String? }
-            let type: String?
-            let attributes: Attributes?
-        }
-        let included: [Included]?
-    }
-
-    static func betterstackComponents(_ data: Data) -> [ComponentStatus]? {
-        guard let decoded = try? JSONDecoder().decode(BetterStackPage.self, from: data),
-              let included = decoded.included else { return nil }
-        let resources = included.filter { $0.type == "status_page_resource" }
-        guard !resources.isEmpty else { return [] }   // 리소스 0개 → classify가 nil(일시적 실패)로
-        return resources.map { betterstackStatus($0.attributes?.status) }
-    }
-
-    private static func betterstackStatus(_ s: String?) -> ComponentStatus {
-        switch s?.lowercased() {
-        case "operational":                      return .operational
-        case "maintenance", "under_maintenance": return .maintenance
-        default:                                 return .down   // degraded/downtime/미상
         }
     }
 }

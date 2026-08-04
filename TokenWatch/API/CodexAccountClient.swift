@@ -25,7 +25,7 @@ enum CodexAccountClient {
             req.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await APISession.shared.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             if status == 401 || status == 403 { throw UsageError.unauthorized }

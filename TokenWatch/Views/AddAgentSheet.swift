@@ -159,8 +159,9 @@ struct AddAgentSheet: View {
                 }
                 .font(.term(13))
 
-                TextField("", text: $apiKeyText,
-                          prompt: Text("api key…").foregroundColor(Term.dim))
+                // SecureField: 키를 마스킹해 앱 스위처 스냅샷(디스크 저장)에도 평문이 남지 않는다.
+                SecureField("", text: $apiKeyText,
+                            prompt: Text("api key…").foregroundColor(Term.dim))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
                     .font(.term(14))
@@ -197,8 +198,7 @@ struct AddAgentSheet: View {
 
     private func addWithAPIKey(provider: AgentProvider, key: String) async {
         let tokens = ProviderAuth.credential(provider, apiKey: key)
-        await store.addAgent(provider: provider, tokens: tokens)
-        dismiss()
+        await addOrFail(provider: provider, tokens: tokens)
     }
 
     // MARK: 디바이스 플로우 (GitHub Copilot 등)
@@ -209,10 +209,7 @@ struct AddAgentSheet: View {
             loc: loc,
             onComplete: { tokens in
                 phase = .exchanging
-                Task {
-                    await store.addAgent(provider: provider, tokens: tokens)
-                    dismiss()
-                }
+                Task { await addOrFail(provider: provider, tokens: tokens) }
             },
             onError: { message in phase = .failed(message) }
         )
@@ -257,13 +254,27 @@ struct AddAgentSheet: View {
     }
 
     private func exchange(provider: AgentProvider, code: String, state: String) async {
+        // CSRF 방어: 콜백의 state는 로그인 시작 때 만든 값과 일치해야 한다.
+        // 불일치하면 우리가 시작한 인가 흐름의 응답이 아니므로 교환하지 않는다.
+        guard state == pkce.state else {
+            phase = .failed(loc.errStateMismatch)
+            return
+        }
         do {
             let tokens = try await ProviderAuth.exchange(provider, code: code, state: state, pkce: pkce)
-            await store.addAgent(provider: provider, tokens: tokens)
-            dismiss()
+            await addOrFail(provider: provider, tokens: tokens)
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             phase = .failed(msg)
+        }
+    }
+
+    /// 토큰 저장(Keychain)까지 성공하면 닫고, 실패하면 에러 화면으로 보낸다.
+    private func addOrFail(provider: AgentProvider, tokens: OAuthTokens) async {
+        if await store.addAgent(provider: provider, tokens: tokens) {
+            dismiss()
+        } else {
+            phase = .failed(loc.errKeychainSave)
         }
     }
 }

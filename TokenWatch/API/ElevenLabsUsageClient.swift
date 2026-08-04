@@ -21,7 +21,7 @@ enum ElevenLabsUsageClient {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("TokenWatch/1.0", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await APISession.shared.data(for: req)
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         // 잘못된/누락된 API 키.

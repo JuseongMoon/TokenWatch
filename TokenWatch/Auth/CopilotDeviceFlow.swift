@@ -102,7 +102,7 @@ enum CopilotDeviceFlow {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await APISession.shared.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"

@@ -24,7 +24,7 @@ enum CopilotUsageClient {
         req.setValue("GitHubCopilotChat/0.26.7", forHTTPHeaderField: "User-Agent")
         req.setValue("2025-04-01", forHTTPHeaderField: "X-Github-Api-Version")
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await APISession.shared.data(for: req)
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         if status == 401 || status == 403 { throw UsageError.unauthorized }
@@ -92,11 +92,13 @@ private struct CopilotUser: Decodable {
         return out
     }
 
-    /// "YYYY-MM-DD"(날짜만) → 그 날 자정(UTC) Date.
+    /// "YYYY-MM-DD"(날짜만) → 그 날 기기 로컬 자정 Date.
+    /// UTC 자정으로 앵커링하면 UTC 서쪽 타임존에서 전날로 표시되고 알림도 어긋난다 —
+    /// 캘린더 날짜는 로컬 자정이 맞다.
     private static func parseResetDate(_ s: String) -> Date? {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
+        f.timeZone = .current
         f.dateFormat = "yyyy-MM-dd"
         return f.date(from: s)
     }

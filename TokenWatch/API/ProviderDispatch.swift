@@ -30,13 +30,22 @@ enum UsageError: Error, LocalizedError {
 }
 
 /// Retry-After 헤더 파싱: 초 단위 정수 또는 HTTP-date.
-func parseRetryAfter(_ value: String?) -> Date? {
+/// `Double(String)`은 "inf"·"1e400" 같은 값도 성공 파싱하므로, 비유한·음수는 버리고
+/// 과대 값은 상한으로 눌러야 한다 — 무한대 Date가 백오프 표시 계산의 `Int(...)` 변환까지
+/// 흘러가면 그대로 트랩(크래시)한다.
+func parseRetryAfter(_ value: String?, now: Date = Date()) -> Date? {
+    /// 서버가 어떤 값을 보내든 이 이상은 기다리지 않는다.
+    let maxRetryAfter: TimeInterval = 24 * 60 * 60
     guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
-    if let secs = TimeInterval(value) { return Date().addingTimeInterval(secs) }
+    if let secs = TimeInterval(value) {
+        guard secs.isFinite, secs >= 0 else { return nil }
+        return now.addingTimeInterval(min(secs, maxRetryAfter))
+    }
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
     f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-    return f.date(from: value)
+    guard let date = f.date(from: value) else { return nil }
+    return min(date, now.addingTimeInterval(maxRetryAfter))
 }
 
 // MARK: - OAuth 디스패치
@@ -107,8 +116,10 @@ enum ProviderUsage {
     /// - Parameter manual: 사용자가 직접 [refresh]를 눌렀을 때 true. 버스트 스로틀을 우회하고,
     ///   Codex는 이때 accounts/check에서 현재 plan을 라이브로 읽어 갱신한다(아래 설명 참고).
     ///   자동 새로고침은 false로 두어 여분의 호출을 매 틱 하지 않는다.
+    /// - Returns: 취소(백그라운드 전환·주기 변경 등)로 중단되면 nil — 취소는 에러가
+    ///   아니므로 호출자는 표시 중인 스냅샷을 건드리지 않아야 한다.
     static func fetchSnapshot(_ provider: AgentProvider, for agentID: UUID,
-                             manual: Bool = false) async -> AgentSnapshot {
+                             manual: Bool = false) async -> AgentSnapshot? {
         // 429 backoff 게이트가 닫혀있으면 캐시 그래프를 유지하며 재시도 안내를 표시.
         if let until = await RateLimitGate.shared.blocked(for: agentID) {
             return await rateLimitedSnapshot(agentID: agentID, until: until)
@@ -123,6 +134,11 @@ enum ProviderUsage {
                 tokens = try await TokenStore.shared.forceRefresh(for: agentID, provider: provider)
                 windows = try await fetchWindows(provider, tokens: tokens)
             }
+
+            // 200이지만 창이 하나도 없으면 성공으로 캐싱하지 않고 명시적 에러로 처리한다.
+            // (조용히 빈 스냅샷을 저장하면 last-good 캐시까지 오염되고, 카드에는 이유 없는
+            //  "no usage data"만 남는다.)
+            guard !windows.isEmpty else { throw UsageError.noWindows }
 
             // Codex plan 라이브 갱신: id_token(JWT)의 chatgpt_plan_type은 최초 로그인 시점
             // 값에 고정되어 refresh로도 안 바뀐다(실증됨). 그래서 수동 새로고침 시에는
@@ -143,6 +159,10 @@ enum ProviderUsage {
             let until = await RateLimitGate.shared.blocked(for: agentID)
                 ?? Date().addingTimeInterval(300)
             return await rateLimitedSnapshot(agentID: agentID, until: until)
+        } catch is CancellationError {
+            return nil
+        } catch let e as URLError where e.code == .cancelled {
+            return nil
         } catch {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)

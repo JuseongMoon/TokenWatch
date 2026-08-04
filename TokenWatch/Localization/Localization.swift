@@ -291,6 +291,14 @@ struct L10n: Sendable {
     func errTokenExchange(_ m: String) -> String { lang == .ko ? "토큰 교환 실패: \(m)" : "Token exchange failed: \(m)" }
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }
+    var errStateMismatch: String {
+        lang == .ko ? "로그인 응답 검증에 실패했습니다(state 불일치). 다시 시도해 주세요."
+                    : "Login response failed verification (state mismatch). Please try again."
+    }
+    var errKeychainSave: String {
+        lang == .ko ? "토큰을 안전 저장소(Keychain)에 저장하지 못했습니다. 다시 시도해 주세요."
+                    : "Couldn't save the token to the Keychain. Please try again."
+    }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
 
     // MARK: 디바이스 플로우(GitHub Copilot 등)

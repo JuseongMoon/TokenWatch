@@ -26,7 +26,7 @@ enum ClaudeUsageClient {
         req.setValue(betaHeader, forHTTPHeaderField: "anthropic-beta")
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await APISession.shared.data(for: req)
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         if status == 401 { throw UsageError.unauthorized }

@@ -13,7 +13,10 @@ actor TokenStore {
 
     private func account(for agentID: UUID) -> String { "tokens.\(agentID.uuidString)" }
 
-    func save(_ tokens: OAuthTokens, for agentID: UUID) {
+    /// 저장 성공 여부를 돌려준다. 갱신 경로는 무시해도 되지만(메모리 토큰으로 계속 동작),
+    /// 최초 로그인 경로는 실패 시 에이전트를 추가하면 안 된다.
+    @discardableResult
+    func save(_ tokens: OAuthTokens, for agentID: UUID) -> Bool {
         Keychain.setJSON(tokens, account: account(for: agentID))
     }
 

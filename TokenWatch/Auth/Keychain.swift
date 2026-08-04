@@ -12,7 +12,10 @@ enum Keychain {
     /// 우리 앱 전용 서비스 네임스페이스.
     private static let service = "com.ScienceFiction.TokenWatch.oauth"
 
-    static func set(_ data: Data, account: String) {
+    /// 저장 성공 여부를 돌려준다 — 실패를 조용히 넘기면 "에이전트는 있는데 토큰만 없는"
+    /// 영구 고장 상태가 되므로, 로그인 경로(addAgent)는 이 값을 확인해야 한다.
+    @discardableResult
+    static func set(_ data: Data, account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -21,8 +24,10 @@ enum Keychain {
         SecItemDelete(query as CFDictionary)
         var add = query
         add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        // AfterFirstUnlock: 백그라운드 갱신(BGAppRefreshTask)이 잠금 중에도 읽어야 한다.
+        // ThisDeviceOnly: 토큰이 암호화 백업에 실려 다른 기기로 이관되지 않게 한다.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
     static func data(account: String) -> Data? {
@@ -49,9 +54,10 @@ enum Keychain {
 
     // MARK: Codable 편의
 
-    static func setJSON<T: Encodable>(_ value: T, account: String) {
-        guard let data = try? JSONEncoder().encode(value) else { return }
-        set(data, account: account)
+    @discardableResult
+    static func setJSON<T: Encodable>(_ value: T, account: String) -> Bool {
+        guard let data = try? JSONEncoder().encode(value) else { return false }
+        return set(data, account: account)
     }
 
     static func json<T: Decodable>(_ type: T.Type, account: String) -> T? {

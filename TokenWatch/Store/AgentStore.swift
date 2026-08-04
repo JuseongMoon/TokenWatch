@@ -154,16 +154,20 @@ final class AgentStore {
     // MARK: 변경
 
     /// 로그인 성공 후 호출: 토큰을 저장하고 에이전트를 목록에 추가한 뒤 새로고침.
-    func addAgent(provider: AgentProvider, tokens: OAuthTokens) async {
+    /// - Returns: Keychain 저장 실패 시 false — 이때는 목록에 추가하지 않는다
+    ///   (토큰 없는 에이전트가 영구 "인증 안 됨" 상태로 남는 것을 방지).
+    @discardableResult
+    func addAgent(provider: AgentProvider, tokens: OAuthTokens) async -> Bool {
         var agent = Agent(provider: provider)
         agent.accountLabel = tokens.accountEmail ?? tokens.plan
-        await TokenStore.shared.save(tokens, for: agent.id)
+        guard await TokenStore.shared.save(tokens, for: agent.id) else { return false }
         agents.append(agent)
         persist()
         // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
         await NotificationManager.shared.requestAuthorizationIfNeeded()
         // 이 refresh는 직전 관측이 없어 자동으로 baseline만 기록한다(처음 추가 시 무알림).
         await refresh(agent)
+        return true
     }
 
     func remove(_ agent: Agent) {
@@ -230,7 +234,12 @@ final class AgentStore {
         lastFetchAt[agent.id] = Date()
         loadingIDs.insert(agent.id)
         defer { loadingIDs.remove(agent.id) }
-        var snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id, manual: manual)
+        guard var snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id, manual: manual) else {
+            // 취소됨(백그라운드 전환·주기 변경) — 표시 상태를 건드리지 않고,
+            // 다음 시도가 버스트 스로틀에 걸리지 않도록 스탬프를 되돌린다.
+            lastFetchAt[agent.id] = nil
+            return
+        }
         // 충전형 잔액 창을 게이지로 승격(peak 갱신 포함). RateLimitGate 캐시는 승격 이전 원본을
         // 저장하므로, 캐시로 돌아온 스냅샷도 매번 여기서 승격해야 표시가 일관된다.
         snapshot.windows = promoteCreditWindows(snapshot.windows, agentID: agent.id)

@@ -24,6 +24,9 @@ struct LoginWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // 로그인 1회용 웹뷰 — 세션 쿠키·스토리지가 앱 컨테이너 디스크에 남지 않도록
+        // 비영속 스토어를 쓴다(로그아웃 후 재추가 시 자동 재로그인되는 문제도 함께 차단).
+        config.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.load(URLRequest(url: startURL))

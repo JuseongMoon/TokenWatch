@@ -27,6 +27,8 @@ struct AddAgentSheet: View {
     @State private var phase: Phase = .pickProvider
     @State private var pkce = PKCE()
     @State private var apiKeyText = ""
+    /// 추가 완료 여부 — 성공 dismiss가 login_abandon으로 잘못 기록되지 않게 한다.
+    @State private var completed = false
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,21 @@ struct AddAgentSheet: View {
             }
         }
         .tint(Term.green)
+        .onAppear { AnalyticsService.shared.log(.screenView(.addAgent)) }
+        .onDisappear { logAbandonIfNeeded() }
+    }
+
+    /// 시트가 로그인 완료 없이 닫혔을 때 어느 단계에서 이탈했는지 기록한다.
+    /// (.pickProvider는 provider 미선택이라 제외, .failed는 이미 login_fail로 기록,
+    ///  .exchanging은 phase에 provider가 없어 생략 — 창이 닫히는 찰나뿐이라 드물다.)
+    private func logAbandonIfNeeded() {
+        guard !completed else { return }
+        switch phase {
+        case .login(let p):      AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .authorize))
+        case .apiKey(let p):     AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .apiKeyEntry))
+        case .deviceFlow(let p): AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .devicePoll))
+        case .pickProvider, .exchanging, .failed: break
+        }
     }
 
     @ViewBuilder
@@ -122,6 +139,7 @@ struct AddAgentSheet: View {
                 Task { await exchange(provider: provider, code: code, state: state) }
             },
             onError: { message in
+                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .authorize, code: "webview"))
                 phase = .failed(message)
             }
         )
@@ -133,6 +151,7 @@ struct AddAgentSheet: View {
 
     /// provider의 authKind에 따라 다음 화면을 고른다.
     private func start(_ provider: AgentProvider) {
+        AnalyticsService.shared.log(.loginStart(provider: provider))
         switch provider.authKind {
         case .oauthCode:
             pkce = PKCE()
@@ -211,7 +230,10 @@ struct AddAgentSheet: View {
                 phase = .exchanging
                 Task { await addOrFail(provider: provider, tokens: tokens) }
             },
-            onError: { message in phase = .failed(message) }
+            onError: { message in
+                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .devicePoll, code: "device_flow"))
+                phase = .failed(message)
+            }
         )
     }
 
@@ -257,6 +279,7 @@ struct AddAgentSheet: View {
         // CSRF 방어: 콜백의 state는 로그인 시작 때 만든 값과 일치해야 한다.
         // 불일치하면 우리가 시작한 인가 흐름의 응답이 아니므로 교환하지 않는다.
         guard state == pkce.state else {
+            AnalyticsService.shared.log(.loginFail(provider: provider, stage: .stateMismatch, code: "state_mismatch"))
             phase = .failed(loc.errStateMismatch)
             return
         }
@@ -264,6 +287,9 @@ struct AddAgentSheet: View {
             let tokens = try await ProviderAuth.exchange(provider, code: code, state: state, pkce: pkce)
             await addOrFail(provider: provider, tokens: tokens)
         } catch {
+            // code에는 원문 메시지 대신 에러 타입명만 — 계정 정보·URL 혼입 방지.
+            AnalyticsService.shared.log(.loginFail(provider: provider, stage: .exchange,
+                                                   code: String(describing: type(of: error))))
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             phase = .failed(msg)
         }
@@ -272,8 +298,10 @@ struct AddAgentSheet: View {
     /// 토큰 저장(Keychain)까지 성공하면 닫고, 실패하면 에러 화면으로 보낸다.
     private func addOrFail(provider: AgentProvider, tokens: OAuthTokens) async {
         if await store.addAgent(provider: provider, tokens: tokens) {
+            completed = true   // 성공 dismiss — onDisappear의 abandon 기록을 막는다
             dismiss()
         } else {
+            AnalyticsService.shared.log(.loginFail(provider: provider, stage: .keychain, code: "keychain_save"))
             phase = .failed(loc.errKeychainSave)
         }
     }

@@ -130,6 +130,8 @@ struct AgentSnapshot: Sendable {
     var planLabel: String?
     var fetchedAt: Date
     var error: String?
+    /// error의 기계 판독 사유 — 분석 이벤트(usage_fetch_error)용. 표시에는 쓰지 않는다.
+    var errorReason: FetchErrorReason? = nil
 }
 
 // MARK: - Claude oauth/usage 응답 디코딩

@@ -48,6 +48,8 @@ final class AgentStore {
     private let defaultsKey = "tokenwatch.agents.v1"
     private let creditPeaksKey = "tokenwatch.creditPeaks.v1"
     private let resetBaselineKey = "tokenwatch.resetBaseline.v1"
+    /// activation_complete(설치 후 1회 — 첫 정상 스냅샷) 발화 여부.
+    private static let activatedKey = "tokenwatch.analytics.activated"
     /// 충전형 창의 관측 최고 잔액. key = "에이전트UUID|창라벨". API가 총액을 안 주는 provider의
     /// 게이지 분모 추정에 쓴다. (영속 — 세션 간 유지해야 추정이 안정적.)
     @ObservationIgnored private var creditPeaks: [String: Double] = [:]
@@ -176,6 +178,8 @@ final class AgentStore {
         guard await TokenStore.shared.save(tokens, for: agent.id) else { return false }
         agents.append(agent)
         persist()
+        AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+        AnalyticsService.shared.syncUserProperties(agents: agents)
         // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
         await NotificationManager.shared.requestAuthorizationIfNeeded()
         // 이 refresh는 직전 관측이 없어 자동으로 baseline만 기록한다(처음 추가 시 무알림).
@@ -189,6 +193,8 @@ final class AgentStore {
         // 데모 카드는 표시 전용 — 저장소·Keychain·예약 알림에는 애초에 흔적이 없다.
         // (데모를 다시 열면 원래 목록이 그대로 복원된다.)
         guard !isDemo else { return }
+        AnalyticsService.shared.log(.agentRemove(provider: agent.provider, agentsTotal: agents.count))
+        AnalyticsService.shared.syncUserProperties(agents: agents)
         // 이 에이전트의 충전형 peak 추정치도 함께 정리(고아 키 방지).
         let prefix = "\(agent.id.uuidString)|"
         let pruned = creditPeaks.filter { !$0.key.hasPrefix(prefix) }
@@ -298,6 +304,9 @@ final class AgentStore {
         // 저장하므로, 캐시로 돌아온 스냅샷도 매번 여기서 승격해야 표시가 일관된다.
         snapshot.windows = promoteCreditWindows(snapshot.windows, agentID: agent.id)
 
+        // 분석용 직전 상태 — 정상↔에러 "전이"에만 이벤트를 내 폴링 반복 범람을 막는다.
+        let prevHadError = snapshots[agent.id]?.error != nil
+
         // last-good 유지: 이번 결과가 에러 + 빈 windows인데 이전에 표시하던
         // windows가 있으면, 링/바가 사라지지 않도록 이전 windows를 유지하고
         // 에러만 덧입힌다.
@@ -305,9 +314,26 @@ final class AgentStore {
            let prev = snapshots[agent.id], !prev.windows.isEmpty {
             snapshots[agent.id] = AgentSnapshot(
                 windows: prev.windows, planLabel: prev.planLabel,
-                fetchedAt: prev.fetchedAt, error: snapshot.error)
+                fetchedAt: prev.fetchedAt, error: snapshot.error,
+                errorReason: snapshot.errorReason)
         } else {
             snapshots[agent.id] = snapshot
+        }
+
+        // 정상→에러 전이는 오류를, 에러→정상 전이는 복구를 기록한다(운영 알람·MTTR용).
+        if snapshot.error != nil {
+            if !prevHadError {
+                AnalyticsService.shared.log(.usageFetchError(provider: agent.provider,
+                                                             reason: snapshot.errorReason ?? .other))
+            }
+        } else if prevHadError {
+            AnalyticsService.shared.log(.usageFetchRecover(provider: agent.provider))
+        }
+
+        // 활성화 완료(설치 후 1회): 첫 에이전트의 첫 정상 스냅샷 — GA4 키 이벤트.
+        if snapshot.error == nil, !UserDefaults.standard.bool(forKey: Self.activatedKey) {
+            UserDefaults.standard.set(true, forKey: Self.activatedKey)
+            AnalyticsService.shared.log(.activationComplete(provider: agent.provider))
         }
 
         // 플랜 라벨을 얻으면 accountLabel 보강. 이메일을 표시 중이면 건드리지 않고,

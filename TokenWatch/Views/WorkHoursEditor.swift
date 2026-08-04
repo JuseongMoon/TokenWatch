@@ -41,7 +41,10 @@ struct WorkHoursEditor: View {
                 .padding(20)
                 .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
-        .onAppear { draft = WorkHoursSchedule(encoded: workHoursRaw) }
+        .onAppear {
+            draft = WorkHoursSchedule(encoded: workHoursRaw)
+            AnalyticsService.shared.log(.screenView(.workHours))
+        }
     }
 
     private var card: some View {
@@ -186,6 +189,9 @@ struct WorkHoursEditor: View {
 
     private func save() {
         workHoursRaw = draft.encoded
+        AnalyticsService.shared.log(.settingChange(setting: "work_hours",
+                                                   value: AnalyticsService.workHoursBucket(draft.onHours)))
+        AnalyticsService.shared.syncSettingsProperties()
         close()
     }
 

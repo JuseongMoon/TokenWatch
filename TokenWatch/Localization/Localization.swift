@@ -286,6 +286,12 @@ struct L10n: Sendable {
         lang == .ko ? "[ iOS 설정 열기 ↗ ]" : "[ open iOS Settings ↗ ]"
     }
 
+    // MARK: 프라이버시(설정 PRIVACY — 익명 통계 옵트아웃)
+    var settingsAnalyticsHelp: String {
+        lang == .ko ? "익명 사용 통계로 앱 개선을 돕습니다. 계정·이메일·토큰·사용량 수치는 절대 포함되지 않습니다."
+                    : "Anonymous usage stats help improve the app. Never includes your accounts, emails, tokens, or usage numbers."
+    }
+
     // MARK: 에러(ProviderDispatch · OAuth 등)
     var errAuthExpired: String { lang == .ko ? "인증이 만료되었습니다. 다시 로그인해 주세요." : "Authentication expired. Please log in again." }
     var errRateLimited: String { lang == .ko ? "요청이 많아 잠시 대기 중입니다." : "Too many requests. Waiting a moment." }

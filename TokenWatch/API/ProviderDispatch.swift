@@ -29,6 +29,23 @@ enum UsageError: Error, LocalizedError {
     }
 }
 
+extension FetchErrorReason {
+    /// usage 조회 에러를 분석용 기계 사유로 정규화한다. 원문 메시지는 현지화 문자열이라
+    /// 전송하지 않고(계정 정보·URL 혼입 가능), 이 열거값만 usage_fetch_error에 실린다.
+    init(classifying error: Error) {
+        switch error {
+        case UsageError.unauthorized: self = .auth
+        case UsageError.rateLimited: self = .rateLimit
+        case UsageError.http(let code, _): self = code >= 500 ? .http5xx : .http4xx
+        case UsageError.decode: self = .parse
+        case UsageError.noWindows: self = .empty
+        case is OAuthError: self = .auth   // 토큰 refresh 실패 → 재로그인 필요
+        case is URLError: self = .network
+        default: self = .other
+        }
+    }
+}
+
 /// Retry-After 헤더 파싱: 초 단위 정수 또는 HTTP-date.
 /// `Double(String)`은 "inf"·"1e400" 같은 값도 성공 파싱하므로, 비유한·음수는 버리고
 /// 과대 값은 상한으로 눌러야 한다 — 무한대 Date가 백오프 표시 계산의 `Int(...)` 변환까지
@@ -165,7 +182,8 @@ enum ProviderUsage {
             return nil
         } catch {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
-                                 error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                                 error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                                 errorReason: FetchErrorReason(classifying: error))
         }
     }
 
@@ -178,9 +196,11 @@ enum ProviderUsage {
         if let cached = await RateLimitGate.shared.lastGood(for: agentID) {
             return AgentSnapshot(windows: cached.windows, planLabel: cached.planLabel,
                                  fetchedAt: cached.fetchedAt,
-                                 error: L10n(lang: lang).errRateLimitedRetryStale(mins))
+                                 error: L10n(lang: lang).errRateLimitedRetryStale(mins),
+                                 errorReason: .rateLimit)
         }
         return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
-                             error: L10n(lang: lang).errRateLimitedRetry(mins))
+                             error: L10n(lang: lang).errRateLimitedRetry(mins),
+                             errorReason: .rateLimit)
     }
 }

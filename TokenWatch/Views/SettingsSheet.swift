@@ -54,6 +54,8 @@ struct SettingsSheet: View {
     /// 다중 선택된 추적 대상. GraphOption.id("uuid|label")들을 개행으로 이어 저장.
     @AppStorage("tokenwatch.heartbeatTargets") private var heartbeatTargetsRaw = ""
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
+    /// 익명 사용 통계 수집 동의(기본 ON). AnalyticsService와 같은 키를 공유한다.
+    @AppStorage(AnalyticsService.enabledKey) private var analyticsEnabled = true
 
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
@@ -79,6 +81,7 @@ struct SettingsSheet: View {
                         heartbeatSection
                         notificationSection
                         screenSection
+                        privacySection
                         infoSection
                     }
                     .padding(16)
@@ -105,6 +108,7 @@ struct SettingsSheet: View {
             }
         }
         .tint(Term.green)
+        .onAppear { AnalyticsService.shared.log(.screenView(.settings)) }
         .onChange(of: notifySession) { _, _ in Task { await store.reapplyNotificationSchedule() } }
         .onChange(of: notifyWeekly) { _, _ in Task { await store.reapplyNotificationSchedule() } }
         .terminalConfirm(
@@ -182,10 +186,24 @@ struct SettingsSheet: View {
     /// 데모를 켜거나 끄고, 바뀐 화면을 곧바로 볼 수 있도록 설정을 닫는다.
     /// 자동 새로고침을 다시 걸어야 데모 게이지가 움직이고, 나갈 때는 실제 사용량을 즉시 다시 읽는다.
     private func toggleDemo() {
-        if store.isDemo { store.exitDemo() } else { store.enterDemo() }
+        if store.isDemo {
+            AnalyticsService.shared.log(.demoEnd)
+            store.exitDemo()
+        } else {
+            AnalyticsService.shared.log(.demoStart(source: .settings))
+            store.enterDemo()
+        }
         store.startAutoRefresh(interval: refreshInterval)
         dismiss()
     }
+
+    /// 설정 변경을 기록하고 설정 파생 유저 속성을 함께 갱신한다(드리프트 방지).
+    private func logSetting(_ setting: String, _ value: String) {
+        AnalyticsService.shared.log(.settingChange(setting: setting, value: value))
+        AnalyticsService.shared.syncSettingsProperties()
+    }
+
+    private func onOff(_ v: Bool) -> String { v ? "on" : "off" }
 
     // MARK: 언어 (세그먼트)
 
@@ -197,6 +215,7 @@ struct SettingsSheet: View {
                         let selected = appLanguage == opt
                         Button {
                             appLanguage = opt
+                            logSetting("language", langTag(opt))
                         } label: {
                             Text(opt.segmentLabel)
                                 .font(.term(13, weight: selected ? .bold : .regular))
@@ -226,6 +245,7 @@ struct SettingsSheet: View {
                         let selected = refreshInterval == opt.rawValue
                         Button {
                             refreshInterval = opt.rawValue
+                            logSetting("refresh_interval", opt.termLabel)
                         } label: {
                             Text(opt.termLabel)
                                 .font(.term(13, weight: selected ? .bold : .regular))
@@ -264,6 +284,7 @@ struct SettingsSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
                         hideUnusedWindows.toggle()
+                        logSetting("hide_unused", onOff(hideUnusedWindows))
                     } label: {
                         HStack(spacing: 8) {
                             Text(hideUnusedWindows ? "[x]" : "[ ]")
@@ -282,6 +303,7 @@ struct SettingsSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
                         gaugeCritter.toggle()
+                        logSetting("gauge_critter", onOff(gaugeCritter))
                     } label: {
                         HStack(spacing: 8) {
                             Text(gaugeCritter ? "[x]" : "[ ]")
@@ -375,6 +397,7 @@ struct SettingsSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
                         heartbeatCursor.toggle()
+                        logSetting("heartbeat", heartbeatCursor ? (heartbeatTracking ? "usage" : "heart") : "off")
                     } label: {
                         HStack(spacing: 8) {
                             Text(heartbeatCursor ? "[x]" : "[ ]")
@@ -395,8 +418,14 @@ struct SettingsSheet: View {
                     // 모드: heart(단일) / usage(사용량 추적)
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 0) {
-                            modeButton("heart", selected: !heartbeatTracking) { heartbeatTracking = false }
-                            modeButton("usage", selected: heartbeatTracking) { selectUsageMode() }
+                            modeButton("heart", selected: !heartbeatTracking) {
+                                heartbeatTracking = false
+                                logSetting("heartbeat", "heart")
+                            }
+                            modeButton("usage", selected: heartbeatTracking) {
+                                selectUsageMode()
+                                logSetting("heartbeat", "usage")
+                            }
                         }
                         .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
 
@@ -469,8 +498,14 @@ struct SettingsSheet: View {
         TerminalBox(title: "NOTIFICATIONS") {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 8) {
-                    notifToggle("session resets", isOn: notifySession) { notifySession.toggle() }
-                    notifToggle("weekly resets", isOn: notifyWeekly) { notifyWeekly.toggle() }
+                    notifToggle("session resets", isOn: notifySession) {
+                        notifySession.toggle()
+                        logSetting("notify_session", onOff(notifySession))
+                    }
+                    notifToggle("weekly resets", isOn: notifyWeekly) {
+                        notifyWeekly.toggle()
+                        logSetting("notify_weekly", onOff(notifyWeekly))
+                    }
                     Text(loc.settingsNotifHelp)
                         .font(.term(10)).foregroundStyle(Term.dim)
                 }
@@ -514,6 +549,7 @@ struct SettingsSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 Button {
                     keepScreenOn.toggle()
+                    logSetting("keep_screen_on", onOff(keepScreenOn))
                 } label: {
                     HStack(spacing: 8) {
                         Text(keepScreenOn ? "[x]" : "[ ]")
@@ -526,6 +562,42 @@ struct SettingsSheet: View {
                 .buttonStyle(.plain)
 
                 Text(loc.settingsScreenHelp)
+                    .font(.term(10)).foregroundStyle(Term.dim)
+            }
+        }
+    }
+
+    // MARK: 프라이버시 (익명 통계 옵트아웃)
+
+    /// 세그먼트 라벨용 언어 태그(유저 속성 app_lang과 같은 표기).
+    private func langTag(_ opt: AppLanguage) -> String {
+        switch opt {
+        case .system: return "system"
+        case .korean: return "ko"
+        case .english: return "en"
+        }
+    }
+
+    private var privacySection: some View {
+        TerminalBox(title: "PRIVACY") {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    analyticsEnabled.toggle()
+                    AnalyticsService.shared.setEnabled(analyticsEnabled)
+                    // 다시 켤 때는 속성을 곧바로 재동기화한다(꺼져 있던 동안의 드리프트 복구).
+                    if analyticsEnabled { AnalyticsService.shared.syncUserProperties(agents: store.agents) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(analyticsEnabled ? "[x]" : "[ ]")
+                            .foregroundStyle(analyticsEnabled ? Term.green : Term.dim)
+                        Text("share anonymous usage stats").foregroundStyle(Term.fg)
+                        Spacer()
+                    }
+                    .font(.term(14))
+                }
+                .buttonStyle(.plain)
+
+                Text(loc.settingsAnalyticsHelp)
                     .font(.term(10)).foregroundStyle(Term.dim)
             }
         }

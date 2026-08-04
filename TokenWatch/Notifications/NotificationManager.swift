@@ -132,4 +132,22 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
     }
+
+    /// 알림 탭으로 앱에 진입했을 때 — 어떤 종류의 리셋 알림이 열렸는지 기록한다.
+    /// identifier 접두어로 예약형(reset|)과 감지형(fired|)을 구분한다.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse) async {
+        let id = response.notification.request.identifier
+        await MainActor.run {
+            let kind: AnalyticsEvent.NotificationKind
+            if id.hasPrefix(ResetDetector.firedIDPrefix) {
+                kind = .resetSurprise
+            } else if id.hasPrefix(ResetSchedulePolicy.idPrefix) {
+                kind = .resetScheduled
+            } else {
+                return
+            }
+            AnalyticsService.shared.log(.notificationOpen(kind: kind))
+        }
+    }
 }

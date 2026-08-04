@@ -55,6 +55,7 @@ struct ContentView: View {
         .onChange(of: keepScreenOn) { _, _ in
             applyIdleTimer(phase: scenePhase)
         }
+        .onAppear { AnalyticsService.shared.log(.screenView(.main)) }
     }
 
     private func applyScenePhase(_ phase: ScenePhase) {
@@ -219,12 +220,14 @@ struct ContentView: View {
 
     /// 데모 시작: 표본 데이터로 갈아끼운 뒤 자동 새로고침을 다시 걸어 게이지가 살아 움직이게 한다.
     private func enterDemo() {
+        AnalyticsService.shared.log(.demoStart(source: .emptyList))
         store.enterDemo()
         if scenePhase == .active { store.startAutoRefresh(interval: refreshInterval) }
     }
 
     /// 데모 종료: 원래 상태로 되돌리고 실제 사용량을 곧바로 다시 조회한다.
     private func exitDemo() {
+        AnalyticsService.shared.log(.demoEnd)
         store.exitDemo()
         if scenePhase == .active { store.startAutoRefresh(interval: refreshInterval) }
     }
@@ -258,6 +261,7 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .contextMenu {
                             Button(loc.menuRefresh, systemImage: "arrow.clockwise") {
+                                AnalyticsService.shared.log(.refreshManual(source: .contextMenu))
                                 Task { await store.refresh(agent) }
                             }
                             Button(loc.menuDelete, systemImage: "trash", role: .destructive) {
@@ -283,6 +287,7 @@ struct ContentView: View {
         .scrollContentBackground(.hidden)
         .background(Term.bg)
         .refreshable {
+            AnalyticsService.shared.log(.refreshManual(source: .pullList))
             await store.refreshAll()
         }
     }

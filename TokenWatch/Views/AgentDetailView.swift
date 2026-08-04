@@ -256,9 +256,13 @@ struct AgentDetailView: View {
 
     // MARK: LOGOUT
 
+    /// 데모 중에는 감춘다 — 지울 토큰이 없고, 표본 카드를 없애면 둘러볼 것이 사라진다.
+    @ViewBuilder
     private var logoutButton: some View {
-        TerminalButton(title: "[ LOGOUT ]", color: Term.red) {
-            showLogoutConfirm = true
+        if !store.isDemo {
+            TerminalButton(title: "[ LOGOUT ]", color: Term.red) {
+                showLogoutConfirm = true
+            }
         }
     }
 

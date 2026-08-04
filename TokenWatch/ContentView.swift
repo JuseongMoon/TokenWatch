@@ -30,6 +30,7 @@ struct ContentView: View {
                 Term.bg.ignoresSafeArea()
                 VStack(spacing: 0) {
                     topBar   // 앱 이름·상태 라인·[SETTINGS] 를 최상단에 고정
+                    if store.isDemo { demoBanner }   // 데모 중엔 스크롤과 무관하게 항상 보이도록 고정
                     list     // 아래 리스트만 스크롤
                 }
             }
@@ -179,8 +180,53 @@ struct ContentView: View {
     }
 
     private var statusLine: String {
+        if store.isDemo { return "demo mode · sample data" }
         let n = store.agents.count
         return n == 0 ? "no agents connected" : "watching \(n) agent\(n == 1 ? "" : "s")"
+    }
+
+    // MARK: 데모 배너
+
+    /// 데모 중 상단에 고정되는 안내 줄. 표본 데이터임을 분명히 하고 즉시 빠져나갈 수 있게 한다.
+    private var demoBanner: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("▶ DEMO")
+                .font(.term(12, weight: .bold))
+                .foregroundStyle(Term.yellow)
+            Text(loc.demoBanner)
+                .font(.term(11))
+                .foregroundStyle(Term.dim)
+            Spacer(minLength: 8)
+            Button {
+                exitDemo()
+            } label: {
+                Text("[EXIT]")
+                    .font(.term(12, weight: .semibold))
+                    .foregroundStyle(Term.yellow)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(loc.a11yExitDemo)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .overlay(
+            Rectangle().stroke(Term.yellow.opacity(0.5),
+                               style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+    }
+
+    /// 데모 시작: 표본 데이터로 갈아끼운 뒤 자동 새로고침을 다시 걸어 게이지가 살아 움직이게 한다.
+    private func enterDemo() {
+        store.enterDemo()
+        if scenePhase == .active { store.startAutoRefresh(interval: refreshInterval) }
+    }
+
+    /// 데모 종료: 원래 상태로 되돌리고 실제 사용량을 곧바로 다시 조회한다.
+    private func exitDemo() {
+        store.exitDemo()
+        if scenePhase == .active { store.startAutoRefresh(interval: refreshInterval) }
     }
 
     private var appVersion: String {
@@ -223,7 +269,14 @@ struct ContentView: View {
                         reorderControls(agent: agent, index: index)
                     }
                 }
-                AddAgentCell { showingAdd = true }
+                if store.isDemo {
+                    // 데모 중에는 로그인 진입점을 감춘다 — 표본 목록에 실계정을 섞지 않기 위함.
+                    TerminalButton(title: "[ ■ EXIT DEMO ]", color: Term.yellow) { exitDemo() }
+                        .accessibilityLabel(loc.a11yExitDemo)
+                } else {
+                    AddAgentCell { showingAdd = true }
+                    if store.agents.isEmpty { demoCell }
+                }
             }
             .padding(16)
         }
@@ -269,6 +322,21 @@ struct ContentView: View {
         .accessibilityLabel(label)
     }
 
+    /// 아직 로그인한 에이전트가 없을 때만 뜨는 데모 진입 셀. 계정 없이도 앱이 무엇을
+    /// 보여주는지 바로 확인할 수 있게 한다.
+    private var demoCell: some View {
+        VStack(spacing: 6) {
+            TerminalButton(title: "[ ▶ RUN DEMO ]", color: Term.yellow,
+                           dashedBorder: true) { enterDemo() }
+                .accessibilityLabel(loc.a11yRunDemo)
+            Text(loc.demoHint)
+                .font(.term(11))
+                .foregroundStyle(Term.dim)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
     private var emptyHint: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -287,4 +355,10 @@ struct ContentView: View {
 
 #Preview {
     ContentView().environment(AgentStore())
+}
+
+#Preview("demo mode") {
+    let store = AgentStore()
+    store.enterDemo()
+    return ContentView().environment(store)
 }

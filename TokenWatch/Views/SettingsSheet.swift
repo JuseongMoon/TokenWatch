@@ -71,6 +71,7 @@ struct SettingsSheet: View {
                 ScrollView(.vertical) {
                     VStack(spacing: 16) {
                         accountSection
+                        demoSection
                         languageSection
                         refreshSection
                         displaySection
@@ -144,18 +145,46 @@ struct SettingsSheet: View {
                                 }
                             }
                             Spacer()
-                            Button {
-                                pendingLogout = agent
-                            } label: {
-                                Text("[logout]").font(.term(12)).foregroundStyle(Term.red)
+                            // 데모 중에는 지울 토큰이 없다 — 표본 카드에 로그아웃을 노출하지 않는다.
+                            if !store.isDemo {
+                                Button {
+                                    pendingLogout = agent
+                                } label: {
+                                    Text("[logout]").font(.term(12)).foregroundStyle(Term.red)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                         .font(.term(13))
                     }
                 }
             }
         }
+    }
+
+    // MARK: 데모 (로그인 없이 둘러보기)
+
+    /// 계정이 있든 없든 언제나 데모를 켜고 끌 수 있는 진입점.
+    /// 메인 화면의 빈 목록 셀과 함께 두 갈래 발견 경로를 만든다.
+    private var demoSection: some View {
+        TerminalBox(title: "DEMO", titleColor: Term.yellow) {
+            VStack(alignment: .leading, spacing: 10) {
+                TerminalButton(title: store.isDemo ? "[ ■ EXIT DEMO ]" : "[ ▶ RUN DEMO ]",
+                               color: Term.yellow,
+                               dashedBorder: !store.isDemo) { toggleDemo() }
+                    .accessibilityLabel(store.isDemo ? loc.a11yExitDemo : loc.a11yRunDemo)
+                Text(store.isDemo ? loc.demoBanner : loc.demoHint)
+                    .font(.term(10)).foregroundStyle(Term.dim)
+            }
+        }
+    }
+
+    /// 데모를 켜거나 끄고, 바뀐 화면을 곧바로 볼 수 있도록 설정을 닫는다.
+    /// 자동 새로고침을 다시 걸어야 데모 게이지가 움직이고, 나갈 때는 실제 사용량을 즉시 다시 읽는다.
+    private func toggleDemo() {
+        if store.isDemo { store.exitDemo() } else { store.enterDemo() }
+        store.startAutoRefresh(interval: refreshInterval)
+        dismiss()
     }
 
     // MARK: 언어 (세그먼트)
@@ -519,4 +548,10 @@ struct SettingsSheet: View {
 
 #Preview {
     SettingsSheet().environment(AgentStore())
+}
+
+#Preview("demo mode") {
+    let store = AgentStore()
+    store.enterDemo()
+    return SettingsSheet().environment(store)
 }

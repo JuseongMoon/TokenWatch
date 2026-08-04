@@ -58,6 +58,14 @@ final class AgentStore {
     @ObservationIgnored private var rescheduleInFlight = false
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
+    /// 데모 모드(로그인 없이 표본 데이터로 둘러보기) 여부. 메모리 한정 — 앱을 다시 켜면 항상 꺼진 상태다.
+    /// 켜져 있는 동안 이 스토어는 네트워크·Keychain·UserDefaults·알림을 일절 건드리지 않는다.
+    private(set) var isDemo = false
+    /// 데모 진입 시 물러난 실제 상태. 나갈 때 그대로 되돌린다.
+    @ObservationIgnored private var backupAgents: [Agent] = []
+    @ObservationIgnored private var backupSnapshots: [UUID: AgentSnapshot] = [:]
+    @ObservationIgnored private var backupServiceStatus: [AgentProvider: ServiceHealth] = [:]
+
     /// Auto 모드의 현재 사다리 인덱스. 관찰 대상이라 설정 화면의 "현재 간격" 표기가 따라간다.
     /// 세션(메모리) 한정 — 앱 재실행, 그리고 Auto 진입/재진입(startAutoRefresh)마다 기본 60초로 리셋.
     private var autoLadderIndex = AutoRefreshPolicy.baseIndex
@@ -125,6 +133,8 @@ final class AgentStore {
     }
 
     private func persist() {
+        // 데모 목록이 실제 저장 데이터를 덮어쓰지 않게 한다(데모는 표시 전용).
+        guard !isDemo else { return }
         guard let data = try? JSONEncoder().encode(agents) else { return }
         UserDefaults.standard.set(data, forKey: defaultsKey)
     }
@@ -158,6 +168,9 @@ final class AgentStore {
     ///   (토큰 없는 에이전트가 영구 "인증 안 됨" 상태로 남는 것을 방지).
     @discardableResult
     func addAgent(provider: AgentProvider, tokens: OAuthTokens) async -> Bool {
+        // 데모 중에는 목록이 표본으로 대체돼 있어, 추가하면 나갈 때 사라지고 토큰만 남는다.
+        // UI가 데모 중 추가 진입점을 감추지만 방어적으로 한 번 더 막는다.
+        guard !isDemo else { return false }
         var agent = Agent(provider: provider)
         agent.accountLabel = tokens.accountEmail ?? tokens.plan
         guard await TokenStore.shared.save(tokens, for: agent.id) else { return false }
@@ -173,6 +186,9 @@ final class AgentStore {
     func remove(_ agent: Agent) {
         agents.removeAll { $0.id == agent.id }
         snapshots[agent.id] = nil
+        // 데모 카드는 표시 전용 — 저장소·Keychain·예약 알림에는 애초에 흔적이 없다.
+        // (데모를 다시 열면 원래 목록이 그대로 복원된다.)
+        guard !isDemo else { return }
         // 이 에이전트의 충전형 peak 추정치도 함께 정리(고아 키 방지).
         let prefix = "\(agent.id.uuidString)|"
         let pruned = creditPeaks.filter { !$0.key.hasPrefix(prefix) }
@@ -204,15 +220,52 @@ final class AgentStore {
 
     /// 상세 화면용: Keychain에 저장된 토큰에서 계정 정보를 읽어온다.
     func accountInfo(for agent: Agent) async -> AccountInfo? {
+        if isDemo { return DemoData.accountInfo(for: agent) }
         guard let t = await TokenStore.shared.tokens(for: agent.id) else { return nil }
         return AccountInfo(email: t.accountEmail, plan: t.plan, scopes: t.scopes,
                            expiresAt: t.expiresAt, canRefresh: t.refreshToken != nil,
                            accountId: t.accountId)
     }
 
+    // MARK: 데모 모드 (로그인 없이 둘러보기)
+
+    /// 실제 상태를 잠시 물리고 표본 데이터로 갈아끼운다. 저장·네트워크·알림은 모두 멈춘 채
+    /// 화면만 데모를 그린다. 나가면 원래 상태가 그대로 돌아온다.
+    func enterDemo() {
+        guard !isDemo else { return }
+        stopAutoRefresh()
+        backupAgents = agents
+        backupSnapshots = snapshots
+        backupServiceStatus = serviceStatus
+        isDemo = true
+        agents = DemoData.agents()
+        snapshots = DemoData.snapshots()
+        serviceStatus = DemoData.serviceStatus()
+    }
+
+    /// 데모를 끝내고 진입 직전 상태로 되돌린다.
+    func exitDemo() {
+        guard isDemo else { return }
+        stopAutoRefresh()
+        isDemo = false
+        agents = backupAgents
+        snapshots = backupSnapshots
+        serviceStatus = backupServiceStatus
+        backupAgents = []
+        backupSnapshots = [:]
+        backupServiceStatus = [:]
+    }
+
+    /// 데모 새로고침 한 번 — 사용량을 조금 진행시키고 지난 리셋은 다음 창으로 넘긴다.
+    /// 실제 refresh와 달리 감지형 알림·예약 재조정·리셋 추가 새로고침을 일절 건드리지 않는다.
+    private func tickDemo() {
+        snapshots = DemoData.advanced(snapshots)
+    }
+
     // MARK: 수동 새로고침
 
     func refreshAll() async {
+        if isDemo { tickDemo(); return }
         await withTaskGroup(of: Void.self) { group in
             for agent in agents {
                 group.addTask { await self.refresh(agent) }
@@ -225,6 +278,7 @@ final class AgentStore {
     /// - Parameter manual: 사용자가 직접 [refresh]를 눌렀을 때 true. 버스트 스로틀을 우회하고,
     ///   Codex는 이때 accounts/check에서 현재 plan을 라이브로 읽어 갱신한다(Pro→Free 반영).
     func refresh(_ agent: Agent, manual: Bool = false) async {
+        if isDemo { tickDemo(); return }
         // 이미 조회 중이면 중복 실행 방지.
         guard !loadingIDs.contains(agent.id) else { return }
         // 최근 minFetchSpacing 안에 이미 조회했으면 캐시 유지(버스트 흡수).
@@ -334,6 +388,8 @@ final class AgentStore {
     ///   않아 다음 주기에 곧바로 재시도한다. 일시적 네트워크·봇차단·타임아웃 한 번이
     ///   정상 배지를 "알 수 없음"으로 덮어쓰거나 오래 고착시키지 않게 하기 위함이다.
     func refreshStatus(for provider: AgentProvider, force: Bool = false) async {
+        // 데모 중에는 표본 배지를 유지한다(네트워크 조회 없음).
+        guard !isDemo else { return }
         guard let source = provider.statusSource else { return }
         let now = Date()
         if !force, let last = statusFetchedAt[provider],
@@ -440,12 +496,16 @@ final class AgentStore {
 
     /// BGAppRefreshTask 핸들러가 호출 — 전 에이전트를 갱신하면 refresh 훅이 감지/예약을 처리한다.
     func performBackgroundRefresh() async {
+        // 데모 중에는 백그라운드 갱신을 건너뛴다(표본 데이터로 실제 알림을 내지 않기 위해).
+        guard !isDemo else { return }
         await refreshAll()
     }
 
     /// 백그라운드 스케줄용: 전 에이전트 통틀어 가장 이른 미래 리셋 시각. 없으면 nil.
+    /// 데모 중에는 표본이 아니라 물러나 있는 실제 스냅샷을 기준으로 삼는다.
     func nextResetDate(after now: Date = Date()) -> Date? {
-        AutoRefreshPolicy.nextResetDate(in: Array(snapshots.values), after: now)
+        let source = isDemo ? backupSnapshots : snapshots
+        return AutoRefreshPolicy.nextResetDate(in: Array(source.values), after: now)
     }
 
     /// 설정에서 알림 토글을 바꿨을 때 즉시 예약 알림을 재조정한다(끈 창의 예약은 바로 제거).

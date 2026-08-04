@@ -68,6 +68,20 @@ struct L10n: Sendable {
     var a11yMoveUp: String   { lang == .ko ? "위로 이동" : "Move up" }
     var a11yMoveDown: String { lang == .ko ? "아래로 이동" : "Move down" }
 
+    // MARK: 데모 모드(로그인 없이 둘러보기)
+    /// 빈 목록에서 데모 버튼 아래 붙는 안내.
+    var demoHint: String {
+        lang == .ko ? "계정 없이 표본 데이터로 앱을 둘러봅니다."
+                    : "Explore the app with sample data — no account needed."
+    }
+    /// 데모 중 상단에 뜨는 배너 설명(표본이라는 사실을 분명히 한다).
+    var demoBanner: String {
+        lang == .ko ? "표본 데이터입니다. 실제 사용량이 아닙니다."
+                    : "Sample data — not your real usage."
+    }
+    var a11yRunDemo: String  { lang == .ko ? "데모 실행" : "Run demo" }
+    var a11yExitDemo: String { lang == .ko ? "데모 종료" : "Exit demo" }
+
     // MARK: 설정(SettingsSheet)
     var settingsRefreshHelp: String {
         lang == .ko ? "화면이 켜져 있을 때만 갱신. 너무 짧으면 429 제한에 걸릴 수 있습니다. 창이 리셋되는 시각에는 한 번 더 갱신합니다."

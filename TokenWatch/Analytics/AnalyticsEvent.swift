@@ -39,6 +39,19 @@ enum ScreenName: String, Sendable {
     case agentDetail = "agent_detail"
     case settings
     case workHours = "work_hours"
+
+    /// screen_class로 함께 보낼 뷰 이름. 생략하면 SDK가 UIHostingController의 제네릭
+    /// 타입명(274자)을 채워 넣는데, 이는 100자 제한을 넘겨 이벤트에 오류 파라미터가 붙고
+    /// 시트 화면에서는 screen_name까지 통째로 유실된다. 그래서 직접 짧은 이름을 넘긴다.
+    var screenClass: String {
+        switch self {
+        case .main: return "ContentView"
+        case .addAgent: return "AddAgentSheet"
+        case .agentDetail: return "AgentDetailView"
+        case .settings: return "SettingsSheet"
+        case .workHours: return "WorkHoursEditor"
+        }
+    }
 }
 
 /// 앱이 기록하는 모든 분석 이벤트.
@@ -118,7 +131,8 @@ enum AnalyticsEvent {
         case .demoEnd:
             return [:]
         case .screenView(let screen, let provider):
-            var params: [String: Any] = ["screen_name": screen.rawValue]
+            var params: [String: Any] = ["screen_name": screen.rawValue,
+                                         "screen_class": screen.screenClass]
             if let provider { params["provider"] = provider.rawValue }
             return params
         case .refreshManual(let source):

@@ -35,15 +35,29 @@ final class AnalyticsService {
     /// 앱 시작 시 1회(AgentStore 생성 전에). plist가 있을 때만 configure하고
     /// 수집 상태를 옵트아웃 설정과 일치시킨다.
     func configure() {
-        guard !configured,
-              Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil
-        else { return }
+        guard !configured else { return }
+        guard Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil else {
+            debugLog("GoogleService-Info.plist를 번들에서 못 찾음 — 분석 꺼짐")
+            return
+        }
         #if DEBUG
-        guard ProcessInfo.processInfo.arguments.contains("-FIRDebugEnabled") else { return }
+        guard ProcessInfo.processInfo.arguments.contains("-FIRDebugEnabled") else {
+            debugLog("DEBUG 빌드인데 -FIRDebugEnabled 인자가 없음 — 분석 꺼짐")
+            return
+        }
         #endif
         FirebaseApp.configure()
         configured = true
         Analytics.setAnalyticsCollectionEnabled(isEnabled)
+        debugLog("Firebase 구성 완료 — 수집 \(isEnabled ? "ON" : "OFF")")
+    }
+
+    /// 분석이 켜졌는지/왜 꺼졌는지를 DEBUG 콘솔에 알린다. 게이트가 3중이라
+    /// 조용히 꺼져 있을 때 원인을 눈으로 확인할 수단이 필요하다.
+    private func debugLog(_ message: String) {
+        #if DEBUG
+        print("[TokenWatch.Analytics] \(message)")
+        #endif
     }
 
     /// 설정 PRIVACY 토글 반영. 끄면 SDK 수집을 즉시 중지한다.

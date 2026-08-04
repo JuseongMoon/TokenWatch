@@ -39,6 +39,7 @@ enum DemoData {
         let day: TimeInterval = 24 * hour
 
         // Claude — 세션은 시간보다 빠르게 소비 중(↑ ahead), 주간은 여유.
+        // Opus 주간은 완전 소진(100%)으로 두어 게이지 위 슬라임이 행진하는 모습을 보여준다.
         let claude = AgentSnapshot(
             windows: [
                 UsageWindow(label: "Current session", usedPercent: 68,
@@ -47,19 +48,19 @@ enum DemoData {
                 UsageWindow(label: "Current week (all models)", usedPercent: 43,
                             resetsAt: now.addingTimeInterval(3.2 * day), kind: .weekly,
                             windowSeconds: WindowKind.weekly.defaultSeconds),
-                UsageWindow(label: "Current week (Opus)", usedPercent: 81,
+                UsageWindow(label: "Current week (Opus)", usedPercent: 100,
                             resetsAt: now.addingTimeInterval(3.2 * day), kind: .weekly,
                             windowSeconds: WindowKind.weekly.defaultSeconds),
             ],
             planLabel: "Max 20x", fetchedAt: now, error: nil)
 
-        // Codex — 이제 막 시작한 세션.
+        // Codex — 이제 막 시작한 세션 + 거의 다 쓴 주간(잔여 6% → 빨강 경고색).
         let codex = AgentSnapshot(
             windows: [
                 UsageWindow(label: "Current session", usedPercent: 22,
                             resetsAt: now.addingTimeInterval(4.1 * hour), kind: .session,
                             windowSeconds: WindowKind.session.defaultSeconds),
-                UsageWindow(label: "Current week", usedPercent: 57,
+                UsageWindow(label: "Current week", usedPercent: 94,
                             resetsAt: now.addingTimeInterval(4.6 * day), kind: .weekly,
                             windowSeconds: WindowKind.weekly.defaultSeconds),
             ],
@@ -133,7 +134,11 @@ enum DemoData {
 
         switch window.style {
         case .gauge:
-            let next = min(100, window.usedPercent + Double.random(in: 0.2...1.1))
+            // 이미 소진된 창(100%)은 그대로 둔다 — 슬라임이 계속 행진한다.
+            // 아직 여유가 있는 창은 99%까지만 올린다: 데모를 오래 켜둬도 모든 게이지가
+            // 100%로 수렴해 슬라임 천지가 되지 않고, "빨강 경고" 게이지가 계속 보인다.
+            guard window.usedPercent < 99 else { return window }
+            let next = min(99, window.usedPercent + Double.random(in: 0.2...1.1))
             return replacing(window, usedPercent: next, resetsAt: window.resetsAt)
         case .creditGauge:
             // 충전형은 잔액을 깎고 소비율·표시 문자열을 함께 다시 계산한다.

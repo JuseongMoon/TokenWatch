@@ -74,7 +74,7 @@ struct L10n: Sendable {
         lang == .ko ? "계정 없이 표본 데이터로 앱을 둘러봅니다."
                     : "Explore the app with sample data — no account needed."
     }
-    /// 데모 중 상단에 뜨는 배너 설명(표본이라는 사실을 분명히 한다).
+    /// 데모 중 종료 버튼 아래 붙는 설명(표본이라는 사실을 분명히 한다).
     var demoBanner: String {
         lang == .ko ? "표본 데이터입니다. 실제 사용량이 아닙니다."
                     : "Sample data — not your real usage."

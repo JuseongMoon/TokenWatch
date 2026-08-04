@@ -55,6 +55,42 @@ struct DemoModeTests {
         }
     }
 
+    /// 소진(100%) 게이지가 하나는 있다 — 데모에서 게이지 위 슬라임이 반드시 보이게 하는 전제.
+    @Test func demoHasAnExhaustedGauge() {
+        let exhausted = DemoData.snapshots(now: now).values
+            .flatMap(\.windows)
+            .filter { $0.usedPercent / 100 >= GaugeCritter.threshold }
+        #expect(!exhausted.isEmpty)
+    }
+
+    /// 아직 소진되진 않았지만 잔여율이 위험 구간(빨강)인 게이지도 하나는 있다 —
+    /// 소진 게이지와 별개로 "거의 다 씀" 경고색을 데모에서 보여준다.
+    @Test func demoHasARedGaugeThatIsNotExhausted() {
+        let windows = DemoData.snapshots(now: now).values.flatMap(\.windows)
+        let red = windows.filter {
+            $0.usedPercent / 100 < GaugeCritter.threshold
+                && Term.statusColor(remainingPercent: 100 - $0.usedPercent) == Term.red
+        }
+        #expect(!red.isEmpty)
+        // 여유(초록) 게이지도 함께 있어야 색 대비가 보인다.
+        #expect(windows.contains { Term.statusColor(remainingPercent: 100 - $0.usedPercent) == Term.green })
+    }
+
+    /// 틱을 오래 돌려도 데모는 "소진 1개 + 빨강(미소진) 1개" 구도를 유지한다 —
+    /// 모든 게이지가 100%로 수렴해 슬라임 천지가 되지 않는다.
+    @Test func longRunKeepsBothExhaustedAndRedGauges() {
+        var snapshots = DemoData.snapshots(now: now)
+        for i in 1...200 {
+            snapshots = DemoData.advanced(snapshots, now: now.addingTimeInterval(Double(i)))
+        }
+        let windows = snapshots.values.flatMap(\.windows).filter { $0.style == .gauge }
+        #expect(windows.contains { $0.usedPercent / 100 >= GaugeCritter.threshold })
+        #expect(windows.contains {
+            $0.usedPercent / 100 < GaugeCritter.threshold
+                && Term.statusColor(remainingPercent: 100 - $0.usedPercent) == Term.red
+        })
+    }
+
     // MARK: 새로고침 틱
 
     /// 틱은 사용률을 올리고 조회 시각을 갱신한다.

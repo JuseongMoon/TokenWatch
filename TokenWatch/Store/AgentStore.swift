@@ -68,6 +68,11 @@ final class AgentStore {
     @ObservationIgnored private var backupSnapshots: [UUID: AgentSnapshot] = [:]
     @ObservationIgnored private var backupServiceStatus: [AgentProvider: ServiceHealth] = [:]
 
+    /// 실제로 로그인된 에이전트가 하나라도 있는지 — 데모 중에는 물러나 있는 실제 목록을 본다.
+    /// (설정 화면에서 DEMO 섹션 위치를 정하는 데 쓴다. 데모를 켰다고 위치가 바뀌면 안 되므로
+    /// 화면에 보이는 `agents`가 아니라 실제 목록을 기준으로 판단한다.)
+    var hasRealAgents: Bool { isDemo ? !backupAgents.isEmpty : !agents.isEmpty }
+
     /// Auto 모드의 현재 사다리 인덱스. 관찰 대상이라 설정 화면의 "현재 간격" 표기가 따라간다.
     /// 세션(메모리) 한정 — 앱 재실행, 그리고 Auto 진입/재진입(startAutoRefresh)마다 기본 60초로 리셋.
     private var autoLadderIndex = AutoRefreshPolicy.baseIndex

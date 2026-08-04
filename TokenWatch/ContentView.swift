@@ -30,7 +30,6 @@ struct ContentView: View {
                 Term.bg.ignoresSafeArea()
                 VStack(spacing: 0) {
                     topBar   // 앱 이름·상태 라인·[SETTINGS] 를 최상단에 고정
-                    if store.isDemo { demoBanner }   // 데모 중엔 스크롤과 무관하게 항상 보이도록 고정
                     list     // 아래 리스트만 스크롤
                 }
             }
@@ -186,38 +185,6 @@ struct ContentView: View {
         return n == 0 ? "no agents connected" : "watching \(n) agent\(n == 1 ? "" : "s")"
     }
 
-    // MARK: 데모 배너
-
-    /// 데모 중 상단에 고정되는 안내 줄. 표본 데이터임을 분명히 하고 즉시 빠져나갈 수 있게 한다.
-    private var demoBanner: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("▶ DEMO")
-                .font(.term(12, weight: .bold))
-                .foregroundStyle(Term.yellow)
-            Text(loc.demoBanner)
-                .font(.term(11))
-                .foregroundStyle(Term.dim)
-            Spacer(minLength: 8)
-            Button {
-                exitDemo()
-            } label: {
-                Text("[EXIT]")
-                    .font(.term(12, weight: .semibold))
-                    .foregroundStyle(Term.yellow)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(loc.a11yExitDemo)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .overlay(
-            Rectangle().stroke(Term.yellow.opacity(0.5),
-                               style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-        )
-        .padding(.horizontal, 16)
-        .padding(.bottom, 10)
-    }
-
     /// 데모 시작: 표본 데이터로 갈아끼운 뒤 자동 새로고침을 다시 걸어 게이지가 살아 움직이게 한다.
     private func enterDemo() {
         AnalyticsService.shared.log(.demoStart(source: .emptyList))
@@ -275,8 +242,7 @@ struct ContentView: View {
                 }
                 if store.isDemo {
                     // 데모 중에는 로그인 진입점을 감춘다 — 표본 목록에 실계정을 섞지 않기 위함.
-                    TerminalButton(title: "[ ■ EXIT DEMO ]", color: Term.yellow) { exitDemo() }
-                        .accessibilityLabel(loc.a11yExitDemo)
+                    exitDemoCell
                 } else {
                     AddAgentCell { showingAdd = true }
                     if store.agents.isEmpty { demoCell }
@@ -335,6 +301,20 @@ struct ContentView: View {
                            dashedBorder: true) { enterDemo() }
                 .accessibilityLabel(loc.a11yRunDemo)
             Text(loc.demoHint)
+                .font(.term(11))
+                .foregroundStyle(Term.dim)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// 데모 중 목록 맨 아래에 서는 종료 셀. 상단 배너를 없앤 대신, 여기서
+    /// "표본 데이터"라는 사실까지 함께 알린다(안내와 빠져나갈 수단을 한곳에).
+    private var exitDemoCell: some View {
+        VStack(spacing: 6) {
+            TerminalButton(title: "[ ■ EXIT DEMO ]", color: Term.yellow) { exitDemo() }
+                .accessibilityLabel(loc.a11yExitDemo)
+            Text(loc.demoBanner)
                 .font(.term(11))
                 .foregroundStyle(Term.dim)
                 .multilineTextAlignment(.center)

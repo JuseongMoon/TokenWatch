@@ -73,7 +73,9 @@ struct SettingsSheet: View {
                 ScrollView(.vertical) {
                     VStack(spacing: 16) {
                         accountSection
-                        demoSection
+                        // 계정이 하나도 없을 때만 DEMO를 위로 올린다(둘러볼 방법을 먼저 보여준다).
+                        // 계정이 있으면 평소 쓰는 설정들이 우선이라 맨 아래 INFO 바로 위로 내린다.
+                        if !store.hasRealAgents { demoSection }
                         languageSection
                         refreshSection
                         displaySection
@@ -82,6 +84,7 @@ struct SettingsSheet: View {
                         notificationSection
                         screenSection
                         privacySection
+                        if store.hasRealAgents { demoSection }
                         infoSection
                     }
                     .padding(16)

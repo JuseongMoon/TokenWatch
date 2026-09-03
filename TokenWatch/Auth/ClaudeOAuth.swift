@@ -28,14 +28,18 @@ struct OAuthTokens: Codable, Sendable {
 
     var isExpired: Bool {
         guard let expiresAt else { return false }
-        // 60초 여유를 두고 만료로 간주.
-        return Date() >= expiresAt.addingTimeInterval(-60)
+        // 120초 여유를 두고 만료로 간주. 백그라운드에서 깨어난 직후처럼 왕복이 느린
+        // 상황에서 "아슬아슬하게 유효한" 토큰으로 요청해 401→강제 갱신을 타지 않게 한다.
+        return Date() >= expiresAt.addingTimeInterval(-120)
     }
 }
 
 enum OAuthError: LocalizedError {
     case exchangeFailed(String)
     case refreshFailed(String)
+    /// 서버가 refresh token 자체를 거부(invalid_grant) — 재시도로 복구되지 않는다.
+    /// 로테이션으로 무효화됐거나 만료된 경우로, 재로그인 외에는 방법이 없다.
+    case refreshRevoked
     case notAuthenticated
 
     var errorDescription: String? {
@@ -43,6 +47,7 @@ enum OAuthError: LocalizedError {
         switch self {
         case .exchangeFailed(let m): return loc.errTokenExchange(m)
         case .refreshFailed(let m): return loc.errTokenRefresh(m)
+        case .refreshRevoked: return loc.errAuthExpired
         case .notAuthenticated: return loc.errNotAuthenticated
         }
     }
@@ -166,6 +171,10 @@ enum ClaudeOAuth {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
+            // invalid_grant는 영구 실패다. 원문 JSON을 카드에 흘리지 않고 재로그인 안내로 바꾼다.
+            if status == 400 || status == 401, msg.contains("invalid_grant") {
+                throw OAuthError.refreshRevoked
+            }
             throw OAuthError.refreshFailed("HTTP \(status): \(msg)")
         }
         do {

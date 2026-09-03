@@ -120,6 +120,10 @@ enum CodexOAuth {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
+            // 로테이션으로 무효화된 refresh token — 재시도 불가, 재로그인 안내로 바꾼다.
+            if status == 400 || status == 401, msg.contains("invalid_grant") {
+                throw OAuthError.refreshRevoked
+            }
             throw OAuthError.exchangeFailed("HTTP \(status): \(msg)")
         }
         do {

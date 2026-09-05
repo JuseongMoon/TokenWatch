@@ -4,6 +4,7 @@
 //
 //  업무시간 스케줄 인코딩 + 마커 계산(WorkHours)의 순수 로직 검증.
 //  - 인코딩 왕복·빈 스케줄 판정
+//  - on/off 토글 해석(미설정이면 스케줄 유무로 파생 — 구버전 사용자 보존)
 //  - 요일 인덱스 매핑(Calendar weekday → 0=월…6=일)
 //  - 구간 교집합 업무시간 합산(부분 시간 포함)
 //  - 사용자 시나리오: 월 7시간 + 목 7시간 → 마커가 중간(0.5)에서 멈췄다 목요일에 1.0까지
@@ -48,10 +49,51 @@ struct WorkHoursTests {
 
     @Test func emptyScheduleHelpers() {
         #expect(WorkHoursSchedule().isEmpty)
-        #expect(WorkHoursSchedule.active(from: "") == nil)
+        #expect(WorkHoursSchedule.active(from: "", enabled: nil) == nil)
         // 길이가 안 맞는 저장값은 빈 스케줄로 취급.
         #expect(WorkHoursSchedule(encoded: "garbage").isEmpty)
         #expect(monThuMorning().onHours == 14)
+    }
+
+    // MARK: on/off 토글 — 명시 설정(nil=미설정) 해석
+
+    /// 토글이 없던 버전에서 올라온 사용자가 기능을 잃지 않는지(가장 중요한 회귀 방어).
+    @Test func enabledDerivesFromScheduleWhenUnset() {
+        #expect(WorkHoursSchedule.isEnabled(explicit: nil, raw: monThuMorning().encoded))
+        #expect(!WorkHoursSchedule.isEnabled(explicit: nil, raw: ""))          // 신규 설치
+        #expect(!WorkHoursSchedule.isEnabled(explicit: nil, raw: "garbage"))   // 손상값
+    }
+
+    /// 명시 설정은 스케줄보다 우선한다.
+    @Test func explicitFlagOverridesSchedule() {
+        #expect(!WorkHoursSchedule.isEnabled(explicit: false, raw: monThuMorning().encoded))
+        #expect(WorkHoursSchedule.isEnabled(explicit: true, raw: ""))
+    }
+
+    /// 체크를 꺼도 저장된 스케줄은 그대로 남고, 다시 켜면 같은 시간대가 돌아온다.
+    @Test func togglingOffKeepsScheduleIntact() {
+        let enc = monThuMorning().encoded
+        #expect(WorkHoursSchedule.active(from: enc, enabled: false) == nil)
+        #expect(WorkHoursSchedule(encoded: enc).onHours == 14)              // 저장값은 무손실
+        #expect(WorkHoursSchedule.active(from: enc, enabled: true)?.onHours == 14)
+        #expect(WorkHoursSchedule.active(from: enc, enabled: nil)?.onHours == 14)
+        // 켜도 스케줄이 비면 흐름을 바꿀 근거가 없어 nil(균일 흐름).
+        #expect(WorkHoursSchedule.active(from: "", enabled: true) == nil)
+    }
+
+    /// UserDefaults 경로(AnalyticsService가 쓰는 오버로드) — 키 부재/명시값.
+    @Test func enabledReadsInjectedDefaults() {
+        let suite = "WorkHoursTests.enabled"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        defer { d.removePersistentDomain(forName: suite) }
+
+        d.set(monThuMorning().encoded, forKey: workHoursStorageKey)
+        #expect(WorkHoursSchedule.isEnabled(in: d))      // 키 부재 + 스케줄 있음 → 켜짐
+        d.set(false, forKey: workHoursEnabledStorageKey)
+        #expect(!WorkHoursSchedule.isEnabled(in: d))
+        d.set(true, forKey: workHoursEnabledStorageKey)
+        #expect(WorkHoursSchedule.isEnabled(in: d))
     }
 
     // MARK: 요일 매핑

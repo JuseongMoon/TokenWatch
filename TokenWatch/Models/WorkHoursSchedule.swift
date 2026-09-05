@@ -6,6 +6,7 @@
 //  주간(7일) 창의 "현재 시각" 세로선을 실제 벽시계가 아니라 "업무시간만" 흐르게 만든다.
 //  - 스케줄: 7일 × 24시간 = 168개 on/off 슬롯(day 0=월 … 6=일, hour 0…23).
 //  - 저장: @AppStorage에 168자 "0/1" 문자열로 인코딩(heartbeatTargets와 같은 문자열 저장 패턴).
+//  - 기능 on/off는 스케줄과 분리된 별도 키(Bool?)다 — 체크를 꺼도 칠해둔 시간대는 그대로 남는다.
 //  - 마커 위치 = (창시작~현재 사이 업무시간) / (창시작~창끝 사이 총 업무시간).
 //    → 업무시간이 아닌 구간에선 분자가 안 늘어 마커가 그 자리에 멈춘다.
 //
@@ -14,6 +15,12 @@ import Foundation
 
 /// 업무시간 스케줄 저장 키(@AppStorage). 값은 168자 "0/1" 문자열.
 let workHoursStorageKey = "tokenwatch.workHours"
+
+/// 업무시간 기능 on/off 저장 키(@AppStorage, Bool?).
+/// 키가 없으면(=토글을 한 번도 건드리지 않음) "스케줄이 있으면 켜짐"으로 해석한다 —
+/// 이 토글이 없던 버전에서 올라온 사용자가 업데이트만으로 기능을 잃지 않게 하는 장치.
+/// 값이 있으면 그 값이 스케줄보다 우선한다(체크를 꺼도 칠해둔 시간대는 그대로 보존).
+let workHoursEnabledStorageKey = "tokenwatch.workHoursEnabled"
 
 /// 주간 반복 업무시간 스케줄. 값 타입이라 뷰에서 매번 디코드해도 저렴하다.
 struct WorkHoursSchedule: Equatable, Sendable {
@@ -62,7 +69,8 @@ struct WorkHoursSchedule: Equatable, Sendable {
         return next
     }
 
-    /// 켜진 슬롯이 하나도 없으면 true → 기능 꺼짐(기존 균일 흐름으로 폴백).
+    /// 켜진 슬롯이 하나도 없으면 true. on/off 토글과는 별개로, 스케줄이 비면
+    /// 흐름을 바꿀 근거가 없어 호출부가 균일 흐름으로 폴백한다.
     var isEmpty: Bool { !slots.contains(true) }
 
     /// 켜진 슬롯(=시간) 개수. 각 슬롯이 정확히 1시간이므로 "주 N시간"의 N.
@@ -81,8 +89,23 @@ struct WorkHoursSchedule: Equatable, Sendable {
             : Array(repeating: false, count: Self.slotCount)
     }
 
-    /// @AppStorage 원문에서 디코드하되, 비어있으면 nil(기능 꺼짐 신호)로 돌려준다.
-    static func active(from raw: String) -> WorkHoursSchedule? {
+    /// 명시 설정(nil=미설정)과 저장된 스케줄에서 기능 on/off를 확정한다.
+    /// 순수 함수 — 뷰(@AppStorage)와 AnalyticsService(UserDefaults)가 같은 규칙을 공유한다.
+    static func isEnabled(explicit: Bool?, raw: String) -> Bool {
+        explicit ?? !WorkHoursSchedule(encoded: raw).isEmpty
+    }
+
+    /// UserDefaults에서 직접 읽는 편의 오버로드(뷰 밖 호출부용. 테스트는 store를 주입한다).
+    static func isEnabled(in d: UserDefaults = .standard) -> Bool {
+        isEnabled(explicit: d.object(forKey: workHoursEnabledStorageKey) as? Bool,
+                  raw: d.string(forKey: workHoursStorageKey) ?? "")
+    }
+
+    /// @AppStorage 원문에서 디코드하되, 기능이 꺼져 있거나 비어있으면
+    /// nil(기능 꺼짐 신호 — 호출부는 균일 흐름으로 폴백)로 돌려준다.
+    /// `enabled`에 기본값을 두지 않는다 — 호출부 누락을 컴파일러가 전부 잡아내게 하려는 의도.
+    static func active(from raw: String, enabled: Bool?) -> WorkHoursSchedule? {
+        guard isEnabled(explicit: enabled, raw: raw) else { return nil }
         let s = WorkHoursSchedule(encoded: raw)
         return s.isEmpty ? nil : s
     }

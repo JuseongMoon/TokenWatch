@@ -302,21 +302,28 @@ private struct DetailUsageRow: View {
 
     @State private var showResetConfirm = false
 
-    /// 업무시간 스케줄(주간 마커용). 비어 있으면 nil → 균일 흐름.
+    /// 업무시간 스케줄(주간 마커용).
     @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
+    /// 업무시간 기능 on/off. 키 부재(nil)면 스케줄 유무로 판단 — 구버전 사용자 보존.
+    @AppStorage(workHoursEnabledStorageKey) private var workHoursEnabled: Bool?
 
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
 
-    /// 주간 창의 마커 위치. 업무시간 스케줄이 있으면 그 시간에만 흐르고, 없거나 세션 창이면 실시간 균일.
-    private func markerFraction(at now: Date) -> Double? {
-        guard window.kind == .weekly else { return window.elapsedFraction(at: now) }
-        return window.markerFraction(at: now, schedule: WorkHoursSchedule.active(from: workHoursRaw))
+    /// 마커에 실제로 쓸 스케줄. 기능이 꺼졌거나 비어 있으면 nil → 균일 흐름.
+    private var activeSchedule: WorkHoursSchedule? {
+        WorkHoursSchedule.active(from: workHoursRaw, enabled: workHoursEnabled)
     }
 
-    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — 주간 창 + 스케줄 활성 + 지금이 업무시간 밖일 때만.
+    /// 주간 창의 마커 위치. 업무시간이 켜져 있으면 그 시간에만 흐르고, 꺼졌거나 세션 창이면 실시간 균일.
+    private func markerFraction(at now: Date) -> Double? {
+        guard window.kind == .weekly else { return window.elapsedFraction(at: now) }
+        return window.markerFraction(at: now, schedule: activeSchedule)
+    }
+
+    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — 주간 창 + 업무시간 활성 + 지금이 업무시간 밖일 때만.
     private func markerPaused(at now: Date) -> Bool {
-        guard window.kind == .weekly, let schedule = WorkHoursSchedule.active(from: workHoursRaw) else { return false }
+        guard window.kind == .weekly, let schedule = activeSchedule else { return false }
         return !WorkHours.isWorkingTime(at: now, schedule: schedule)
     }
 

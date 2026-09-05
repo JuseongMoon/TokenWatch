@@ -104,7 +104,7 @@ final class AnalyticsService {
         setProperty(session ? (weekly ? "both" : "session") : (weekly ? "weekly" : "none"), "notify")
 
         let hours = WorkHoursSchedule(encoded: d.string(forKey: workHoursStorageKey) ?? "").onHours
-        setProperty(Self.workHoursBucket(hours), "work_hours")
+        setProperty(Self.workHoursBucket(hours, enabled: WorkHoursSchedule.isEnabled(in: d)), "work_hours")
 
         let heartbeat = d.bool(forKey: "tokenwatch.heartbeatCursor")
         let tracking = d.bool(forKey: "tokenwatch.heartbeatTracking")
@@ -117,8 +117,10 @@ final class AnalyticsService {
         }
     }
 
-    /// 주당 업무시간 → 속성 버킷.
-    static func workHoursBucket(_ hours: Int) -> String {
+    /// 주당 업무시간 → 속성 버킷. 기능이 꺼져 있으면 시간 수와 무관하게 "off"
+    /// (토글을 끈 사용자가 시간대를 보존하고 있어도 "실효 없음"으로 보고한다).
+    static func workHoursBucket(_ hours: Int, enabled: Bool) -> String {
+        guard enabled else { return "off" }
         switch hours {
         case ..<1: return "off"
         case 1...20: return "1-20"

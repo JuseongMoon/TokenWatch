@@ -7,6 +7,7 @@
 //  - 탭 = 해당 블록 토글, 누른 채 드래그 = 지나가는 블록을 한 번에 칠하기(범위 선택).
 //    첫 접점 블록의 상태로 "켜기/끄기" 모드를 정하고 드래그 내내 그 모드로 절대값 세팅.
 //  - 저장 시에만 @AppStorage(workHoursStorageKey)에 반영. 취소/스크림 탭은 초안 폐기.
+//  - 저장은 "시간대"만 바꾼다 — 기능 on/off는 설정의 체크박스가 쥐고 있고, 저장 전후로 변하지 않는다.
 //
 
 import SwiftUI
@@ -15,6 +16,8 @@ struct WorkHoursEditor: View {
     @Binding var isPresented: Bool
 
     @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
+    /// 업무시간 기능 on/off(nil=미설정). 편집은 꺼진 상태에서도 열려 있고, 저장이 이 값을 바꾸지 않는다.
+    @AppStorage(workHoursEnabledStorageKey) private var workHoursEnabledRaw: Bool?
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
@@ -53,6 +56,10 @@ struct WorkHoursEditor: View {
                 Text("WORK HOURS")
                     .font(.term(13, weight: .semibold))
                     .foregroundStyle(Term.cyan)
+                // 기능이 꺼진 채 편집 중임을 알린다(저장은 되지만 그래프엔 반영되지 않는다).
+                if !WorkHoursSchedule.isEnabled(explicit: workHoursEnabledRaw, raw: workHoursRaw) {
+                    Text("[off]").font(.term(11)).foregroundStyle(Term.dim)
+                }
                 Spacer()
                 Text(loc.workHoursSummary(hours: draft.onHours))
                     .font(.term(11))
@@ -188,9 +195,14 @@ struct WorkHoursEditor: View {
     // MARK: 동작
 
     private func save() {
+        // 저장이 on/off를 바꾸지 않도록, 미설정(nil)이면 "지금 유효한 값"을 명시값으로 굳힌다.
+        // 이게 없으면 빈 그리드를 처음 칠해 저장하는 순간 스케줄 유무로 파생되어 저절로 켜진다.
+        let enabled = WorkHoursSchedule.isEnabled(explicit: workHoursEnabledRaw, raw: workHoursRaw)
+        if workHoursEnabledRaw == nil { workHoursEnabledRaw = enabled }
         workHoursRaw = draft.encoded
         AnalyticsService.shared.log(.settingChange(setting: "work_hours",
-                                                   value: AnalyticsService.workHoursBucket(draft.onHours)))
+                                                   value: AnalyticsService.workHoursBucket(draft.onHours,
+                                                                                           enabled: enabled)))
         AnalyticsService.shared.syncSettingsProperties()
         close()
     }

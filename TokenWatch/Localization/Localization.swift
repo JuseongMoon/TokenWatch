@@ -107,8 +107,8 @@ struct L10n: Sendable {
 
     // MARK: 업무시간(WorkHours)
     var settingsWorkHoursHelp: String {
-        lang == .ko ? "주간 그래프의 현재 시각 세로선이 설정한 업무시간에만 흐릅니다. 비워 두면 한 주 내내 균일하게 흐릅니다."
-                    : "The current-time line on weekly graphs advances only during your work hours. Leave empty to flow evenly across the whole week."
+        lang == .ko ? "주간 그래프의 현재 시각 세로선이 설정한 업무시간에만 흐릅니다. 체크를 끄면 한 주 내내 균일하게 흐르고, 설정해 둔 시간대는 그대로 보관됩니다."
+                    : "The current-time line on weekly graphs advances only during your work hours. Uncheck to flow evenly across the whole week — your saved hours are kept."
     }
     var workHoursButton: String { lang == .ko ? "[ 업무시간 설정 ]" : "[ set work hours ]" }
     var workHoursNotSet: String { lang == .ko ? "설정 안 됨" : "not set" }

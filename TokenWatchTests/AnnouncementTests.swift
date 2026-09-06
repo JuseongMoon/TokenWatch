@@ -185,4 +185,127 @@ struct AnnouncementTests {
         relaunched.check()                                   // 다음 실행: 다시 뜬다
         #expect(relaunched.presented?.id == "a")
     }
+
+    // MARK: 공지함(목록) 규칙
+
+    private func inbox(_ items: [Announcement], schema: Int = 1) -> [String] {
+        AnnouncementSelector.inbox(from: AnnouncementFeed(schemaVersion: schema, items: items), now: now)
+            .map(\.id)
+    }
+
+    /// 팝업에서 빠지는 조건들(기간 만료·버전 범위)이 목록에는 그대로 남아야 한다 — 이력이기 때문.
+    @Test func inboxKeepsExpiredAndOutOfVersionRange() {
+        let expired = item("expired", endAt: nowMs - 1)
+        let oldOnly = item("old-only", max: "1.0.0")
+        let future = item("future", startAt: nowMs + 1)
+        let android = item("android", platform: "android")
+
+        #expect(inbox([expired]) == ["expired"])
+        #expect(inbox([oldOnly]) == ["old-only"])
+        #expect(inbox([future]).isEmpty)      // 예약 공지는 공개 시각 전까지 숨김
+        #expect(inbox([android]).isEmpty)     // 다른 플랫폼은 제외
+
+        // 팝업 규칙과의 대비: 같은 항목들이 pick에서는 빠진다.
+        #expect(pick([expired]) == nil)
+        #expect(pick([oldOnly], version: "1.0.1") == nil)
+    }
+
+    @Test func inboxSortsNewestFirstAndIgnoresSchemaMismatch() {
+        let items = [
+            item("older", publishedAt: nowMs - 2000),
+            item("newest", publishedAt: nowMs),
+            item("mid", publishedAt: nowMs - 1000),
+        ]
+        #expect(inbox(items) == ["newest", "mid", "older"])
+        // 같은 시각이면 id로 안정 정렬(순서가 실행마다 흔들리지 않게).
+        #expect(inbox([item("b"), item("a")]) == ["a", "b"])
+        #expect(inbox(items, schema: 2).isEmpty)
+    }
+
+    /// dismiss(팝업 영구 제외)는 목록과 무관하다.
+    @Test @MainActor func inboxKeepsDismissedAndSurvivesRelaunch() {
+        let defaults = freshDefaults()
+        defaults.set(try! JSONEncoder().encode(AnnouncementFeed(items: [item("a"), item("b")])),
+                     forKey: AnnouncementStore.cachedFeedKey)
+
+        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        // init에서 캐시를 읽으므로 check() 없이도 목록이 채워진다.
+        #expect(store.inbox.map(\.id) == ["a", "b"])
+        store.check()
+        store.dismissForever()
+        #expect(store.dismissedIDs == [store.inbox.first?.id].compactMap { $0 })
+        #expect(store.inbox.count == 2)      // 목록에는 그대로 남는다
+    }
+
+    // MARK: 읽음(seen) 표시
+
+    @Test @MainActor func markSeenPersistsAndIsIndependentFromPopup() {
+        let defaults = freshDefaults()
+        defaults.set(try! JSONEncoder().encode(AnnouncementFeed(items: [item("a"), item("b")])),
+                     forKey: AnnouncementStore.cachedFeedKey)
+
+        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        #expect(store.unreadCount == 2)
+
+        store.markSeen("a")
+        #expect(store.seen == ["a"])
+        #expect(store.unreadCount == 1)
+        #expect(store.isUnread(store.inbox[1]))
+        // 읽음은 팝업 로직을 건드리지 않는다(제품 결정: 목록 읽기와 팝업은 독립).
+        #expect(store.dismissedIDs.isEmpty)
+        store.check()
+        #expect(store.presented?.id != nil)
+
+        // 재실행에도 유지된다.
+        let relaunched = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        #expect(relaunched.seen == ["a"])
+        #expect(relaunched.unreadCount == 1)
+    }
+
+    /// 지난 공지는 배지에 잡히지 않는다 — 업데이트 직후 첫 실행에 이력 전체가 "안 읽음"이 되면 안 된다.
+    @Test @MainActor func unreadCountsOnlyLiveAnnouncements() {
+        let defaults = freshDefaults()
+        let feed = AnnouncementFeed(items: [
+            item("live"),
+            item("expired", endAt: nowMs - 1),
+            item("old-only", max: "1.0.0"),
+        ])
+        defaults.set(try! JSONEncoder().encode(feed), forKey: AnnouncementStore.cachedFeedKey)
+
+        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        #expect(store.inbox.count == 3)
+        #expect(store.unreadCount == 1)
+        #expect(store.inbox.filter { store.isUnread($0) }.map(\.id) == ["live"])
+    }
+
+    @Test @MainActor func seenListIsCapped() {
+        let defaults = freshDefaults()
+        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        for i in 0..<(AnnouncementStore.dismissedCap + 5) { store.markSeen("id\(i)") }
+        #expect(store.seen.count == AnnouncementStore.dismissedCap)
+        #expect(store.seen.first == "id5")   // 오래된 것부터 제거
+        store.markSeen("id5")                // 이미 잘려나갔으므로 다시 들어온다
+        #expect(store.seen.last == "id5")
+    }
+
+    // MARK: 조회 실패 표시
+
+    @Test @MainActor func lastFetchFailedOnlyWhenNoFeedAtAll() async {
+        let defaults = freshDefaults()
+        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        #expect(!store.lastFetchFailed)      // 아직 시도 전
+        store.check()
+        await Task.yield()
+        #expect(store.lastFetchFailed)
+        #expect(store.inbox.isEmpty)
+
+        // 캐시가 있으면 조회에 실패해도 목록을 보여줄 수 있으므로 실패로 치지 않는다.
+        defaults.set(try! JSONEncoder().encode(AnnouncementFeed(items: [item("a")])),
+                     forKey: AnnouncementStore.cachedFeedKey)
+        let cached = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
+        cached.check()
+        await Task.yield()
+        #expect(!cached.lastFetchFailed)
+        #expect(cached.inbox.map(\.id) == ["a"])
+    }
 }

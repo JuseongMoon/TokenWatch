@@ -85,6 +85,29 @@ struct TerminalButton: View {
     }
 }
 
+/// 상단 바용 대괄호 글리프 버튼 — `[⚙]` 처럼 대괄호 안에 SF Symbol을 넣는다.
+/// `[SETTINGS]` 같은 텍스트 버튼과 같은 리듬을 유지하면서 폭을 줄이려는 것.
+///
+/// 유니코드 ✉/⚙(U+2709/U+2699) 대신 SF Symbol을 쓰는 이유: 그 코드포인트들은 emoji
+/// presentation이 기본이라 컬러 이모지로 대체돼 터미널 톤이 깨진다. `Text(Image(systemName:))`은
+/// 감싼 `.font`의 크기·weight를 따르고 baseline도 맞으므로 대괄호와 자연스럽게 붙는다.
+struct TerminalGlyphButton: View {
+    let systemImage: String
+    var color: Color = Term.cyan
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            (Text("[") + Text(Image(systemName: systemImage)) + Text("]"))
+                .font(.term(13, weight: .semibold))
+                .foregroundStyle(color)
+                .imageScale(.small)   // 심벌 advance가 대괄호보다 넓어 한 단계 줄여 균형을 맞춘다
+                .fixedSize()          // 좁은 폭에서 마지막 ']'만 줄바꿈되는 것 방지
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// 모노스페이스 정렬 키:값 행 — `email    : hisnote@me.com`. 키는 고정폭으로 콜론을 맞춘다.
 struct KVRow: View {
     let key: String

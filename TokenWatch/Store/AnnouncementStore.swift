@@ -13,6 +13,13 @@
 //   - 실패는 조용히: 시작 경로를 블로킹하지 않고(await 없음), 5분 뒤 다음 기회에 재시도.
 //   - [닫기]는 이번 실행 동안만 숨김(다음 실행에 다시 뜸), [다시 열지 않기]는 영구 제외.
 //
+//  공지함(AnnouncementListSheet)도 이 스토어를 본다:
+//   - `inbox`는 지난 공지까지 포함한 목록(팝업 규칙과 달리 endAt·버전·dismiss를 무시).
+//   - `seen`은 "읽음" 표시 전용이라 팝업 로직(dismissed/closedThisLaunch)과 완전히 분리돼 있다.
+//     목록에서 읽어도 팝업은 팝업의 [다시 열지 않기]로만 꺼진다.
+//   - `feed`/`seen`은 관찰되는 저장 프로퍼티여야 한다(@ObservationIgnored를 붙이면
+//     읽음 표시·배지가 갱신되지 않는다). 파생값(inbox·unreadCount)은 computed로 둔다.
+//
 
 import Foundation
 import Observation
@@ -22,11 +29,16 @@ import Observation
 final class AnnouncementStore {
     /// 지금 화면에 띄울 공지. nil이면 오버레이 없음.
     private(set) var presented: Announcement?
+    /// 마지막으로 확보한 피드(캐시 또는 네트워크). 공지함 목록의 원본이다.
+    private(set) var feed: AnnouncementFeed?
+    /// 읽은 공지 ID(삽입 순서). 배지·굵기 표시에만 쓰이고 팝업 로직과 무관하다.
+    private(set) var seen: [String]
 
     static let dismissedKey = "tokenwatch.announcements.dismissed"
+    static let seenKey = "tokenwatch.announcements.seen"
     static let cachedFeedKey = "tokenwatch.announcements.cachedFeed"
     static let lastSuccessKey = "tokenwatch.announcements.lastSuccessAt"
-    /// 영구 제외 목록 상한. 넘치면 오래된 것부터 버린다(공지는 드물어 실질적으로 도달하지 않음).
+    /// ID 목록 상한. 넘치면 오래된 것부터 버린다(공지는 드물어 실질적으로 도달하지 않음).
     static let dismissedCap = 200
 
     /// 성공 후 재조회 최소 간격(포그라운드 복귀 스로틀).
@@ -35,7 +47,8 @@ final class AnnouncementStore {
     @ObservationIgnored private let failureBackoff: TimeInterval = 5 * 60
 
     @ObservationIgnored private var hasCheckedThisLaunch = false
-    @ObservationIgnored private var lastAttemptFailedAt: Date?
+    /// 마지막 조회 실패 시각. 공지함의 "불러오지 못함" 안내가 이 값을 보므로 관찰 대상으로 둔다.
+    private var lastAttemptFailedAt: Date?
     @ObservationIgnored private var inFlight = false
     /// 이번 실행에서 [닫기]로 닫은 ID — 1시간 뒤 재조회에 같은 카드가 또 뜨는 스팸을 막는다.
     @ObservationIgnored private var closedThisLaunch: Set<String> = []
@@ -56,7 +69,10 @@ final class AnnouncementStore {
         self.now = now
         self.appVersion = appVersion
         self.fetch = fetch
-        self.dismissed = Self.loadDismissed(from: defaults)
+        self.dismissed = Self.loadIDs(key: Self.dismissedKey, from: defaults)
+        self.seen = Self.loadIDs(key: Self.seenKey, from: defaults)
+        // 캐시는 여기서 한 번만 디코드한다 — 이후 판정·목록은 전부 이 feed를 본다.
+        self.feed = Self.loadCachedFeed(from: defaults)
     }
 
     // MARK: - 조회
@@ -65,7 +81,7 @@ final class AnnouncementStore {
     func check() {
         // 1) 캐시로 즉시 판정 — 네트워크를 기다리지 않고, 오프라인이어도 뜬다.
         if presented == nil {
-            presented = pick(from: cachedFeed())
+            presented = pick(from: feed)
         }
 
         // 2) 조회할 차례인가.
@@ -87,13 +103,15 @@ final class AnnouncementStore {
     private func apply(_ result: AnnouncementFeedClient.FetchResult) {
         inFlight = false
         switch result {
-        case .feed(let feed):
-            storeCache(feed)
+        case .feed(let fetched):
+            feed = fetched
+            storeCache(fetched)
             defaults.set(now().timeIntervalSince1970, forKey: Self.lastSuccessKey)
             lastAttemptFailedAt = nil
             // 이미 카드를 읽고 있으면 바꿔치기하지 않는다. 다음 check()에서 새 피드로 판정된다.
-            if presented == nil { presented = pick(from: feed) }
+            if presented == nil { presented = pick(from: fetched) }
         case .empty:
+            feed = nil
             storeCache(nil)
             defaults.set(now().timeIntervalSince1970, forKey: Self.lastSuccessKey)
             lastAttemptFailedAt = nil
@@ -105,6 +123,36 @@ final class AnnouncementStore {
     private func pick(from feed: AnnouncementFeed?) -> Announcement? {
         AnnouncementSelector.pick(from: feed, now: now(), appVersion: appVersion,
                                   dismissed: Set(dismissed), closedThisLaunch: closedThisLaunch)
+    }
+
+    // MARK: - 공지함(목록)
+
+    /// 공지함에 보여줄 목록(최신순). 지난 공지도 포함한다 — 규칙은 `AnnouncementSelector.inbox` 참고.
+    /// 항목 수가 많아야 수십 건이라 저장 프로퍼티로 캐시하지 않는다(피드와 이중 진실을 만들지 않고,
+    /// 예약 공지의 공개 시각이 지나는 순간도 자연히 반영된다).
+    var inbox: [Announcement] { AnnouncementSelector.inbox(from: feed, now: now()) }
+
+    /// 안 읽은 공지 수(배지). **현재 노출 중인 공지만** 센다 — 업데이트 직후 첫 실행에
+    /// 지난 공지 전체가 "안 읽음"으로 잡혀 배지가 켜지는 걸 막는다.
+    var unreadCount: Int { inbox.filter { isUnread($0) }.count }
+
+    /// 목록 행을 굵게 + 점으로 표시할지. `unreadCount`와 같은 규칙이다.
+    func isUnread(_ a: Announcement) -> Bool {
+        guard !seen.contains(a.id) else { return false }
+        return AnnouncementSelector.isEligible(a, nowMs: Int64(now().timeIntervalSince1970 * 1000),
+                                               appVersion: appVersion)
+    }
+
+    /// 한 번도 피드를 확보하지 못한 채 조회에 실패한 상태(공지함의 "불러오지 못함" 안내용).
+    /// 캐시가 있으면 오프라인이어도 목록을 보여줄 수 있으므로 실패로 치지 않는다.
+    var lastFetchFailed: Bool { feed == nil && lastAttemptFailedAt != nil }
+
+    /// 읽음 표시. 팝업 로직(dismissed·closedThisLaunch·presented)은 건드리지 않는다 —
+    /// 목록에서 읽는 것과 팝업을 끄는 것은 별개라는 제품 결정에 따른다.
+    func markSeen(_ id: String) {
+        guard !seen.contains(id) else { return }
+        seen = Self.appendCapped(id, to: seen)
+        saveIDs(seen, key: Self.seenKey)
     }
 
     // MARK: - 사용자 액션
@@ -122,11 +170,8 @@ final class AnnouncementStore {
         guard let a = presented else { return }
         closedThisLaunch.insert(a.id)
         if !dismissed.contains(a.id) {
-            dismissed.append(a.id)
-            if dismissed.count > Self.dismissedCap {
-                dismissed.removeFirst(dismissed.count - Self.dismissedCap)
-            }
-            saveDismissed()
+            dismissed = Self.appendCapped(a.id, to: dismissed)
+            saveIDs(dismissed, key: Self.dismissedKey)
         }
         presented = nil
         AnalyticsService.shared.log(.announcementAction(id: a.id, action: .never))
@@ -142,8 +187,8 @@ final class AnnouncementStore {
         return t > 0 ? Date(timeIntervalSince1970: t) : nil
     }
 
-    private func cachedFeed() -> AnnouncementFeed? {
-        guard let data = defaults.data(forKey: Self.cachedFeedKey) else { return nil }
+    private static func loadCachedFeed(from defaults: UserDefaults) -> AnnouncementFeed? {
+        guard let data = defaults.data(forKey: cachedFeedKey) else { return nil }
         return AnnouncementFeedClient.decodePayload(data)
     }
 
@@ -155,15 +200,23 @@ final class AnnouncementStore {
         }
     }
 
-    private static func loadDismissed(from defaults: UserDefaults) -> [String] {
-        guard let data = defaults.data(forKey: dismissedKey),
+    /// dismissed·seen이 공유하는 ID 목록 입출력(삽입 순서 유지 + 상한).
+    private static func loadIDs(key: String, from defaults: UserDefaults) -> [String] {
+        guard let data = defaults.data(forKey: key),
               let ids = try? JSONDecoder().decode([String].self, from: data) else { return [] }
         return ids
     }
 
-    private func saveDismissed() {
-        if let data = try? JSONEncoder().encode(dismissed) {
-            defaults.set(data, forKey: Self.dismissedKey)
+    private func saveIDs(_ ids: [String], key: String) {
+        if let data = try? JSONEncoder().encode(ids) {
+            defaults.set(data, forKey: key)
         }
+    }
+
+    private static func appendCapped(_ id: String, to list: [String]) -> [String] {
+        var next = list
+        next.append(id)
+        if next.count > dismissedCap { next.removeFirst(next.count - dismissedCap) }
+        return next
     }
 }

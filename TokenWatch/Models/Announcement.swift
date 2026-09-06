@@ -154,6 +154,29 @@ enum AnnouncementSelector {
             .first
     }
 
+    /// 공지함(목록)에 보여줄 전체 — 지난 공지도 포함한다.
+    ///
+    /// 팝업(`pick`)과 규칙이 다른 게 핵심이다:
+    ///  - `endAt`을 보지 않는다 → 서버가 "내린" 공지(endAt이 과거로 세팅된 항목)가 이력으로 남는다.
+    ///  - 앱 버전 범위를 보지 않는다 → 버전 범위는 "누구에게 띄울까"이지 "누가 읽어도 되나"가 아니다.
+    ///    (예: maxAppVersion 1.0.1로 띄웠던 패치노트가 1.1.0 사용자의 목록에서 사라지면 안 된다.)
+    ///  - dismiss(다시 열지 않기)도 무시한다 → 팝업만 끄는 것이지 이력을 지우는 게 아니다.
+    nonisolated static func inbox(from feed: AnnouncementFeed?, now: Date) -> [Announcement] {
+        guard let feed, feed.schemaVersion == AnnouncementFeed.supportedSchemaVersion else { return [] }
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        return feed.items
+            .filter { isListable($0, nowMs: nowMs) }
+            .sorted { a, b in
+                a.publishedAt != b.publishedAt ? a.publishedAt > b.publishedAt : a.id < b.id
+            }
+    }
+
+    /// 목록 노출 조건 — 플랫폼과 "공개 시각이 지났는가"만 본다(예약 공지는 시각 전까지 숨김).
+    nonisolated static func isListable(_ a: Announcement, nowMs: Int64) -> Bool {
+        if let start = a.startAt, nowMs < start { return false }
+        return a.platform == "ios" || a.platform == "all"
+    }
+
     /// 기간·플랫폼·앱 버전 조건(사용자 상태와 무관한 부분).
     nonisolated static func isEligible(_ a: Announcement, nowMs: Int64, appVersion: String) -> Bool {
         if let start = a.startAt, nowMs < start { return false }

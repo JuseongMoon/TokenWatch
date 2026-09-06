@@ -39,6 +39,8 @@ enum ScreenName: String, Sendable {
     case agentDetail = "agent_detail"
     case settings
     case workHours = "work_hours"
+    case announcements
+    case announcementDetail = "announcement_detail"
 
     /// screen_class로 함께 보낼 뷰 이름. 생략하면 SDK가 UIHostingController의 제네릭
     /// 타입명(274자)을 채워 넣는데, 이는 100자 제한을 넘겨 이벤트에 오류 파라미터가 붙고
@@ -50,6 +52,8 @@ enum ScreenName: String, Sendable {
         case .agentDetail: return "AgentDetailView"
         case .settings: return "SettingsSheet"
         case .workHours: return "WorkHoursEditor"
+        case .announcements: return "AnnouncementListSheet"
+        case .announcementDetail: return "AnnouncementDetailView"
         }
     }
 }
@@ -81,9 +85,11 @@ enum AnalyticsEvent {
     // 신뢰성(정상↔에러 전이 시에만 — AgentStore가 보장)
     case usageFetchError(provider: AgentProvider, reason: FetchErrorReason)
     case usageFetchRecover(provider: AgentProvider)
-    // 공지 팝업 — ID·종류·버튼만. 제목/본문 텍스트는 어떤 경로로도 보내지 않는다.
+    // 공지 팝업·공지함 — ID·종류·버튼만. 제목/본문 텍스트는 어떤 경로로도 보내지 않는다.
     case announcementShown(id: String, kind: Announcement.Kind)
     case announcementAction(id: String, action: AnnouncementAction)
+    /// 공지함 목록에서 상세를 열어 다시 읽었다(팝업으로 본 것과 구분).
+    case announcementOpen(id: String, kind: Announcement.Kind)
 
     enum DemoSource: String, Sendable {
         case emptyList = "empty_list"
@@ -121,6 +127,7 @@ enum AnalyticsEvent {
         case .usageFetchRecover: return "usage_fetch_recover"
         case .announcementShown: return "announcement_shown"
         case .announcementAction: return "announcement_action"
+        case .announcementOpen: return "announcement_open"
         }
     }
 
@@ -162,6 +169,8 @@ enum AnalyticsEvent {
             return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
         case .announcementAction(let id, let action):
             return ["announcement_id": String(id.prefix(40)), "action": action.rawValue]
+        case .announcementOpen(let id, let kind):
+            return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
         }
     }
 
@@ -170,7 +179,7 @@ enum AnalyticsEvent {
     var isProviderScoped: Bool {
         switch self {
         case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen,
-             .announcementShown, .announcementAction:
+             .announcementShown, .announcementAction, .announcementOpen:
             return false
         default:
             return true

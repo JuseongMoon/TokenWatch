@@ -32,22 +32,14 @@ struct AnnouncementOverlay: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)   // GeometryReader 안에서 중앙 정렬
         }
         .accessibilityAddTraits(.isModal)
-        .onAppear { AnalyticsService.shared.log(.announcementShown(id: announcement.id, kind: announcement.kind)) }
-    }
-
-    private var accent: Color {
-        switch announcement.kind {
-        case .notice: return Term.cyan
-        case .patch:  return Term.green
+        .onAppear {
+            // 팝업으로 본 공지는 공지함에서도 읽음으로 친다(배지가 남지 않게).
+            store.markSeen(announcement.id)
+            AnalyticsService.shared.log(.announcementShown(id: announcement.id, kind: announcement.kind))
         }
     }
 
-    private var headerLabel: String {
-        switch announcement.kind {
-        case .notice: return "NOTICE"
-        case .patch:  return "PATCH"
-        }
-    }
+    private var accent: Color { announcement.kind.accent }
 
     private func card(maxHeight: CGFloat) -> some View {
         let lang = appLanguage.resolved
@@ -57,7 +49,7 @@ struct AnnouncementOverlay: View {
         return VStack(alignment: .leading, spacing: 14) {
             // 헤더: ── NOTICE ── 라벨 + 발행일
             HStack(alignment: .firstTextBaseline) {
-                Text(headerLabel)
+                Text(announcement.kind.chromeLabel)
                     .font(.term(12, weight: .semibold))
                     .foregroundStyle(accent)
                     .terminalGlow(accent, radius: 2)
@@ -79,9 +71,9 @@ struct AnnouncementOverlay: View {
 
             // 본문: 짧으면 그대로, 길면 상한 안에서 스크롤. 상한은 카드 전체 frame(maxHeight:)이 쥔다.
             ViewThatFits(in: .vertical) {
-                bodyText(body)
+                AnnouncementBodyText(body)
                 ScrollView(.vertical, showsIndicators: true) {
-                    bodyText(body)
+                    AnnouncementBodyText(body)
                 }
             }
 
@@ -103,8 +95,36 @@ struct AnnouncementOverlay: View {
         .overlay(Rectangle().stroke(accent.opacity(0.7), lineWidth: 1.5))
     }
 
-    private func bodyText(_ body: String) -> some View {
-        Text(body)
+}
+
+// MARK: - 팝업·공지함 공용 조각
+
+extension Announcement.Kind {
+    /// 종류별 강조색 — 팝업 테두리·헤더, 목록 행 태그가 같은 색을 쓴다.
+    var accent: Color {
+        switch self {
+        case .notice: return Term.cyan
+        case .patch:  return Term.green
+        }
+    }
+
+    /// 헤더에 찍는 영어 크롬 라벨(터미널 UI 규약상 번역하지 않는다).
+    var chromeLabel: String {
+        switch self {
+        case .notice: return "NOTICE"
+        case .patch:  return "PATCH"
+        }
+    }
+}
+
+/// 공지 본문 조판. 팝업 카드와 공지함 상세가 같은 서체·색·선택 가능 여부를 쓰도록 한 곳에 둔다.
+struct AnnouncementBodyText: View {
+    private let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
             .font(.term(13))
             .foregroundStyle(Term.fg.opacity(0.92))
             .fixedSize(horizontal: false, vertical: true)

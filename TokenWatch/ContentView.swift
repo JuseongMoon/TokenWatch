@@ -3,7 +3,7 @@
 //  TokenWatch
 //
 //  메인 화면(터미널 스타일): 상단 프롬프트 헤더 + 에이전트 카드 리스트 +
-//  하단 추가 셀. 우측 상단 [SETTINGS] 설정 버튼.
+//  하단 추가 셀. 우측 상단에 공지함 [✉]·설정 [⚙] 버튼.
 //
 
 import SwiftUI
@@ -24,13 +24,17 @@ struct ContentView: View {
 
     @State private var showingAdd = false
     @State private var showingSettings = false
+    @State private var showingAnnouncements = false
+
+    /// 시트가 하나라도 떠 있는지 — 공지 팝업 보류 판단에 쓴다(아래 overlay 주석 참고).
+    private var sheetShowing: Bool { showingAdd || showingSettings || showingAnnouncements }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Term.bg.ignoresSafeArea()
                 VStack(spacing: 0) {
-                    topBar   // 앱 이름·상태 라인·[SETTINGS] 를 최상단에 고정
+                    topBar   // 앱 이름·상태 라인·[✉]·[⚙] 를 최상단에 고정
                     list     // 아래 리스트만 스크롤
                 }
             }
@@ -42,13 +46,16 @@ struct ContentView: View {
             .sheet(isPresented: $showingSettings) {
                 SettingsSheet().environment(store)
             }
+            .sheet(isPresented: $showingAnnouncements) {
+                AnnouncementListSheet().environment(announcements)
+            }
         }
         .tint(Term.green)
         // 서버 공지 팝업. NavigationStack 바깥에 얹어 push된 상세 화면 위에도 뜬다.
-        // 시트(추가/설정)는 UIKit 프레젠테이션이라 이 오버레이를 덮으므로, 시트가 열려 있으면
+        // 시트(추가/설정/공지함)는 UIKit 프레젠테이션이라 이 오버레이를 덮으므로, 시트가 열려 있으면
         // 보류하고 닫힌 뒤에 뜬다(로그인 퍼널을 가로막지 않기 위해서도).
         .overlay {
-            if let announcement = announcements.presented, !showingAdd, !showingSettings {
+            if let announcement = announcements.presented, !sheetShowing {
                 AnnouncementOverlay(announcement: announcement)
             }
         }
@@ -93,7 +100,7 @@ struct ContentView: View {
 
     // MARK: 상단 고정 바
 
-    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[SETTINGS] 모두 스크롤과 무관하게 고정.
+    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[✉]·[⚙] 모두 스크롤과 무관하게 고정.
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
@@ -101,20 +108,32 @@ struct ContentView: View {
                 statusPrompt
             }
             Spacer(minLength: 8)
-            Button {
-                showingSettings = true
-            } label: {
-                Text("[SETTINGS]")
-                    .font(.term(13, weight: .semibold))
-                    .foregroundStyle(Term.cyan)
+            HStack(spacing: 10) {
+                announcementsButton
+                TerminalGlyphButton(systemImage: "gearshape") { showingSettings = true }
+                    .accessibilityLabel(loc.a11ySettings)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(loc.a11ySettings)
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 10)
         .background(Term.bg)
+    }
+
+    /// 공지함 버튼. 안 읽은 공지가 있으면 우상단에 초록 점을 얹는다(개수는 접근성 라벨로만 읽어준다).
+    private var announcementsButton: some View {
+        let unread = announcements.unreadCount
+        return TerminalGlyphButton(systemImage: "envelope") { showingAnnouncements = true }
+            .overlay(alignment: .topTrailing) {
+                if unread > 0 {
+                    Circle()
+                        .fill(Term.green)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 2, y: -2)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityLabel(loc.a11yAnnouncements(unread: unread))
     }
 
     /// `tokenwatch` 타이틀의 글자별 색 — 참조 이미지 `ultrathink`의 파스텔 무지개

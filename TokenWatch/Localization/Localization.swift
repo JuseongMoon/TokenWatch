@@ -47,7 +47,10 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// 실제 렌더링 언어(해석 완료된 값).
-enum Lang: Sendable { case ko, en }
+/// `nonisolated`인 이유: 프로젝트 기본 격리가 MainActor라 그냥 두면 Equatable 준수까지
+/// MainActor에 묶여, nonisolated 모델(예: `Announcement.LocalizedText.resolved(for:)`)에서
+/// `lang == .ko` 비교가 Swift 6 모드 에러가 된다.
+nonisolated enum Lang: Sendable { case ko, en }
 
 /// 뷰 밖(네트워크/모델 등 SwiftUI 환경에 접근할 수 없는 곳)에서 현재 언어를
 /// 스레드 안전하게 읽는다. UserDefaults/Locale 모두 스레드 안전.
@@ -360,9 +363,21 @@ struct L10n: Sendable {
     /// 메인 카드 신호등 배지에 인라인으로 띄우는 점검 표시(전체점검 전용).
     var serviceMaintenanceBadge: String { lang == .ko ? "점검중" : "maintenance" }
 
-    // MARK: 공지 팝업(AnnouncementOverlay)
+    // MARK: 공지 팝업(AnnouncementOverlay) · 공지함(AnnouncementListSheet)
     var announcementClose: String { lang == .ko ? "닫기" : "Close" }
     var announcementNever: String { lang == .ko ? "다시 열지 않기" : "Don't show again" }
+    var announcementsEmpty: String {
+        lang == .ko ? "아직 받은 공지가 없습니다." : "No announcements yet."
+    }
+    var announcementsUnavailable: String {
+        lang == .ko ? "공지를 불러오지 못했습니다. 잠시 뒤 다시 열어보세요."
+                    : "Couldn't load announcements. Try again in a moment."
+    }
+    /// 상단 바 공지 버튼의 접근성 라벨. 안 읽은 게 있으면 개수까지 읽어준다.
+    func a11yAnnouncements(unread: Int) -> String {
+        guard unread > 0 else { return lang == .ko ? "공지" : "Announcements" }
+        return lang == .ko ? "공지, 안 읽음 \(unread)개" : "Announcements, \(unread) unread"
+    }
     /// 공지 발행일. 연도는 올해가 아닐 때만 붙인다.
     func announcementDate(_ date: Date, now: Date = Date()) -> String {
         let f = DateFormatter()

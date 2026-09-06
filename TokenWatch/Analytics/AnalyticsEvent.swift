@@ -54,6 +54,12 @@ enum ScreenName: String, Sendable {
     }
 }
 
+/// 공지 팝업에서 사용자가 누른 버튼.
+enum AnnouncementAction: String, Sendable {
+    case close                              // [닫기] — 이번 실행 동안만 숨김
+    case never                              // [다시 열지 않기] — 영구 제외
+}
+
 /// 앱이 기록하는 모든 분석 이벤트.
 enum AnalyticsEvent {
     // 활성화 퍼널
@@ -75,6 +81,9 @@ enum AnalyticsEvent {
     // 신뢰성(정상↔에러 전이 시에만 — AgentStore가 보장)
     case usageFetchError(provider: AgentProvider, reason: FetchErrorReason)
     case usageFetchRecover(provider: AgentProvider)
+    // 공지 팝업 — ID·종류·버튼만. 제목/본문 텍스트는 어떤 경로로도 보내지 않는다.
+    case announcementShown(id: String, kind: Announcement.Kind)
+    case announcementAction(id: String, action: AnnouncementAction)
 
     enum DemoSource: String, Sendable {
         case emptyList = "empty_list"
@@ -110,6 +119,8 @@ enum AnalyticsEvent {
         case .agentRemove: return "agent_remove"
         case .usageFetchError: return "usage_fetch_error"
         case .usageFetchRecover: return "usage_fetch_recover"
+        case .announcementShown: return "announcement_shown"
+        case .announcementAction: return "announcement_action"
         }
     }
 
@@ -147,6 +158,10 @@ enum AnalyticsEvent {
             return ["provider": p.rawValue, "reason": reason.rawValue]
         case .usageFetchRecover(let p):
             return ["provider": p.rawValue]
+        case .announcementShown(let id, let kind):
+            return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
+        case .announcementAction(let id, let action):
+            return ["announcement_id": String(id.prefix(40)), "action": action.rawValue]
         }
     }
 
@@ -154,7 +169,8 @@ enum AnalyticsEvent {
     /// 오염시키지 않도록 AnalyticsService가 이 값으로 거른다(데모 격리 원칙과 일관).
     var isProviderScoped: Bool {
         switch self {
-        case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen:
+        case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen,
+             .announcementShown, .announcementAction:
             return false
         default:
             return true

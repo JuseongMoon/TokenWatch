@@ -154,8 +154,8 @@ struct TerminalDialog: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 10) {
-                dialogButton(cancelLabel, color: Term.fg, action: onCancel)
-                dialogButton(confirmLabel, color: confirmColor, action: onConfirm)
+                TerminalDialogButton(label: cancelLabel, color: Term.fg, action: onCancel)
+                TerminalDialogButton(label: confirmLabel, color: confirmColor, action: onConfirm)
             }
             .padding(.top, 4)
         }
@@ -164,12 +164,23 @@ struct TerminalDialog: View {
         .overlay(Rectangle().stroke(confirmColor.opacity(0.7), lineWidth: 1.5))
         .frame(maxWidth: 320)
     }
+}
 
-    private func dialogButton(_ label: String, color: Color, action: @escaping () -> Void) -> some View {
+/// 다이얼로그 카드 하단의 `[ 라벨 ]` 버튼. 가로를 균등 분할하도록 maxWidth를 채운다.
+/// TerminalDialog(확인)와 AnnouncementOverlay(공지)가 같은 버튼을 쓴다.
+struct TerminalDialogButton: View {
+    let label: String
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
         Button(action: action) {
             Text(label)
                 .font(.term(14, weight: .semibold))
                 .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 12)          // 폭을 글자에 맞춰 줄였을 때(fixedSize)의 좌우 여백
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .overlay(Rectangle().stroke(color.opacity(0.55), lineWidth: 1))
@@ -246,8 +257,9 @@ private struct TerminalConfirmItemModifier<Item: Identifiable>: ViewModifier {
 }
 
 /// 다이얼로그 뒤를 덮는 반투명 scrim. 탭하면 취소로 닫힌다.
+/// 확인 다이얼로그와 공지 오버레이(AnnouncementOverlay)가 공유한다.
 @ViewBuilder
-private func dialogScrim(onTap: @escaping () -> Void) -> some View {
+func dialogScrim(onTap: @escaping () -> Void) -> some View {
     Color.black.opacity(0.72)
         .ignoresSafeArea()
         .contentShape(Rectangle())

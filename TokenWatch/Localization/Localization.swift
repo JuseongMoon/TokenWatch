@@ -360,6 +360,23 @@ struct L10n: Sendable {
     /// 메인 카드 신호등 배지에 인라인으로 띄우는 점검 표시(전체점검 전용).
     var serviceMaintenanceBadge: String { lang == .ko ? "점검중" : "maintenance" }
 
+    // MARK: 공지 팝업(AnnouncementOverlay)
+    var announcementClose: String { lang == .ko ? "닫기" : "Close" }
+    var announcementNever: String { lang == .ko ? "다시 열지 않기" : "Don't show again" }
+    /// 공지 발행일. 연도는 올해가 아닐 때만 붙인다.
+    func announcementDate(_ date: Date, now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = dateLocale
+        let sameYear = Calendar.current.isDate(date, equalTo: now, toGranularity: .year)
+        switch (lang, sameYear) {
+        case (.ko, true):  f.dateFormat = "M월 d일"
+        case (.ko, false): f.dateFormat = "yyyy년 M월 d일"
+        case (.en, true):  f.dateFormat = "MMM d"
+        case (.en, false): f.dateFormat = "MMM d, yyyy"
+        }
+        return f.string(from: date)
+    }
+
     // MARK: 날짜/시간 포맷
     var dateLocale: Locale { Locale(identifier: lang == .ko ? "ko_KR" : "en_US") }
 

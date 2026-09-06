@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AgentStore.self) private var store
+    @Environment(AnnouncementStore.self) private var announcements
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
@@ -43,6 +44,15 @@ struct ContentView: View {
             }
         }
         .tint(Term.green)
+        // 서버 공지 팝업. NavigationStack 바깥에 얹어 push된 상세 화면 위에도 뜬다.
+        // 시트(추가/설정)는 UIKit 프레젠테이션이라 이 오버레이를 덮으므로, 시트가 열려 있으면
+        // 보류하고 닫힌 뒤에 뜬다(로그인 퍼널을 가로막지 않기 위해서도).
+        .overlay {
+            if let announcement = announcements.presented, !showingAdd, !showingSettings {
+                AnnouncementOverlay(announcement: announcement)
+            }
+        }
+        .animation(.snappy(duration: 0.22), value: announcements.presented?.id)
         // 씬 라이프사이클: 활성일 때만 자동 새로고침. 화면 유지는 전면(.active/.inactive)에서
         // 유지하고 백그라운드에서만 해제한다(아래 applyIdleTimer 참고).
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -61,6 +71,8 @@ struct ContentView: View {
         switch phase {
         case .active:
             store.startAutoRefresh(interval: refreshInterval)
+            // 콜드 스타트(initial: true)와 포그라운드 복귀 모두 여기를 지난다. 스로틀은 스토어가 판단.
+            announcements.check()
         default:
             store.stopAutoRefresh()
         }

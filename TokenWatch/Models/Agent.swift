@@ -11,8 +11,13 @@ import SwiftUI
 /// provider가 사용자 자격증명을 얻는 방식. `AddAgentSheet`가 이 값으로 로그인 UI를 분기한다.
 /// (새 provider를 추가할 때 이 중 하나를 고른다.)
 enum AuthKind: Sendable {
-    /// WKWebView로 로그인 → OAuth 콜백 리다이렉트에서 code를 가로챈다. (Claude/Codex)
+    /// WKWebView로 로그인 → OAuth 콜백 리다이렉트에서 code를 가로챈다. (Codex)
+    /// 주의: 이 방식은 `window.open` 팝업으로 동작하는 소셜 로그인(구글 등)을 지원하지 못한다.
     case oauthCode
+    /// 외부 브라우저(Safari)로 로그인 → 루프백 콜백으로 code를 자동 수신하거나,
+    /// 사용자가 콘솔 페이지의 코드를 복사해 붙여넣는다. (Claude)
+    /// 팝업 기반 소셜 로그인이 정상 동작하는 유일한 경로다.
+    case oauthBrowser
     /// user code를 발급받아 브라우저에서 승인 → 토큰을 폴링한다. (예: GitHub Copilot)
     case oauthDeviceFlow
     /// 사용자가 발급한 API 키를 직접 붙여넣는다. (예: ElevenLabs/OpenRouter)
@@ -114,7 +119,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 이 provider의 로그인/인증 방식. `AddAgentSheet`가 이 값으로 UI를 분기한다.
     var authKind: AuthKind {
         switch self {
-        case .claude, .codex: return .oauthCode
+        case .claude: return .oauthBrowser
+        case .codex: return .oauthCode
         case .copilot: return .oauthDeviceFlow
         case .openrouter, .deepseek, .poe, .elevenlabs: return .apiKey
         }

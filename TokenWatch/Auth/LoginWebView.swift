@@ -3,8 +3,12 @@
 //  TokenWatch
 //
 //  로그인 페이지를 WKWebView로 띄우고, OAuth 콜백 리다이렉트를 가로채
-//  authorization code를 캡처한다(Claude/Codex).
-//  콜백이 커스텀 스킴이 아니라 https 페이지라 ASWebAuthenticationSession 대신 WKWebView를 쓴다.
+//  authorization code를 캡처한다(현재는 Codex 전용).
+//  콜백이 커스텀 스킴이 아니라 http(s) 주소라 ASWebAuthenticationSession 대신 WKWebView를 쓴다.
+//
+//  ⚠️ 한계: WKUIDelegate가 없어 `window.open` 팝업이 열리지 않는다. 팝업으로 동작하는
+//     소셜 로그인(구글 "Continue with Google" 등)은 이 경로에서 실패한다. Claude는 그래서
+//     외부 브라우저 방식(BrowserLoginView + LoopbackCallbackServer)으로 옮겼다.
 //
 
 import SwiftUI

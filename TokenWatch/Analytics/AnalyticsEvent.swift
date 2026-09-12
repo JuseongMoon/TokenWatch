@@ -13,6 +13,8 @@ import Foundation
 /// 로그인 퍼널에서 실패/이탈이 일어난 단계.
 enum LoginStage: String, Sendable {
     case authorize                          // 웹뷰 인가 페이지 진행 중
+    case browserWait = "browser_wait"       // 외부 브라우저 로그인 완료를 기다리는 중
+    case codeEntry = "code_entry"           // 인가 코드 직접 입력(붙여넣기) 화면
     case stateMismatch = "state_mismatch"   // CSRF state 불일치
     case exchange                           // code → token 교환
     case devicePoll = "device_poll"         // device flow 코드 발급·승인 폴링
@@ -189,6 +191,7 @@ enum AnalyticsEvent {
     private static func authKindTag(_ provider: AgentProvider) -> String {
         switch provider.authKind {
         case .oauthCode: return "oauth"
+        case .oauthBrowser: return "oauth_browser"
         case .oauthDeviceFlow: return "device"
         case .apiKey: return "api_key"
         }

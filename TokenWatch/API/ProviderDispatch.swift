@@ -68,14 +68,17 @@ func parseRetryAfter(_ value: String?, now: Date = Date()) -> Date? {
 // MARK: - OAuth 디스패치
 
 enum ProviderAuth {
-    // 아래 authorizeURL/parseCallback/exchange/refresh는 oauthCode 방식 provider 전용이다.
+    // 아래 authorizeURL/parseCallback/exchange/refresh는 OAuth 인가코드 방식
+    // provider(oauthBrowser=Claude, oauthCode=Codex) 전용이다.
     // apiKey/deviceFlow provider는 AddAgentSheet가 이 경로로 오지 않도록 라우팅한다.
 
-    static func authorizeURL(_ provider: AgentProvider, pkce: PKCE) -> URL {
+    /// - Parameter redirect: 외부 브라우저 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
+    ///   (Claude 전용. Codex는 콜백이 고정이라 무시한다.)
+    static func authorizeURL(_ provider: AgentProvider, pkce: PKCE, redirect: String? = nil) -> URL {
         switch provider {
-        case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce)
+        case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce, redirect: redirect)
         case .codex: return CodexOAuth.authorizeURL(pkce: pkce)
-        default: preconditionFailure("authorizeURL는 oauthCode provider 전용입니다: \(provider)")
+        default: preconditionFailure("authorizeURL는 OAuth provider 전용입니다: \(provider)")
         }
     }
 
@@ -87,9 +90,12 @@ enum ProviderAuth {
         }
     }
 
-    static func exchange(_ provider: AgentProvider, code: String, state: String, pkce: PKCE) async throws -> OAuthTokens {
+    /// - Parameter redirect: authorize에 쓴 redirect_uri와 같은 값을 넘겨야 한다.
+    static func exchange(_ provider: AgentProvider, code: String, state: String, pkce: PKCE,
+                         redirect: String? = nil) async throws -> OAuthTokens {
         switch provider {
-        case .claude: return try await ClaudeOAuth.exchange(code: code, state: state, pkce: pkce)
+        case .claude:
+            return try await ClaudeOAuth.exchange(code: code, state: state, pkce: pkce, redirect: redirect)
         case .codex: return try await CodexOAuth.exchange(code: code, state: state, pkce: pkce)
         default: throw OAuthError.notAuthenticated
         }

@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 루프백 OAuth 완료 페이지의 "TokenWatch 열기" 링크(tokenwatch://login-complete)가
+	     앱을 전면으로 불러오게 한다. 별도 핸들러는 없고 복귀 용도뿐이다. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.ScienceFiction.TokenWatch</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tokenwatch</string>
+			</array>
+		</dict>
+	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.ScienceFiction.TokenWatch.refresh</string>

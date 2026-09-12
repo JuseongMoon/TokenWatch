@@ -148,10 +148,11 @@ struct AnnouncementTests {
 
     @Test @MainActor func dismissForeverPersistsAndCaps() {
         let defaults = freshDefaults()
-        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
         // 캐시에 피드를 심어 check()가 네트워크 없이 즉시 판정하게 한다.
+        // 스토어는 init에서 캐시를 한 번만 읽으므로 반드시 생성 "전에" 심어야 한다.
         let many = (0..<(AnnouncementStore.dismissedCap + 5)).map { item("id\($0)", priority: -$0) }
         defaults.set(try! JSONEncoder().encode(AnnouncementFeed(items: many)), forKey: AnnouncementStore.cachedFeedKey)
+        let store = AnnouncementStore(defaults: defaults, now: { self.now }, appVersion: "1.0.1", fetch: { .failed })
 
         for _ in 0..<(AnnouncementStore.dismissedCap + 5) {
             store.check()
@@ -284,8 +285,10 @@ struct AnnouncementTests {
         for i in 0..<(AnnouncementStore.dismissedCap + 5) { store.markSeen("id\(i)") }
         #expect(store.seen.count == AnnouncementStore.dismissedCap)
         #expect(store.seen.first == "id5")   // 오래된 것부터 제거
-        store.markSeen("id5")                // 이미 잘려나갔으므로 다시 들어온다
-        #expect(store.seen.last == "id5")
+        store.markSeen("id5")                // 아직 목록에 있으므로 중복 추가되지 않는다
+        #expect(store.seen.last == "id\(AnnouncementStore.dismissedCap + 4)")
+        store.markSeen("id0")                // 잘려나간 ID는 다시 들어온다
+        #expect(store.seen.last == "id0")
     }
 
     // MARK: 조회 실패 표시

@@ -5,6 +5,11 @@ docs/
 # macOS
 .DS_Store
 
+# 브라우저 자동화 부산물 — App Store Connect 스크린샷 등이 남는다.
+# 저장소가 public이고 이미지 안의 계정·앱 정보는 gitleaks가 못 잡으니 추적하지 않는다.
+.playwright-mcp/
+asc-*.png
+
 # Xcode
 xcuserdata/
 *.xcuserstate

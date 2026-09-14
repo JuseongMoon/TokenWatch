@@ -2,7 +2,7 @@
 //  Announcement.swift
 //  TokenWatch
 //
-//  서버 공지/패치노트 피드 모델 + 표시 대상 선택 규칙(docs/announcements-contract.md §1과 1:1).
+//  서버 공지/패치노트 피드 모델 + 표시 대상 선택 규칙(피드 계약 문서와 1:1 — 문서는 비공개 docs/, 저장소 밖).
 //  피드는 순수 JSON(Codable)이다 — 전송 수단(지금은 Firestore 문서의 payload 문자열)과 무관하게
 //  이 타입만이 양 팀의 계약이므로, 나중에 CDN/Functions/자체 API로 옮겨도 여기는 바뀌지 않는다.
 //

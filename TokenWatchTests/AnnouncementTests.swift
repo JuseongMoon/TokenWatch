@@ -2,7 +2,7 @@
 //  AnnouncementTests.swift
 //  TokenWatchTests
 //
-//  공지 피드 계약(docs/announcements-contract.md) 검증: 선택 규칙, 관대한 디코딩, Firestore 봉투,
+//  공지 피드 계약(문서는 비공개 docs/, 저장소 밖) 검증: 선택 규칙, 관대한 디코딩, Firestore 봉투,
 //  언어 폴백, 스토어의 닫기/영구 제외 영속화.
 //
 

@@ -2,7 +2,7 @@
 //  AnalyticsEvent.swift
 //  TokenWatch
 //
-//  분석 이벤트의 타입세이프 정의(docs/ga-analytics-plan.md §4와 1:1). Firebase를 모른다 —
+//  분석 이벤트의 타입세이프 정의(계측 설계 문서와 1:1 — 문서는 비공개 docs/, 저장소 밖). Firebase를 모른다 —
 //  이름/파라미터로만 변환되고 실제 전송은 AnalyticsService(유일한 Firebase 접점)가 한다.
 //  파라미터에는 provider rawValue·열거 문자열·정수만 허용한다. 계정 라벨/이메일/토큰/
 //  원문 에러 메시지/사용률 수치는 어떤 경로로도 넣지 않는다.

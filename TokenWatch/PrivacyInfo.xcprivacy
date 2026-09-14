@@ -4,7 +4,7 @@
 <dict>
 	<!-- 트래킹 없음(광고 식별자·교차 앱 추적 미사용). 수집은 Firebase Analytics 익명 통계 3종뿐:
 	     기기 ID(무작위 앱 인스턴스 ID)·제품 상호작용·대략적 위치(IP 기반 도시 단위).
-	     전부 신원 비연결·비추적·분석 목적 — docs/ga-analytics-plan.md §9. -->
+	     전부 신원 비연결·비추적·분석 목적(스토어 라벨 매핑은 비공개 docs/의 계측 설계 문서). -->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>

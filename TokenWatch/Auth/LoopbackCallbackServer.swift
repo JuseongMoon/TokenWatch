@@ -4,20 +4,19 @@
 //
 //  OAuth 콜백을 받기 위한 1회용 루프백 HTTP 리스너.
 //
-//  왜 필요한가: claude.ai 로그인 페이지의 구글/애플 버튼은 `window.open` 팝업으로
-//  동작한다. WKWebView(팝업 미지원)는 물론 ASWebAuthenticationSession/
-//  SFSafariViewController도 진짜 팝업 창을 만들지 못해 소셜 로그인이 실패한다.
-//  그래서 로그인은 외부 브라우저(Safari)에서 진행하고, 인가 서버가 리다이렉트하는
-//  `http://localhost:<포트>/callback`을 앱이 직접 받아 code를 얻는다.
-//  (Claude Code CLI의 기본 로그인 흐름과 같은 구조다.)
+//  왜 필요한가: claude.ai 인가 서버는 커스텀 스킴 redirect_uri를 거부한다(실기기 확인).
+//  그래서 앱 안의 인증 시트(ASWebAuthenticationSession)에서 authorize를 열고, 인가 서버가
+//  리다이렉트하는 `http://localhost:<포트>/callback`을 앱이 직접 받아 code를 얻는다.
+//  (Claude Code CLI의 기본 로그인 흐름과 같은 구조다.) 흐름 전체는 `ClaudeLoginCoordinator`가 맡는다.
 //
-//  실기기 확인(2026-09-12): 앱이 백그라운드에서 정지된 동안 도착한 요청은 커널이 큐잉했다가
-//  복귀 시 읽힌다(로그인은 성공). 그동안 Safari는 타임아웃 페이지를 보여주므로, 승인 단계는
-//  앱 실행 유예(약 30초) 안에 끝나야 완료 페이지가 뜬다 → BrowserLoginView가 로그인과 승인을
-//  두 단계로 분리하는 이유.
+//  응답은 `302 Found` → `tokenwatch://login-complete?code=…&state=…`이다. 인증 시트는 콜백
+//  스킴으로 가는 리다이렉트를 보면 스스로 닫히므로, 이 응답이 브라우저에 닿아야 로그인 창이 닫힌다.
+//  그래서 code는 응답 전송이 끝난 뒤에 넘긴다. 먼저 넘기면 받는 쪽이 곧바로 리스너를 정리하면서
+//  이 연결까지 끊어 302가 도달하지 못한다(1.1.0 빌드 12의 결함).
 //
-//  보안: 127.0.0.1/::1 에만 바인딩해 LAN에 노출되지 않는다. state가 일치하는 요청
-//  하나만 처리하고 즉시 닫는다. code는 PKCE verifier 없이는 토큰으로 바꿀 수 없다.
+//  보안: 127.0.0.1/::1 에만 바인딩해 LAN에 노출되지 않는다(루프백은 로컬 네트워크 권한 대상도
+//  아니다). state가 일치하는 요청만 code를 넘기고 곧 닫는다. code는 PKCE verifier 없이는 토큰으로
+//  바꿀 수 없다. 브라우저가 요청 없이 여는 예비 연결은 헤더가 오지 않아 그대로 버려진다.
 //
 
 import Foundation
@@ -26,15 +25,20 @@ import Network
 /// 루프백에 잠깐 떠서 OAuth 콜백 한 건만 받고 사라지는 최소 HTTP 서버.
 @MainActor
 final class LoopbackCallbackServer {
+    /// 인증 시트를 닫는 콜백 주소(`tokenwatch://login-complete`). 시트의 callbackURLScheme과 같아야 한다.
+    nonisolated static let sessionCallbackScheme = "tokenwatch"
+    nonisolated static let sessionCallbackHost = "login-complete"
+
     /// 이 값과 일치하는 state를 가진 콜백만 받아들인다(CSRF 방어).
     private let expectedState: String
-    /// code/state를 받으면 한 번만 호출된다.
+    /// code/state를 받으면 한 번만 호출된다(응답 전송이 끝난 뒤).
     private let onCode: (String, String) -> Void
 
     private var v4: NWListener?
     private var v6: NWListener?
     private var connections: [NWConnection] = []
-    private var finished = false
+    /// code 전달 여부 — 브라우저 재시도로 같은 콜백이 두 번 와도 한 번만 넘긴다.
+    private var delivered = false
     private var timeoutTask: Task<Void, Never>?
 
     /// 리스너 수명 상한 — 이 시간이 지나면 스스로 닫는다(리소스 누수 방지).
@@ -57,7 +61,7 @@ final class LoopbackCallbackServer {
             self?.accept(conn)
         }
 
-        // Safari가 `localhost`를 ::1로 먼저 시도할 수 있다. 같은 포트로 IPv6도 열어
+        // 브라우저가 `localhost`를 ::1로 먼저 시도할 수 있다. 같은 포트로 IPv6도 열어
         // 둔다(실패해도 IPv4로 폴백되므로 best-effort).
         if let v6Listener = try? Self.makeListener(host: .ipv6(.loopback),
                                                    port: NWEndpoint.Port(rawValue: port) ?? .any) {
@@ -175,37 +179,42 @@ final class LoopbackCallbackServer {
             return
         }
 
-        // code를 먼저 넘긴다. 앱이 백그라운드에 있는 동안 브라우저가 연결을 끊었어도
-        // 요청 자체는 커널 버퍼에서 읽히므로, 응답 전송 성공 여부와 무관하게 로그인을
-        // 완료할 수 있어야 한다.
-        if !finished {
-            finished = true
-            onCode(parsed.code, parsed.state)
+        // 302를 먼저 보내고 전송이 끝난 뒤 code를 넘긴다(파일 머리말 참고). 전송이 실패해도
+        // (브라우저가 이미 연결을 닫음 등) code는 넘긴다 — 교환에는 code만 있으면 된다.
+        let location = Self.redirectLocation(code: parsed.code, state: parsed.state)
+        respond(conn, status: "302 Found", extraHeaders: ["Location: \(location)"], body: "") {
+            self.deliver(code: parsed.code, state: parsed.state)
         }
-        respond(conn, status: "200 OK", body: Self.successPage(), contentType: "text/html; charset=utf-8")
-        // 응답이 나갈 시간을 준 뒤 리스너를 접는다.
-        Task { [weak self] in
+        // 응답이 나갈 시간을 준 뒤 리스너를 접는다. 소유자가 참조를 놓아도 실행되도록 강하게 붙잡는다.
+        // 전송 완료 콜백이 끝내 오지 않는 경우에도 여기서 code를 넘긴다(전달은 한 번뿐이다).
+        Task {
             try? await Task.sleep(for: .seconds(1))
-            self?.stop()
+            self.deliver(code: parsed.code, state: parsed.state)
+            self.stop()
         }
     }
 
-    private func respond(_ conn: NWConnection, status: String, body: String,
-                         contentType: String = "text/plain; charset=utf-8") {
-        let bodyData = Data(body.utf8)
-        let header = """
-        HTTP/1.1 \(status)\r
-        Content-Type: \(contentType)\r
-        Content-Length: \(bodyData.count)\r
-        Cache-Control: no-store\r
-        Connection: close\r
-        \r
+    private func deliver(code: String, state: String) {
+        guard !delivered else { return }
+        delivered = true
+        onCode(code, state)
+    }
 
-        """
-        var out = Data(header.utf8)
+    private func respond(_ conn: NWConnection, status: String, extraHeaders: [String] = [],
+                         body: String, contentType: String = "text/plain; charset=utf-8",
+                         onSent: (@MainActor () -> Void)? = nil) {
+        let bodyData = Data(body.utf8)
+        let lines = ["HTTP/1.1 \(status)"] + extraHeaders + [
+            "Content-Type: \(contentType)",
+            "Content-Length: \(bodyData.count)",
+            "Cache-Control: no-store",
+            "Connection: close",
+        ]
+        var out = Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8)
         out.append(bodyData)
-        // 전송 실패(브라우저가 이미 연결을 닫음 등)는 무시한다 — code는 이미 확보했다.
         conn.send(content: out, completion: .contentProcessed { _ in
+            // 연결을 메인 큐에서 시작했으므로 완료 콜백도 메인 큐에서 온다.
+            MainActor.assumeIsolated { onSent?() }
             conn.cancel()
         })
     }
@@ -240,29 +249,27 @@ final class LoopbackCallbackServer {
         return (code, state)
     }
 
-    // MARK: 완료 페이지
+    /// 인증 시트를 닫는 리다이렉트 주소. code/state는 퍼센트 인코딩된다.
+    nonisolated static func redirectLocation(code: String, state: String) -> String {
+        var comp = URLComponents()
+        comp.scheme = sessionCallbackScheme
+        comp.host = sessionCallbackHost
+        comp.queryItems = [
+            URLQueryItem(name: "code", value: code),
+            URLQueryItem(name: "state", value: state),
+        ]
+        return comp.string ?? "\(sessionCallbackScheme)://\(sessionCallbackHost)"
+    }
 
-    /// 브라우저에 보여줄 최소 HTML(외부 리소스 없음, 앱과 같은 터미널 톤).
-    /// 현재 언어를 읽으므로 MainActor에 둔다(호출은 연결 처리 중, 즉 메인 큐에서 일어난다).
-    static func successPage() -> String {
-        let loc = L10n(lang: currentLang())
-        return """
-        <!doctype html><html><head><meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>TokenWatch</title>
-        <style>
-        body{margin:0;background:#000;color:#D6DBD1;font-family:ui-monospace,Menlo,monospace;
-        display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
-        .b{border:1px solid #3DD199;padding:28px 24px;max-width:420px;width:100%}
-        h1{font-size:17px;color:#3DD199;margin:0 0 12px}
-        p{font-size:14px;line-height:1.6;margin:0 0 20px;color:#D6DBD1}
-        a{display:block;text-align:center;border:1px solid #3DD199;color:#3DD199;
-        text-decoration:none;padding:13px;font-size:14px;font-weight:600}
-        </style></head><body><div class="b">
-        <h1>\(loc.loopbackDoneTitle)</h1>
-        <p>\(loc.loopbackDoneBody)</p>
-        <a href="tokenwatch://login-complete">\(loc.loopbackOpenApp)</a>
-        </div></body></html>
-        """
+    /// 인증 시트가 돌려준 콜백 URL에서 code/state를 뽑는다. 우리 콜백 주소가 아니면 nil.
+    nonisolated static func parseSessionCallback(_ url: URL) -> (code: String, state: String)? {
+        guard url.scheme == sessionCallbackScheme, url.host == sessionCallbackHost,
+              let comp = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        let items = comp.queryItems ?? []
+        guard let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty,
+              let state = items.first(where: { $0.name == "state" })?.value
+        else { return nil }
+        return (code, state)
     }
 }

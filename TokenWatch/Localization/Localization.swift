@@ -332,54 +332,37 @@ struct L10n: Sendable {
     }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
 
-    // MARK: 브라우저 로그인(Claude — 외부 Safari + 루프백/코드 붙여넣기)
-    // 로그인(①)과 승인(②)을 분리한다. 승인만 하면 몇 초라 앱이 백그라운드 유예 안에 살아 있어
-    // 루프백 응답이 나가고, Safari에 완료 페이지가 뜬다.
-    var browserStepLogin: String {
-        lang == .ko ? "① Safari에서 claude.ai에 로그인하세요. 이미 로그인돼 있으면 건너뛰어도 됩니다."
-                    : "① Sign in to claude.ai in Safari. Skip this if you're already signed in."
+    // MARK: Claude 로그인(앱 안 인증 시트 + 루프백, 폴백: 코드 붙여넣기)
+    var browserSheetIntro: String {
+        lang == .ko ? "Claude 계정으로 로그인하고 연결을 승인하세요. 로그인 창은 앱 안에서 열리고, 승인하면 자동으로 닫힙니다."
+                    : "Sign in with your Claude account and approve the connection. The sign-in window opens inside the app and closes automatically once you approve."
     }
-    var browserLoginOpen: String { lang == .ko ? "[ 1. Safari에서 로그인 ↗ ]" : "[ 1. sign in with Safari ↗ ]" }
-    var browserStepConnect: String {
-        lang == .ko ? "② 로그인이 끝나면 이 앱으로 돌아와 연결을 시작하세요. Safari에서 승인만 누르면 됩니다."
-                    : "② Come back here and start connecting. You'll only need to tap Approve in Safari."
+    var browserSheetOpen: String { lang == .ko ? "[ 로그인 ]" : "[ sign in ]" }
+    var browserOtherAccountHint: String {
+        lang == .ko ? "이미 로그인돼 있으면 바로 승인 화면이 열립니다. 다른 계정을 추가하려면 아래 버튼을 쓰세요."
+                    : "If you're already signed in, the approval screen opens right away. To add a different account, use the button below."
     }
-    var browserConnectStart: String { lang == .ko ? "[ 2. 연결하기 ↗ ]" : "[ 2. connect ↗ ]" }
-    var browserWaiting: String { lang == .ko ? "승인을 기다리는 중…" : "waiting for approval…" }
-    var browserWaitingHint: String {
-        lang == .ko ? "Safari에서 계정 선택 → 승인을 누르면 자동으로 연결됩니다."
-                    : "Pick your account and tap Approve in Safari — the connection completes automatically."
+    var browserOtherAccount: String { lang == .ko ? "[ 다른 계정으로 로그인 ]" : "[ sign in with another account ]" }
+    var browserWaiting: String { lang == .ko ? "로그인 창에서 승인을 기다리는 중…" : "waiting for approval in the sign-in window…" }
+    var browserCancelledHint: String {
+        lang == .ko ? "로그인 창이 닫혔습니다. 다시 시도할 수 있습니다." : "The sign-in window was closed. You can try again."
     }
-    /// 승인이 늦어져 앱이 정지된 경우 Safari에는 오류 페이지가 보인다. 그래도 앱으로 돌아오면 완료된다.
-    var browserErrorPageNote: String {
-        lang == .ko ? "승인 후 '서버에 연결할 수 없음' 페이지가 떠도 정상입니다. 이 앱으로 돌아오면 완료됩니다."
-                    : "A \"can't connect to the server\" page after approving is expected. Return to this app to finish."
+    var browserSessionFailed: String {
+        lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도하거나 코드를 직접 입력해 주세요."
+                    : "Couldn't open the sign-in window. Try again or enter the code manually."
     }
-    var browserReopen: String { lang == .ko ? "[ 브라우저 다시 열기 ↗ ]" : "[ reopen browser ↗ ]" }
     var browserManualHint: String {
         lang == .ko ? "자동으로 연결되지 않나요?" : "Not connecting automatically?"
     }
     var browserManualButton: String { lang == .ko ? "[ 코드 직접 입력 ]" : "[ enter code manually ]" }
-    var browserOpenFailed: String {
-        lang == .ko ? "브라우저를 열지 못했습니다. 아래에서 코드를 직접 입력해 주세요."
-                    : "Couldn't open the browser. Enter the code manually below."
-    }
 
-    var manualCodeGet: String { lang == .ko ? "[ 브라우저에서 코드 받기 ↗ ]" : "[ get code in browser ↗ ]" }
+    var manualCodeGet: String { lang == .ko ? "[ 코드 받기 ↗ ]" : "[ get code ↗ ]" }
     var manualCodePrompt: String {
         lang == .ko ? "승인 후 표시되는 코드를 복사해 아래에 붙여넣으세요."
                     : "Copy the code shown after approving and paste it below."
     }
     var manualCodePlaceholder: String { lang == .ko ? "코드 붙여넣기…" : "paste code…" }
     var manualConnect: String { lang == .ko ? "[ CONNECT ]" : "[ CONNECT ]" }
-
-    // 루프백 완료 페이지(브라우저에 표시되는 HTML)
-    var loopbackDoneTitle: String { lang == .ko ? "연결 완료" : "Connected" }
-    var loopbackDoneBody: String {
-        lang == .ko ? "TokenWatch로 돌아가면 계정이 추가됩니다. 이 창은 닫아도 됩니다."
-                    : "Return to TokenWatch to finish adding your account. You can close this window."
-    }
-    var loopbackOpenApp: String { lang == .ko ? "TokenWatch 열기" : "Open TokenWatch" }
 
     // MARK: 디바이스 플로우(GitHub Copilot 등)
     var deviceFlowRequesting: String { lang == .ko ? "코드 요청 중…" : "requesting code…" }

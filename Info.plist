@@ -2,8 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 루프백 OAuth 완료 페이지의 "TokenWatch 열기" 링크(tokenwatch://login-complete)가
-	     앱을 전면으로 불러오게 한다. 별도 핸들러는 없고 복귀 용도뿐이다. -->
+	<!-- Claude 로그인: 루프백 리스너가 code를 받으면 tokenwatch://login-complete로 302 리다이렉트하고,
+	     인증 시트(ASWebAuthenticationSession)가 이 스킴을 보고 스스로 닫힌다. 시트는 등록 없이도
+	     스킴을 가로채지만, 시트 밖에서 열려도 앱으로 돌아오도록 등록해 둔다. 별도 핸들러는 없다. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

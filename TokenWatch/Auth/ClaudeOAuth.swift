@@ -64,18 +64,14 @@ enum ClaudeOAuth {
     /// 이 콜백 경로로 리다이렉트되면 code/state를 뽑아낸다.
     static let callbackPrefix = "https://console.anthropic.com/oauth/code/callback"
 
-    /// 1단계(로그인만)용 주소. 인가 파라미터가 없어 앱은 아무것도 기다리지 않는다.
-    /// `/login`은 claude.ai의 유니버설 링크 대상 경로가 아니라 Safari로 열린다(AASA 확인).
-    static let loginURL = URL(string: "https://claude.ai/login")!
-
-    /// 외부 브라우저 로그인에서 쓰는 루프백 콜백. 앱이 띄운 `LoopbackCallbackServer`가 받는다.
+    /// 인증 시트 로그인에서 쓰는 루프백 콜백. 앱이 띄운 `LoopbackCallbackServer`가 받는다.
     static func loopbackRedirectURI(port: UInt16) -> String {
         "http://localhost:\(port)/callback"
     }
 
     // MARK: authorize URL
 
-    /// - Parameter redirect: 기본값은 콘솔 코드 페이지(수동 복사 흐름). 외부 브라우저
+    /// - Parameter redirect: 기본값은 콘솔 코드 페이지(수동 복사 흐름). 인증 시트
     ///   자동 수신 흐름에서는 `loopbackRedirectURI(port:)`를 넘긴다.
     static func authorizeURL(pkce: PKCE, redirect: String? = nil) -> URL {
         var comp = URLComponents(string: authorizeURL)!

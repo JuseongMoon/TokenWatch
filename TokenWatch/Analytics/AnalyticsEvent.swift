@@ -13,7 +13,7 @@ import Foundation
 /// 로그인 퍼널에서 실패/이탈이 일어난 단계.
 enum LoginStage: String, Sendable {
     case authorize                          // 웹뷰 인가 페이지 진행 중
-    case browserWait = "browser_wait"       // 외부 브라우저 로그인 완료를 기다리는 중
+    case browserWait = "browser_wait"       // 로그인 창(인증 시트)에서 승인을 기다리는 중
     case codeEntry = "code_entry"           // 인가 코드 직접 입력(붙여넣기) 화면
     case stateMismatch = "state_mismatch"   // CSRF state 불일치
     case exchange                           // code → token 교환

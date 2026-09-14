@@ -178,6 +178,16 @@ final class AgentStore {
         // 데모 중에는 목록이 표본으로 대체돼 있어, 추가하면 나갈 때 사라지고 토큰만 남는다.
         // UI가 데모 중 추가 진입점을 감추지만 방어적으로 한 번 더 막는다.
         guard !isDemo else { return false }
+        // 같은 계정으로 다시 로그인했으면 카드를 새로 만들지 않고 토큰만 교체한다.
+        // (인증 시트는 Safari에 로그인된 계정을 그대로 쓰므로 같은 계정이 다시 들어오기 쉽다.
+        //  카드가 둘이면 한 계정의 refresh token 계열을 두 곳에서 갱신해 로테이션 충돌이 난다.)
+        if let email = tokens.accountEmail,
+           let existing = agents.first(where: { $0.provider == provider && $0.accountLabel == email }) {
+            guard await TokenStore.shared.save(tokens, for: existing.id) else { return false }
+            AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+            await refresh(existing)
+            return true
+        }
         var agent = Agent(provider: provider)
         agent.accountLabel = tokens.accountEmail ?? tokens.plan
         guard await TokenStore.shared.save(tokens, for: agent.id) else { return false }

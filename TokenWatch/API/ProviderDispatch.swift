@@ -72,7 +72,7 @@ enum ProviderAuth {
     // provider(oauthBrowser=Claude, oauthCode=Codex) 전용이다.
     // apiKey/deviceFlow provider는 AddAgentSheet가 이 경로로 오지 않도록 라우팅한다.
 
-    /// - Parameter redirect: 외부 브라우저 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
+    /// - Parameter redirect: 인증 시트 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
     ///   (Claude 전용. Codex는 콜백이 고정이라 무시한다.)
     static func authorizeURL(_ provider: AgentProvider, pkce: PKCE, redirect: String? = nil) -> URL {
         switch provider {

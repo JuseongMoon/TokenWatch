@@ -4,7 +4,7 @@
 //
 //  + 버튼 시트(터미널 스타일): 제공자 선택 → 로그인 → 토큰 교환 → 추가.
 //  로그인 방식은 provider의 authKind로 갈린다:
-//   - oauthBrowser(Claude): 외부 브라우저 + 루프백 콜백 자동 수신(폴백: 코드 붙여넣기)
+//   - oauthBrowser(Claude): 앱 안 인증 시트 + 루프백 콜백 자동 수신(폴백: 코드 붙여넣기)
 //   - oauthCode(Codex): 인앱 WKWebView에서 콜백 가로채기
 //   - oauthDeviceFlow(Copilot) / apiKey(그 외)
 //
@@ -21,7 +21,7 @@ struct AddAgentSheet: View {
 
     private enum Phase: Equatable {
         case pickProvider
-        case browserLogin(AgentProvider) // oauthBrowser: 외부 브라우저 + 루프백/코드 입력
+        case browserLogin(AgentProvider) // oauthBrowser: 인증 시트 + 루프백/코드 입력
         case login(AgentProvider)        // oauthCode: WKWebView 콜백 code 캡처
         case apiKey(AgentProvider)       // apiKey: 사용자 키 붙여넣기
         case deviceFlow(AgentProvider)   // oauthDeviceFlow: user code 발급 + 폴링
@@ -45,6 +45,9 @@ struct AddAgentSheet: View {
     @State private var apiKeyText = ""
     /// 추가 완료 여부 — 성공 dismiss가 login_abandon으로 잘못 기록되지 않게 한다.
     @State private var completed = false
+    /// Claude 로그인 흐름. 시스템 인증 시트가 화면을 덮는 동안에도 살아 있어야 해서
+    /// 로그인 화면(BrowserLoginView)이 아니라 이 시트가 소유한다.
+    @State private var claudeLogin: ClaudeLoginCoordinator?
 
     var body: some View {
         NavigationStack {
@@ -71,7 +74,12 @@ struct AddAgentSheet: View {
         }
         .tint(Term.green)
         .onAppear { AnalyticsService.shared.log(.screenView(.addAgent)) }
-        .onDisappear { logAbandonIfNeeded() }
+        .onDisappear {
+            // 시스템 시트(인증 시트·Safari View)가 위를 덮을 때 불린 onDisappear는 이탈이 아니다.
+            guard claudeLogin?.isPresenting != true, !InAppSafari.isPresenting else { return }
+            claudeLogin?.cancel()
+            logAbandonIfNeeded()
+        }
     }
 
     /// 시트가 로그인 완료 없이 닫혔을 때 어느 단계에서 이탈했는지 기록한다.
@@ -166,19 +174,38 @@ struct AddAgentSheet: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
-    // MARK: 브라우저 로그인(Claude)
+    // MARK: 로그인(Claude — 앱 안 인증 시트)
 
+    @ViewBuilder
     private func browserLoginView(_ provider: AgentProvider) -> some View {
-        BrowserLoginView(
-            provider: provider,
+        if let claudeLogin {
+            BrowserLoginView(
+                provider: provider,
+                pkce: pkce,
+                loc: loc,
+                login: claudeLogin,
+                onManualCode: { code, state in
+                    // 콘솔 코드 페이지로 발급된 코드라 교환도 그 redirect_uri로 한다.
+                    phase = .exchanging
+                    Task {
+                        await exchange(provider: provider, code: code, state: state,
+                                       redirect: ClaudeOAuth.redirectURI)
+                    }
+                }
+            )
+        }
+    }
+
+    /// Claude 로그인 흐름을 만든다 — 결과(code/오류)를 이 시트의 phase로 잇는다.
+    private func makeClaudeLogin(_ provider: AgentProvider, pkce: PKCE) -> ClaudeLoginCoordinator {
+        ClaudeLoginCoordinator(
             pkce: pkce,
-            loc: loc,
             onCode: { code, state, redirect in
                 phase = .exchanging
                 Task { await exchange(provider: provider, code: code, state: state, redirect: redirect) }
             },
-            onError: { message in
-                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .browserWait, code: "browser"))
+            onError: { message, code in
+                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .browserWait, code: code))
                 phase = .failed(message)
             }
         )
@@ -191,7 +218,10 @@ struct AddAgentSheet: View {
         AnalyticsService.shared.log(.loginStart(provider: provider))
         switch provider.authKind {
         case .oauthBrowser:
-            pkce = PKCE()
+            let newPKCE = PKCE()
+            pkce = newPKCE
+            claudeLogin?.cancel()
+            claudeLogin = makeClaudeLogin(provider, pkce: newPKCE)
             phase = .browserLogin(provider)
         case .oauthCode:
             pkce = PKCE()
@@ -230,7 +260,10 @@ struct AddAgentSheet: View {
                     .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
 
                 if let url = provider.apiKeyURL {
-                    Link(destination: url) {
+                    // 앱 안 Safari View로 연다(키 발급 페이지는 로그인을 요구한다 — 외부 브라우저 금지).
+                    Button {
+                        InAppSafari.open(url)
+                    } label: {
                         HStack(spacing: 6) {
                             Text(">").foregroundStyle(Term.cyan)
                             Text("[ get api key ↗ ]").foregroundStyle(Term.cyan)
@@ -369,40 +402,27 @@ struct AddAgentSheet: View {
     }
 }
 
-// MARK: - 브라우저 로그인 화면 (Claude)
+// MARK: - 로그인 화면 (Claude)
 
-/// 외부 브라우저에서 로그인하고 code를 받아오는 화면.
+/// 앱 안의 인증 시트로 Claude에 로그인하고 code를 받아오는 화면.
 ///
-/// 인앱 웹뷰(WKWebView·SFSafariViewController 계열)는 `window.open` 팝업을 제대로
-/// 띄우지 못한다. claude.ai의 구글/애플 로그인 버튼이 바로 그 팝업 방식이라
-/// 인앱에서는 "로그인 중 오류" 화면만 나온다. 그래서 로그인 자체는 전체 브라우저에
-/// 맡기고, 결과만 두 경로 중 하나로 받는다:
-///  1. 루프백 자동 수신 — 앱이 띄운 `LoopbackCallbackServer`로 리다이렉트가 들어온다.
-///  2. 코드 붙여넣기 — 콘솔 코드 페이지에서 사용자가 복사해 온다(1이 실패할 때의 폴백).
-///
-/// 로그인(①)과 승인(②)을 분리하는 이유: 앱이 브라우저 뒤로 가면 약 30초 뒤 정지되어
-/// 루프백에 응답할 수 없다. 구글 로그인 전체를 한 흐름에서 하면 이 시간을 넘겨 Safari에
-/// "서버에 연결할 수 없음"이 뜬다(코드는 복귀 시 수신되지만 사용자는 실패로 오해한다).
-/// 승인만 따로 하면 몇 초라 유예 안에 끝나고 완료 페이지가 정상 표시된다.
+/// 흐름 자체(루프백 리스너 + ASWebAuthenticationSession)는 `ClaudeLoginCoordinator`가 맡고,
+/// 이 뷰는 버튼과 상태 표시만 한다. 결과는 두 경로 중 하나로 들어온다:
+///  1. 자동 — 승인하면 시트가 닫히고 코디네이터가 code를 넘긴다.
+///  2. 코드 붙여넣기 — 콘솔 코드 페이지(앱 안 Safari View)에서 사용자가 복사해 온다(1이 안 될 때의 폴백).
 private struct BrowserLoginView: View {
     let provider: AgentProvider
     let pkce: PKCE
     let loc: L10n
-    /// (code, state, 교환에 쓸 redirect_uri)
-    let onCode: (String, String, String) -> Void
-    let onError: (String) -> Void
+    let login: ClaudeLoginCoordinator
+    /// 수동 입력으로 받은 (code, state). 콘솔 콜백으로 발급된 코드다.
+    let onManualCode: (String, String) -> Void
 
-    private enum Stage { case intro, waiting, manual }
-
-    @Environment(\.openURL) private var openURL
+    private enum Stage { case intro, manual }
 
     @State private var stage: Stage = .intro
-    @State private var server: LoopbackCallbackServer?
-    @State private var loopbackRedirect: String?
     @State private var codeText = ""
     @State private var inlineError: String?
-    /// 브라우저로 나간 직후에도 잠시 살아 있어야 루프백 응답을 받을 수 있다.
-    @State private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
     var body: some View {
         ScrollView {
@@ -418,7 +438,6 @@ private struct BrowserLoginView: View {
 
                 switch stage {
                 case .intro: introSection
-                case .waiting: waitingSection
                 case .manual: manualSection
                 }
 
@@ -432,43 +451,37 @@ private struct BrowserLoginView: View {
             }
             .padding(16)
         }
-        .onDisappear { teardown() }
     }
 
-    // MARK: ① 로그인 / ② 연결 안내
+    // MARK: 로그인
 
     @ViewBuilder private var introSection: some View {
-        Text(loc.browserStepLogin)
+        Text(loc.browserSheetIntro)
             .font(.term(13)).foregroundStyle(Term.fg)
-        TerminalButton(title: loc.browserLoginOpen, color: Term.cyan) {
-            // 로그인만 시킨다 — 인가 파라미터가 없으니 앱은 아무것도 기다리지 않는다.
-            openURL(ClaudeOAuth.loginURL)
+
+        if login.isPresenting {
+            HStack(spacing: 8) {
+                TerminalSpinner(size: 12)
+                Text(loc.browserWaiting).font(.term(13)).foregroundStyle(Term.fg)
+                Spacer(minLength: 0)
+            }
+        } else {
+            TerminalButton(title: loc.browserSheetOpen, color: Term.green) {
+                Task { await login.start(ephemeral: false) }
+            }
+            if login.wasCancelled {
+                Text(loc.browserCancelledHint)
+                    .font(.term(12)).foregroundStyle(Term.dim)
+            }
+
+            Text(loc.browserOtherAccountHint)
+                .font(.term(12)).foregroundStyle(Term.dim)
+                .padding(.top, 6)
+            // Safari에 로그인된 계정을 쓰지 않는 세션 — 두 번째 계정을 추가할 때.
+            TerminalButton(title: loc.browserOtherAccount, color: Term.cyan, dashedBorder: true) {
+                Task { await login.start(ephemeral: true) }
+            }
         }
-
-        Text(loc.browserStepConnect)
-            .font(.term(13)).foregroundStyle(Term.fg)
-            .padding(.top, 6)
-        TerminalButton(title: loc.browserConnectStart, color: Term.green) {
-            Task { await startConnect() }
-        }
-
-        manualEntryLink
-    }
-
-    // MARK: 승인 대기(루프백)
-
-    @ViewBuilder private var waitingSection: some View {
-        HStack(spacing: 8) {
-            TerminalSpinner(size: 12)
-            Text(loc.browserWaiting).font(.term(13)).foregroundStyle(Term.fg)
-            Spacer(minLength: 0)
-        }
-        Text(loc.browserWaitingHint)
-            .font(.term(12)).foregroundStyle(Term.dim)
-        Text(loc.browserErrorPageNote)
-            .font(.term(12)).foregroundStyle(Term.yellow)
-
-        TerminalButton(title: loc.browserReopen, color: Term.cyan) { openAuthorize() }
 
         manualEntryLink
     }
@@ -492,8 +505,8 @@ private struct BrowserLoginView: View {
             .font(.term(13)).foregroundStyle(Term.fg)
 
         TerminalButton(title: loc.manualCodeGet, color: Term.cyan) {
-            // 콘솔 코드 페이지로 보낸다(같은 PKCE라 이미 로그인돼 있으면 승인만 하면 된다).
-            openURL(ProviderAuth.authorizeURL(provider, pkce: pkce))
+            // 콘솔 코드 페이지로 끝나는 인가 URL(같은 PKCE). 앱 안 Safari View로 연다.
+            InAppSafari.open(ProviderAuth.authorizeURL(provider, pkce: pkce))
         }
 
         HStack(spacing: 10) {
@@ -520,35 +533,6 @@ private struct BrowserLoginView: View {
         TerminalButton(title: loc.manualConnect, color: Term.green) { submitManual() }
     }
 
-    // MARK: 동작
-
-    /// ②: 루프백 리스너를 띄우고 인가 URL을 연다. 이 시점부터 앱은 응답을 기다린다.
-    private func startConnect() async {
-        guard server == nil, stage == .intro else { return }
-        inlineError = nil
-        let listener = LoopbackCallbackServer(expectedState: pkce.state) { code, state in
-            deliver(code: code, state: state, redirect: loopbackRedirect)
-        }
-        do {
-            let port = try await listener.start()
-            server = listener
-            loopbackRedirect = ClaudeOAuth.loopbackRedirectURI(port: port)
-            // 브라우저로 전환한 뒤에도 잠깐 살아 있어야 승인 직후의 리다이렉트에 응답할 수 있다.
-            bgTask = BackgroundActivity.begin(name: "oauth-loopback")
-            stage = .waiting
-            openAuthorize()
-        } catch {
-            // 리스너를 못 띄우면 자동 수신은 불가능하다 — 붙여넣기 흐름으로 전환한다.
-            listener.stop()
-            stage = .manual
-            inlineError = loc.browserOpenFailed
-        }
-    }
-
-    private func openAuthorize() {
-        openURL(ProviderAuth.authorizeURL(provider, pkce: pkce, redirect: loopbackRedirect))
-    }
-
     private func submitManual() {
         inlineError = nil
         guard let parsed = ClaudeOAuth.parseManualCode(codeText, fallbackState: pkce.state) else {
@@ -556,20 +540,7 @@ private struct BrowserLoginView: View {
             inlineError = loc.errCodeInvalid
             return
         }
-        // 콘솔 콜백으로 발급된 코드라 교환도 그 redirect_uri로 해야 한다.
-        deliver(code: parsed.code, state: parsed.state, redirect: nil)
-    }
-
-    private func deliver(code: String, state: String, redirect: String?) {
-        teardown()
-        onCode(code, state, redirect ?? ClaudeOAuth.redirectURI)
-    }
-
-    private func teardown() {
-        server?.stop()
-        server = nil
-        BackgroundActivity.end(bgTask)
-        bgTask = .invalid
+        onManualCode(parsed.code, parsed.state)
     }
 }
 
@@ -613,7 +584,11 @@ private struct DeviceFlowView: View {
                         .overlay(Rectangle().stroke(Term.dim.opacity(0.6), lineWidth: 1))
 
                     if let uri = verificationURI {
-                        Link(destination: uri) {
+                        // 앱 안 Safari View로 연다. 코드 입력칸이 시트에 가려지니 코드를 복사해 둔다.
+                        Button {
+                            if let userCode { UIPasteboard.general.string = userCode }
+                            InAppSafari.open(uri)
+                        } label: {
                             Text(loc.deviceFlowOpen)
                                 .font(.term(14, weight: .semibold))
                                 .foregroundStyle(Term.cyan)
@@ -652,10 +627,13 @@ private struct DeviceFlowView: View {
             userCode = device.userCode
             verificationURI = device.verificationURI
             let tokens = try await CopilotDeviceFlow.pollForToken(device)
+            // 승인 페이지가 아직 떠 있으면 닫는다(Safari View는 스스로 닫히지 않는다).
+            InAppSafari.close()
             onComplete(tokens)
         } catch is CancellationError {
             // 화면 이탈로 취소됨 — 무시.
         } catch {
+            InAppSafari.close()
             onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
     }

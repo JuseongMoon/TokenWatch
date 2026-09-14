@@ -8,7 +8,7 @@
 //
 //  ⚠️ 한계: WKUIDelegate가 없어 `window.open` 팝업이 열리지 않는다. 팝업으로 동작하는
 //     소셜 로그인(구글 "Continue with Google" 등)은 이 경로에서 실패한다. Claude는 그래서
-//     외부 브라우저 방식(BrowserLoginView + LoopbackCallbackServer)으로 옮겼다.
+//     앱 안 인증 시트 방식(ClaudeLoginCoordinator + LoopbackCallbackServer)으로 옮겼다.
 //
 
 import SwiftUI

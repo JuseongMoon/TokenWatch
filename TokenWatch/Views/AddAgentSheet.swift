@@ -121,13 +121,21 @@ struct AddAgentSheet: View {
     private var providerList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // 로그인·조회 방식은 각 provider 정책에 달려 있다 — 예고 없이 막힐 수 있음을 먼저 알린다.
+                // 로그인·조회 방식은 각 provider 정책에 달려 있다 — 예고 없이 막힐 수 있음과 감시 중임을 먼저 알린다.
                 TerminalBox(title: "NOTE", titleColor: Term.yellow,
                             borderColor: Term.dim.opacity(0.5), contentPadding: 12) {
-                    Text(loc.addAgentPolicyNotice)
-                        .font(.term(12))
-                        .foregroundStyle(Term.dim)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(loc.addAgentPolicyNotice)
+                            .font(.term(12))
+                            .foregroundStyle(Term.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // 서명: 주간 창 게이지의 초록 슬라임이 박스 오른쪽 아래에서 제자리 점프한다
+                        // (모션 줄이기면 정지 프레임, 보이스오버에서는 숨김).
+                        HStack {
+                            Spacer(minLength: 0)
+                            AnimatedPixelSpriteView(sprite: .slime, cell: 2)
+                        }
+                    }
                 }
 
                 HStack(spacing: 6) {

@@ -129,7 +129,7 @@ struct AddAgentSheet: View {
                             .font(.term(12))
                             .foregroundStyle(Term.dim)
                             .fixedSize(horizontal: false, vertical: true)
-                        // 서명: "토큰워치 개발팀" + 주간 창 게이지의 초록 슬라임이 박스 오른쪽 아래에서 제자리 점프한다
+                        // 서명: "토큰워치 팀" + 주간 창 게이지의 초록 슬라임이 박스 오른쪽 아래에서 제자리 점프한다
                         // (모션 줄이기면 정지 프레임, 슬라임은 보이스오버에서 숨김).
                         HStack(alignment: .bottom, spacing: 6) {
                             Spacer(minLength: 0)

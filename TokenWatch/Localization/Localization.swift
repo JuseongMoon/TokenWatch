@@ -349,11 +349,11 @@ struct L10n: Sendable {
     /// 제공자 선택 목록 맨 위 고지 — 로그인·조회 방식이 각 provider 정책에 달려 있어 예고 없이 막힐 수 있지만,
     /// 장애를 감시하고 있어 문제가 생기면 바로 고친다는 약속까지 함께 알린다.
     var addAgentPolicyNotice: String {
-        lang == .ko ? "로그인과 사용량 조회는 각 서비스의 정책을 따르고 있어서, 정책이 바뀌면 예고 없이 잠시 조회가 안 될 수도 있어요. 저희가 여러 방면으로 늘 살펴보고 있으니, 문제가 생기면 최대한 빨리 고쳐 둘게요."
-                    : "Sign-in and usage lookups follow each service's policies, so they might pause without notice when a policy changes. We're always keeping an eye on things from every angle, and we'll fix any issue as quickly as we can."
+        lang == .ko ? "로그인 및 사용량 조회는 각 제공업체의 정책에 의존하며, 정책 변경 시 예고 없이 중단될 수 있습니다. 장애는 여러 경로로 상시 모니터링 중이며, 문제 발생 시 신속히 대응합니다."
+                    : "Sign-in and usage lookups depend on each provider's policies and may stop working without notice when those change. Outages are monitored continuously across multiple signals; issues are addressed promptly."
     }
     /// 고지 박스 오른쪽 아래, 슬라임 앞에 붙는 서명.
-    var addAgentNoticeSignature: String { lang == .ko ? "토큰워치 개발팀" : "The TokenWatch team" }
+    var addAgentNoticeSignature: String { lang == .ko ? "토큰워치 팀" : "TokenWatch team" }
 
     // MARK: 인증 시트 로그인(앱 안 인증 시트 + 루프백, Claude 폴백: 코드 붙여넣기)
     func browserSheetIntro(provider: String) -> String {

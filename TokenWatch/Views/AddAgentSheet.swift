@@ -121,6 +121,15 @@ struct AddAgentSheet: View {
     private var providerList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // 로그인·조회 방식은 각 provider 정책에 달려 있다 — 예고 없이 막힐 수 있음을 먼저 알린다.
+                TerminalBox(title: "NOTE", titleColor: Term.yellow,
+                            borderColor: Term.dim.opacity(0.5), contentPadding: 12) {
+                    Text(loc.addAgentPolicyNotice)
+                        .font(.term(12))
+                        .foregroundStyle(Term.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 HStack(spacing: 6) {
                     Text("$").foregroundStyle(Term.dim)
                     Text("select a service to login")

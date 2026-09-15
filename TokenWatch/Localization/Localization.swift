@@ -345,6 +345,13 @@ struct L10n: Sendable {
     }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
 
+    // MARK: 에이전트 추가 화면 안내
+    /// 제공자 선택 목록 맨 위 고지 — 로그인·조회 방식이 각 provider 정책에 달려 있어 예고 없이 막힐 수 있다.
+    var addAgentPolicyNotice: String {
+        lang == .ko ? "현재 로그인 및 사용량 조회 방식은 각 제공업체의 정책에 따라 예고 없이 동작하지 않거나 조회가 중단될 수 있습니다."
+                    : "Sign-in and usage lookups follow each provider's current policies and may stop working without notice."
+    }
+
     // MARK: 인증 시트 로그인(앱 안 인증 시트 + 루프백, Claude 폴백: 코드 붙여넣기)
     func browserSheetIntro(provider: String) -> String {
         lang == .ko ? "\(provider) 계정으로 로그인하고 연결을 승인하세요. 로그인 창은 앱 안에서 열리고, 승인하면 자동으로 닫힙니다."

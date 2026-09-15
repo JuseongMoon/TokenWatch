@@ -100,7 +100,7 @@ enum DemoData {
     /// plan은 nil로 두어 상세 화면이 스냅샷의 planLabel을 쓰게 한다(실제 경로와 동일).
     static func accountInfo(for agent: Agent) -> AccountInfo {
         switch agent.provider {
-        case .openrouter, .deepseek, .poe, .elevenlabs:
+        case .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
             // API 키 방식 — 이메일·만료·갱신 개념이 없다.
             return AccountInfo(email: nil, plan: nil, scopes: [], expiresAt: nil,
                                canRefresh: false, accountId: nil)

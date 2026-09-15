@@ -85,9 +85,9 @@ struct ProviderExpansionTests {
     }
 
     @Test func providerCountMatchesExpectation() {
-        // 2026-08 정리 결과 7개 + 2026-09 Grok·Cursor 재도입.
-        // (Claude·Codex·Grok=OAuth, Copilot·Cursor=폴링 로그인, OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
-        #expect(AgentProvider.allCases.count == 9)
+        // 2026-08 정리 결과 7개 + 2026-09 Grok·Cursor 재도입, Kimi 추가.
+        // (Claude·Codex·Grok=OAuth, Copilot·Cursor=폴링 로그인, Kimi·OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
+        #expect(AgentProvider.allCases.count == 10)
     }
 
     // MARK: 저장 데이터 마이그레이션 (지원 종료 provider 걸러내기)

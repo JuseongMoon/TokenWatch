@@ -15,14 +15,17 @@ import Foundation
 extension OAuthTokens {
     /// 사용자가 붙여넣은 API 키를 자격증명으로 감싼다(refresh·만료 없음).
     /// 계정 이메일/플랜은 최초 usage 조회 응답에서 채워질 수 있으므로 여기선 선택.
-    static func apiKey(_ key: String, email: String? = nil, plan: String? = nil) -> OAuthTokens {
+    /// - Parameter accountId: provider별 부가 식별값(예: Kimi는 키가 통하는 API 호스트).
+    static func apiKey(_ key: String, email: String? = nil, plan: String? = nil,
+                       accountId: String? = nil) -> OAuthTokens {
         OAuthTokens(
             accessToken: key.trimmingCharacters(in: .whitespacesAndNewlines),
             refreshToken: nil,
             expiresAt: nil,
             scopes: [],
             accountEmail: email,
-            plan: plan
+            plan: plan,
+            accountId: accountId
         )
     }
 }

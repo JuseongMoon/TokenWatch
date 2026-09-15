@@ -260,6 +260,11 @@ struct AddAgentSheet: View {
                     .padding(12)
                     .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
 
+                if let hint = loc.apiKeyHint(provider: provider) {
+                    Text(hint)
+                        .font(.term(12)).foregroundStyle(Term.dim)
+                }
+
                 if let url = provider.apiKeyURL {
                     // 앱 안 Safari View로 연다(키 발급 페이지는 로그인을 요구한다 — 외부 브라우저 금지).
                     Button {
@@ -290,8 +295,15 @@ struct AddAgentSheet: View {
     }
 
     private func addWithAPIKey(provider: AgentProvider, key: String) async {
-        let tokens = ProviderAuth.credential(provider, apiKey: key)
-        await addOrFail(provider: provider, tokens: tokens)
+        do {
+            let tokens = try await ProviderAuth.credential(provider, apiKey: key)
+            await addOrFail(provider: provider, tokens: tokens)
+        } catch {
+            // code에는 원문 메시지 대신 에러 타입명만 — 키·URL 혼입 방지.
+            AnalyticsService.shared.log(.loginFail(provider: provider, stage: .apiKeyEntry,
+                                                   code: String(describing: type(of: error))))
+            phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
     }
 
     // MARK: 디바이스 플로우 (GitHub Copilot 등)

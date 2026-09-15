@@ -314,6 +314,19 @@ struct L10n: Sendable {
     func errTokenExchange(_ m: String) -> String { lang == .ko ? "토큰 교환 실패: \(m)" : "Token exchange failed: \(m)" }
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }
+    var errInvalidAPIKey: String {
+        lang == .ko ? "API 키가 올바르지 않습니다. 키를 다시 확인해 주세요." : "That API key isn't valid. Please check it and try again."
+    }
+    /// API 키 입력 화면에 provider별로 덧붙이는 안내 한 줄. 없으면 nil.
+    func apiKeyHint(provider: AgentProvider) -> String? {
+        switch provider {
+        case .kimi:
+            return lang == .ko ? "Kimi Code 콘솔에서 이 앱 전용 키를 새로 만들어 붙여넣으세요. 키로 쿼터를 사용할 수도 있습니다."
+                               : "Create a new key just for this app in the Kimi Code console. A key can also spend your quota."
+        case .claude, .codex, .copilot, .grok, .cursor, .openrouter, .deepseek, .poe, .elevenlabs:
+            return nil
+        }
+    }
     var errStateMismatch: String {
         lang == .ko ? "로그인 응답 검증에 실패했습니다(state 불일치). 다시 시도해 주세요."
                     : "Login response failed verification (state mismatch). Please try again."

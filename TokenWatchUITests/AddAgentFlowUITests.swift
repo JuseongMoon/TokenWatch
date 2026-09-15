@@ -3,7 +3,7 @@
 //  TokenWatchUITests
 //
 //  실제 앱을 구동해 add-agent 플로우를 end-to-end로 검증한다:
-//  메인 → 추가 → 9개 provider 목록 → apiKey 화면 → 가짜 키로 실제 네트워크 호출 → 카드 등장.
+//  메인 → 추가 → 10개 provider 목록 → apiKey 화면 → 가짜 키로 실제 네트워크 호출 → 카드 등장.
 //  (성공 값 매핑은 실제 유효 키가 필요하므로, 여기서는 플로우와 에러 경로까지 확인한다.)
 //
 
@@ -30,8 +30,8 @@ final class AddAgentFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["select a service to login"].waitForExistence(timeout: 5),
                       "provider 선택 화면이 떠야 함")
 
-        // 3) 지원 provider 9개가 전부 목록에 존재
-        for name in ["claude", "codex", "copilot", "grok", "cursor", "openrouter",
+        // 3) 지원 provider 10개가 전부 목록에 존재
+        for name in ["claude", "codex", "copilot", "grok", "cursor", "kimi", "openrouter",
                      "deepseek", "poe", "elevenlabs"] {
             XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 3),
                           "\(name) 행이 목록에 있어야 함")

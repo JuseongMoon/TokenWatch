@@ -45,9 +45,9 @@ struct AddAgentSheet: View {
     @State private var apiKeyText = ""
     /// 추가 완료 여부 — 성공 dismiss가 login_abandon으로 잘못 기록되지 않게 한다.
     @State private var completed = false
-    /// Claude 로그인 흐름. 시스템 인증 시트가 화면을 덮는 동안에도 살아 있어야 해서
+    /// 인증 시트 로그인 흐름(oauthBrowser). 시스템 인증 시트가 화면을 덮는 동안에도 살아 있어야 해서
     /// 로그인 화면(BrowserLoginView)이 아니라 이 시트가 소유한다.
-    @State private var claudeLogin: ClaudeLoginCoordinator?
+    @State private var browserLogin: OAuthBrowserLoginCoordinator?
 
     var body: some View {
         NavigationStack {
@@ -76,8 +76,8 @@ struct AddAgentSheet: View {
         .onAppear { AnalyticsService.shared.log(.screenView(.addAgent)) }
         .onDisappear {
             // 시스템 시트(인증 시트·Safari View)가 위를 덮을 때 불린 onDisappear는 이탈이 아니다.
-            guard claudeLogin?.isPresenting != true, !InAppSafari.isPresenting else { return }
-            claudeLogin?.cancel()
+            guard browserLogin?.isPresenting != true, !InAppSafari.isPresenting else { return }
+            browserLogin?.cancel()
             logAbandonIfNeeded()
         }
     }
@@ -174,31 +174,32 @@ struct AddAgentSheet: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
-    // MARK: 로그인(Claude — 앱 안 인증 시트)
+    // MARK: 로그인(앱 안 인증 시트 — oauthBrowser)
 
     @ViewBuilder
     private func browserLoginView(_ provider: AgentProvider) -> some View {
-        if let claudeLogin {
+        if let browserLogin {
             BrowserLoginView(
                 provider: provider,
                 pkce: pkce,
                 loc: loc,
-                login: claudeLogin,
+                login: browserLogin,
                 onManualCode: { code, state in
                     // 콘솔 코드 페이지로 발급된 코드라 교환도 그 redirect_uri로 한다.
                     phase = .exchanging
                     Task {
                         await exchange(provider: provider, code: code, state: state,
-                                       redirect: ClaudeOAuth.redirectURI)
+                                       redirect: ProviderAuth.manualCodeRedirect(provider))
                     }
                 }
             )
         }
     }
 
-    /// Claude 로그인 흐름을 만든다 — 결과(code/오류)를 이 시트의 phase로 잇는다.
-    private func makeClaudeLogin(_ provider: AgentProvider, pkce: PKCE) -> ClaudeLoginCoordinator {
-        ClaudeLoginCoordinator(
+    /// 인증 시트 로그인 흐름을 만든다 — 결과(code/오류)를 이 시트의 phase로 잇는다.
+    private func makeBrowserLogin(_ provider: AgentProvider, pkce: PKCE) -> OAuthBrowserLoginCoordinator {
+        OAuthBrowserLoginCoordinator(
+            provider: provider,
             pkce: pkce,
             onCode: { code, state, redirect in
                 phase = .exchanging
@@ -220,8 +221,8 @@ struct AddAgentSheet: View {
         case .oauthBrowser:
             let newPKCE = PKCE()
             pkce = newPKCE
-            claudeLogin?.cancel()
-            claudeLogin = makeClaudeLogin(provider, pkce: newPKCE)
+            browserLogin?.cancel()
+            browserLogin = makeBrowserLogin(provider, pkce: newPKCE)
             phase = .browserLogin(provider)
         case .oauthCode:
             pkce = PKCE()
@@ -402,19 +403,20 @@ struct AddAgentSheet: View {
     }
 }
 
-// MARK: - 로그인 화면 (Claude)
+// MARK: - 로그인 화면 (앱 안 인증 시트)
 
-/// 앱 안의 인증 시트로 Claude에 로그인하고 code를 받아오는 화면.
+/// 앱 안의 인증 시트로 로그인하고 code를 받아오는 화면(oauthBrowser).
 ///
-/// 흐름 자체(루프백 리스너 + ASWebAuthenticationSession)는 `ClaudeLoginCoordinator`가 맡고,
+/// 흐름 자체(루프백 리스너 + ASWebAuthenticationSession)는 `OAuthBrowserLoginCoordinator`가 맡고,
 /// 이 뷰는 버튼과 상태 표시만 한다. 결과는 두 경로 중 하나로 들어온다:
 ///  1. 자동 — 승인하면 시트가 닫히고 코디네이터가 code를 넘긴다.
 ///  2. 코드 붙여넣기 — 콘솔 코드 페이지(앱 안 Safari View)에서 사용자가 복사해 온다(1이 안 될 때의 폴백).
+///     이 폴백은 `ProviderAuth.manualCodeRedirect`가 있는 provider에만 보인다.
 private struct BrowserLoginView: View {
     let provider: AgentProvider
     let pkce: PKCE
     let loc: L10n
-    let login: ClaudeLoginCoordinator
+    let login: OAuthBrowserLoginCoordinator
     /// 수동 입력으로 받은 (code, state). 콘솔 콜백으로 발급된 코드다.
     let onManualCode: (String, String) -> Void
 
@@ -456,7 +458,7 @@ private struct BrowserLoginView: View {
     // MARK: 로그인
 
     @ViewBuilder private var introSection: some View {
-        Text(loc.browserSheetIntro)
+        Text(loc.browserSheetIntro(provider: provider.displayName))
             .font(.term(13)).foregroundStyle(Term.fg)
 
         if login.isPresenting {
@@ -483,7 +485,9 @@ private struct BrowserLoginView: View {
             }
         }
 
-        manualEntryLink
+        if ProviderAuth.manualCodeRedirect(provider) != nil {
+            manualEntryLink
+        }
     }
 
     @ViewBuilder private var manualEntryLink: some View {
@@ -506,7 +510,9 @@ private struct BrowserLoginView: View {
 
         TerminalButton(title: loc.manualCodeGet, color: Term.cyan) {
             // 콘솔 코드 페이지로 끝나는 인가 URL(같은 PKCE). 앱 안 Safari View로 연다.
-            InAppSafari.open(ProviderAuth.authorizeURL(provider, pkce: pkce))
+            if let redirect = ProviderAuth.manualCodeRedirect(provider) {
+                InAppSafari.open(ProviderAuth.authorizeURL(provider, pkce: pkce, redirect: redirect))
+            }
         }
 
         HStack(spacing: 10) {

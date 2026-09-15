@@ -177,6 +177,52 @@ struct OAuthBrowserLoginTests {
         #expect(LoopbackCallbackServer.target(ofRequestLine: "POST /callback HTTP/1.1") == nil)
         #expect(LoopbackCallbackServer.target(ofRequestLine: "garbage") == nil)
     }
+
+    // MARK: 인증 시트 로그인 디스패치 (provider 공용화 회귀 고정)
+
+    /// 공용화 뒤에도 Claude의 루프백 redirect와 인가 URL은 그대로여야 한다(실기기에서 검증된 흐름).
+    @MainActor
+    @Test func Claude_루프백_redirect와_인가_URL이_공용화_전과_같다() {
+        #expect(ProviderAuth.loopbackRedirectURI(.claude, port: 54321) == "http://localhost:54321/callback")
+        let pkce = PKCE()
+        let loopback = "http://localhost:54321/callback"
+        #expect(ProviderAuth.authorizeURL(.claude, pkce: pkce, redirect: loopback)
+                == ClaudeOAuth.authorizeURL(pkce: pkce, redirect: loopback))
+        // 수동 코드 폴백: 콘솔 redirect를 명시해 만든 URL이 예전 기본값(redirect 생략)과 같다.
+        #expect(ProviderAuth.authorizeURL(.claude, pkce: pkce, redirect: ProviderAuth.manualCodeRedirect(.claude))
+                == ClaudeOAuth.authorizeURL(pkce: pkce))
+    }
+
+    @MainActor
+    @Test func 수동_코드_폴백은_Claude에만_있다() {
+        for p in AgentProvider.allCases {
+            if p == .claude {
+                #expect(ProviderAuth.manualCodeRedirect(p) == ClaudeOAuth.redirectURI)
+            } else {
+                #expect(ProviderAuth.manualCodeRedirect(p) == nil, "\(p)")
+            }
+        }
+    }
+
+    /// 인증 시트 방식 provider는 루프백 redirect가 반드시 있어야 한다(없으면 로그인 창이 열리지 않는다).
+    @MainActor
+    @Test func 인증_시트_provider는_모두_루프백_redirect가_있다() {
+        for p in AgentProvider.allCases where p.authKind == .oauthBrowser {
+            #expect(ProviderAuth.loopbackRedirectURI(p, port: 1234) != nil, "\(p)")
+        }
+    }
+
+    @MainActor
+    @Test func 폴백이_없는_provider의_실패_안내는_코드_입력을_권하지_않는다() {
+        for lang in [Lang.ko, Lang.en] {
+            let loc = L10n(lang: lang)
+            let plain = loc.browserSessionFailed(manualFallback: false)
+            #expect(!plain.contains("코드"))
+            #expect(!plain.lowercased().contains("code"))
+            #expect(loc.browserSessionFailed(manualFallback: true) != plain)
+        }
+        #expect(L10n(lang: .en).browserSheetIntro(provider: "Claude").contains("Claude"))
+    }
 }
 
 /// 조건이 참이 될 때까지 잠깐 기다린다(최대 약 2초).

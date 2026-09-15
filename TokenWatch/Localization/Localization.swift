@@ -332,10 +332,10 @@ struct L10n: Sendable {
     }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
 
-    // MARK: Claude 로그인(앱 안 인증 시트 + 루프백, 폴백: 코드 붙여넣기)
-    var browserSheetIntro: String {
-        lang == .ko ? "Claude 계정으로 로그인하고 연결을 승인하세요. 로그인 창은 앱 안에서 열리고, 승인하면 자동으로 닫힙니다."
-                    : "Sign in with your Claude account and approve the connection. The sign-in window opens inside the app and closes automatically once you approve."
+    // MARK: 인증 시트 로그인(앱 안 인증 시트 + 루프백, Claude 폴백: 코드 붙여넣기)
+    func browserSheetIntro(provider: String) -> String {
+        lang == .ko ? "\(provider) 계정으로 로그인하고 연결을 승인하세요. 로그인 창은 앱 안에서 열리고, 승인하면 자동으로 닫힙니다."
+                    : "Sign in with your \(provider) account and approve the connection. The sign-in window opens inside the app and closes automatically once you approve."
     }
     var browserSheetOpen: String { lang == .ko ? "[ 로그인 ]" : "[ sign in ]" }
     var browserOtherAccountHint: String {
@@ -347,9 +347,14 @@ struct L10n: Sendable {
     var browserCancelledHint: String {
         lang == .ko ? "로그인 창이 닫혔습니다. 다시 시도할 수 있습니다." : "The sign-in window was closed. You can try again."
     }
-    var browserSessionFailed: String {
-        lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도하거나 코드를 직접 입력해 주세요."
-                    : "Couldn't open the sign-in window. Try again or enter the code manually."
+    /// - Parameter manualFallback: 코드 붙여넣기 폴백이 있는 provider면 true — 그 방법도 함께 안내한다.
+    func browserSessionFailed(manualFallback: Bool) -> String {
+        guard manualFallback else {
+            return lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도해 주세요."
+                               : "Couldn't open the sign-in window. Please try again."
+        }
+        return lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도하거나 코드를 직접 입력해 주세요."
+                           : "Couldn't open the sign-in window. Try again or enter the code manually."
     }
     var browserManualHint: String {
         lang == .ko ? "자동으로 연결되지 않나요?" : "Not connecting automatically?"

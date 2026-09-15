@@ -6,8 +6,8 @@
 //
 //  로그인·인증과 관련된 페이지(Copilot 승인, API 키 발급, Claude 수동 코드)를 외부 Safari로
 //  보내면 App Store 가이드라인 4("taken to the default web browser to sign in")에 걸린다.
-//  그래서 시스템 Safari View로 앱 위에 띄운다. 자동 콜백이 필요한 Claude 로그인은
-//  `ClaudeLoginCoordinator`(ASWebAuthenticationSession)가 따로 맡는다.
+//  그래서 시스템 Safari View로 앱 위에 띄운다. 자동 콜백이 필요한 인증 시트 로그인은
+//  `OAuthBrowserLoginCoordinator`(ASWebAuthenticationSession)가 따로 맡는다.
 //
 //  시트(pageSheet)로 띄운다: 전체 화면으로 덮으면 아래 SwiftUI 화면의 onDisappear가 불려
 //  폴링 task가 취소되거나 이탈 분석이 잘못 기록될 수 있다.

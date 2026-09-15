@@ -7,7 +7,7 @@
 //  왜 필요한가: claude.ai 인가 서버는 커스텀 스킴 redirect_uri를 거부한다(실기기 확인).
 //  그래서 앱 안의 인증 시트(ASWebAuthenticationSession)에서 authorize를 열고, 인가 서버가
 //  리다이렉트하는 `http://localhost:<포트>/callback`을 앱이 직접 받아 code를 얻는다.
-//  (Claude Code CLI의 기본 로그인 흐름과 같은 구조다.) 흐름 전체는 `ClaudeLoginCoordinator`가 맡는다.
+//  (Claude Code CLI의 기본 로그인 흐름과 같은 구조다.) 흐름 전체는 `OAuthBrowserLoginCoordinator`가 맡는다.
 //
 //  응답은 `302 Found` → `tokenwatch://login-complete?code=…&state=…`이다. 인증 시트는 콜백
 //  스킴으로 가는 리다이렉트를 보면 스스로 닫히므로, 이 응답이 브라우저에 닿아야 로그인 창이 닫힌다.

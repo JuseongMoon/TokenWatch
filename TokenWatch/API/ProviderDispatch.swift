@@ -71,6 +71,8 @@ enum ProviderAuth {
     // 아래 authorizeURL/parseCallback/exchange/refresh는 OAuth 인가코드 방식
     // provider(oauthBrowser=Claude, oauthCode=Codex) 전용이다.
     // apiKey/deviceFlow provider는 AddAgentSheet가 이 경로로 오지 않도록 라우팅한다.
+    // switch에 `default:`를 두지 않는다 — 새 provider를 추가하며 여기를 빠뜨리면 컴파일 에러로
+    // 드러나야 한다(빠뜨린 채 빌드되면 로그인 크래시나 "로그인 필요"가 조용히 난다).
 
     /// - Parameter redirect: 인증 시트 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
     ///   (Claude 전용. Codex는 콜백이 고정이라 무시한다.)
@@ -78,7 +80,8 @@ enum ProviderAuth {
         switch provider {
         case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce, redirect: redirect)
         case .codex: return CodexOAuth.authorizeURL(pkce: pkce)
-        default: preconditionFailure("authorizeURL는 OAuth provider 전용입니다: \(provider)")
+        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs:
+            preconditionFailure("authorizeURL는 OAuth provider 전용입니다: \(provider)")
         }
     }
 
@@ -86,7 +89,24 @@ enum ProviderAuth {
         switch provider {
         case .claude: return ClaudeOAuth.parseCallback(url)
         case .codex: return CodexOAuth.parseCallback(url)
-        default: return nil
+        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 인증 시트 로그인(oauthBrowser)의 루프백 redirect_uri. 루프백 콜백을 쓰지 않는 provider는 nil.
+    static func loopbackRedirectURI(_ provider: AgentProvider, port: UInt16) -> String? {
+        switch provider {
+        case .claude: return ClaudeOAuth.loopbackRedirectURI(port: port)
+        case .codex, .copilot, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 코드 붙여넣기 폴백이 쓰는 redirect_uri(콘솔 코드 페이지). 이 폴백이 없는 provider는 nil이고,
+    /// 인증 시트 로그인 화면은 그때 수동 입력 버튼을 숨긴다.
+    static func manualCodeRedirect(_ provider: AgentProvider) -> String? {
+        switch provider {
+        case .claude: return ClaudeOAuth.redirectURI
+        case .codex, .copilot, .openrouter, .deepseek, .poe, .elevenlabs: return nil
         }
     }
 
@@ -97,7 +117,7 @@ enum ProviderAuth {
         case .claude:
             return try await ClaudeOAuth.exchange(code: code, state: state, pkce: pkce, redirect: redirect)
         case .codex: return try await CodexOAuth.exchange(code: code, state: state, pkce: pkce)
-        default: throw OAuthError.notAuthenticated
+        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
         }
     }
 
@@ -105,8 +125,8 @@ enum ProviderAuth {
         switch provider {
         case .claude: return try await ClaudeOAuth.refresh(tokens: tokens)
         case .codex: return try await CodexOAuth.refresh(tokens: tokens)
-        // apiKey/세션 자격증명은 refresh 개념이 없다(만료 없음). 401 시 재로그인 유도.
-        default: throw OAuthError.notAuthenticated
+        // device flow·API 키 자격증명은 refresh 개념이 없다(만료 없음). 401 시 재로그인 유도.
+        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
         }
     }
 

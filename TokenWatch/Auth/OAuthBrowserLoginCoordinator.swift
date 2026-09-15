@@ -1,12 +1,13 @@
 //
-//  ClaudeLoginCoordinator.swift
+//  OAuthBrowserLoginCoordinator.swift
 //  TokenWatch
 //
-//  Claude 로그인 한 번(인증 시트 표시 → code 수신)을 끝까지 책임지는 객체.
+//  인증 시트 로그인(`AuthKind.oauthBrowser`) 한 번(인증 시트 표시 → code 수신)을 끝까지 책임지는 객체.
+//  provider마다 다른 부분(루프백 redirect_uri 형식·authorize URL)은 `ProviderAuth`가 정한다.
 //
 //  구조: 앱이 루프백 리스너(`LoopbackCallbackServer`)를 띄우고, 앱 위에 뜨는 시스템 인증
 //  시트(ASWebAuthenticationSession — Safari 엔진)에서 authorize를 연다. 승인되면 인가 서버가
-//  `http://localhost:PORT/callback`으로 보내고, 리스너가 302로 `tokenwatch://login-complete`에
+//  루프백 주소(예: `http://localhost:PORT/callback`)로 보내고, 리스너가 302로 `tokenwatch://login-complete`에
 //  보내면 시트가 스스로 닫힌다. 리스너 전달과 시트 콜백 중 먼저 온 것 하나만 쓴다.
 //
 //  왜 외부 Safari가 아닌가: 앱 밖 기본 브라우저로 로그인시키면 App Store 가이드라인 4로 거절된다.
@@ -28,12 +29,13 @@ import UIKit
 
 @MainActor
 @Observable
-final class ClaudeLoginCoordinator {
+final class OAuthBrowserLoginCoordinator {
     /// 시스템 인증 시트가 떠 있는 동안 true. 이 동안의 onDisappear는 이탈이 아니다.
     private(set) var isPresenting = false
     /// 사용자가 시트를 닫아 마지막 시도가 끝났다(오류 아님) — 안내 문구용.
     private(set) var wasCancelled = false
 
+    private let provider: AgentProvider
     private let pkce: PKCE
     private let onCode: (_ code: String, _ state: String, _ redirect: String) -> Void
     private let onError: (_ message: String, _ analyticsCode: String) -> Void
@@ -48,9 +50,11 @@ final class ClaudeLoginCoordinator {
     /// 시도마다 증가 — 늦게 도착한 이전 시도의 콜백을 버린다.
     @ObservationIgnored private var attempt = 0
 
-    init(pkce: PKCE,
+    init(provider: AgentProvider,
+         pkce: PKCE,
          onCode: @escaping (_ code: String, _ state: String, _ redirect: String) -> Void,
          onError: @escaping (_ message: String, _ analyticsCode: String) -> Void) {
+        self.provider = provider
         self.pkce = pkce
         self.onCode = onCode
         self.onError = onError
@@ -65,7 +69,6 @@ final class ClaudeLoginCoordinator {
         wasCancelled = false
         attempt += 1
         let current = attempt
-        let loc = L10n(lang: currentLang())
 
         let listener = LoopbackCallbackServer(expectedState: pkce.state) { [weak self] code, state in
             self?.receive(code: code, state: state, attempt: current)
@@ -76,7 +79,7 @@ final class ClaudeLoginCoordinator {
         } catch {
             listener.stop()
             guard current == attempt else { return }
-            fail(loc.browserSessionFailed, analyticsCode: "loopback_listen")
+            fail(sessionFailedMessage, analyticsCode: "loopback_listen")
             return
         }
         // 리스너를 띄우는 사이 시트가 닫혔다면(cancel) 이 시도는 버린다.
@@ -85,10 +88,14 @@ final class ClaudeLoginCoordinator {
             return
         }
         server = listener
-        let redirect = ClaudeOAuth.loopbackRedirectURI(port: port)
+        guard let redirect = ProviderAuth.loopbackRedirectURI(provider, port: port) else {
+            // 루프백 콜백을 쓰지 않는 provider — AddAgentSheet가 이 경로로 보내지 않는다.
+            fail(sessionFailedMessage, analyticsCode: "unsupported_provider")
+            return
+        }
         self.redirect = redirect
 
-        let url = ProviderAuth.authorizeURL(.claude, pkce: pkce, redirect: redirect)
+        let url = ProviderAuth.authorizeURL(provider, pkce: pkce, redirect: redirect)
         let authSession = ASWebAuthenticationSession(
             url: url, callbackURLScheme: LoopbackCallbackServer.sessionCallbackScheme
         ) { @Sendable [weak self] callbackURL, error in
@@ -107,7 +114,7 @@ final class ClaudeLoginCoordinator {
         isPresenting = true
         if !authSession.start() {
             isPresenting = false
-            fail(loc.browserSessionFailed, analyticsCode: "auth_session_start")
+            fail(sessionFailedMessage, analyticsCode: "auth_session_start")
         }
     }
 
@@ -160,9 +167,14 @@ final class ClaudeLoginCoordinator {
             stopServer()
         } else {
             // 분석에는 에러 코드 정수만 싣는다(원문 메시지 금지).
-            fail(L10n(lang: currentLang()).browserSessionFailed,
-                 analyticsCode: "auth_session_\(errorCode ?? -1)")
+            fail(sessionFailedMessage, analyticsCode: "auth_session_\(errorCode ?? -1)")
         }
+    }
+
+    /// 로그인 창을 열지 못했을 때의 안내. 코드 붙여넣기 폴백이 있는 provider만 그 방법을 함께 권한다.
+    private var sessionFailedMessage: String {
+        L10n(lang: currentLang())
+            .browserSessionFailed(manualFallback: ProviderAuth.manualCodeRedirect(provider) != nil)
     }
 
     private func fail(_ message: String, analyticsCode: String) {

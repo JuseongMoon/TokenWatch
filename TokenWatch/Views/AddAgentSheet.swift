@@ -550,17 +550,19 @@ private struct BrowserLoginView: View {
     }
 }
 
-// MARK: - 디바이스 플로우 화면
+// MARK: - 폴링 로그인 화면 (device flow류)
 
-/// OAuth device flow: user code 발급 → 브라우저 승인 → 토큰 폴링.
-/// (현재 소비자는 GitHub Copilot 하나라 `CopilotDeviceFlow`를 직접 호출한다.
-///  두 번째 device-flow provider가 생기면 ProviderAuth로 디스패치를 일반화한다.)
+/// 폴링 로그인: 승인 페이지를 앱 안 Safari View로 열고 → 승인될 때까지 토큰을 폴링한다.
+/// Copilot은 발급받은 코드를 페이지에 입력하고, 코드가 없는 흐름은 페이지를 곧바로 열어 승인만 받는다.
+/// provider별 차이는 `ProviderAuth.startPollingLogin`이 정한다.
 private struct DeviceFlowView: View {
     let provider: AgentProvider
     let loc: L10n
     let onComplete: (OAuthTokens) -> Void
     let onError: (String) -> Void
 
+    /// 로그인이 시작돼 승인 페이지 정보를 받았다.
+    @State private var started = false
     @State private var userCode: String?
     @State private var verificationURI: URL?
 
@@ -576,26 +578,31 @@ private struct DeviceFlowView: View {
                 }
                 .font(.term(13))
 
-                if let code = userCode {
-                    Text(loc.deviceFlowPrompt)
-                        .font(.term(13)).foregroundStyle(Term.dim)
+                if started {
+                    if let code = userCode {
+                        Text(loc.deviceFlowPrompt)
+                            .font(.term(13)).foregroundStyle(Term.dim)
 
-                    Text(code)
-                        .font(.term(28, weight: .bold))
-                        .foregroundStyle(Term.green)
-                        .tracking(4)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
-                        .overlay(Rectangle().stroke(Term.dim.opacity(0.6), lineWidth: 1))
+                        Text(code)
+                            .font(.term(28, weight: .bold))
+                            .foregroundStyle(Term.green)
+                            .tracking(4)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .overlay(Rectangle().stroke(Term.dim.opacity(0.6), lineWidth: 1))
+                    } else {
+                        Text(loc.pollingLoginPrompt(provider: provider.displayName))
+                            .font(.term(13)).foregroundStyle(Term.dim)
+                    }
 
                     if let uri = verificationURI {
-                        // 앱 안 Safari View로 연다. 코드 입력칸이 시트에 가려지니 코드를 복사해 둔다.
+                        // 앱 안 Safari View로 연다. 코드 입력칸이 시트에 가려지니 코드가 있으면 복사해 둔다.
                         Button {
                             if let userCode { UIPasteboard.general.string = userCode }
                             InAppSafari.open(uri)
                         } label: {
-                            Text(loc.deviceFlowOpen)
+                            Text(userCode == nil ? loc.pollingLoginOpen : loc.deviceFlowOpen)
                                 .font(.term(14, weight: .semibold))
                                 .foregroundStyle(Term.cyan)
                                 .frame(maxWidth: .infinity)
@@ -629,15 +636,22 @@ private struct DeviceFlowView: View {
 
     private func run() async {
         do {
-            let device = try await CopilotDeviceFlow.requestDeviceCode()
-            userCode = device.userCode
-            verificationURI = device.verificationURI
-            let tokens = try await CopilotDeviceFlow.pollForToken(device)
+            let login = try await ProviderAuth.startPollingLogin(provider)
+            userCode = login.userCode
+            verificationURI = login.verificationURL
+            started = true
+            // 입력할 코드가 없는 흐름은 승인 페이지를 바로 연다(코드가 있으면 코드를 본 뒤 사용자가 연다).
+            if login.userCode == nil, let url = login.verificationURL {
+                InAppSafari.open(url)
+            }
+            let tokens = try await login.poll()
             // 승인 페이지가 아직 떠 있으면 닫는다(Safari View는 스스로 닫히지 않는다).
             InAppSafari.close()
             onComplete(tokens)
         } catch is CancellationError {
             // 화면 이탈로 취소됨 — 무시.
+        } catch let error as URLError where error.code == .cancelled {
+            // 화면 이탈로 진행 중이던 요청이 끊김 — 취소와 같다(로그인 실패로 기록하지 않는다).
         } catch {
             InAppSafari.close()
             onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)

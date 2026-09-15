@@ -146,6 +146,30 @@ enum ProviderAuth {
     static func credential(_ provider: AgentProvider, apiKey: String) -> OAuthTokens {
         OAuthTokens.apiKey(apiKey)
     }
+
+    /// 폴링 로그인(`.oauthDeviceFlow`)을 시작한다 — 승인 페이지 정보와, 승인될 때까지 토큰을 기다리는 폴러.
+    /// 다른 인증 방식 provider는 AddAgentSheet가 이 경로로 보내지 않는다.
+    static func startPollingLogin(_ provider: AgentProvider) async throws -> PollingLogin {
+        switch provider {
+        case .copilot:
+            let device = try await CopilotDeviceFlow.requestDeviceCode()
+            return PollingLogin(userCode: device.userCode, verificationURL: device.verificationURI,
+                                poll: { try await CopilotDeviceFlow.pollForToken(device) })
+        case .claude, .codex, .grok, .openrouter, .deepseek, .poe, .elevenlabs:
+            throw OAuthError.notAuthenticated
+        }
+    }
+}
+
+/// 폴링 로그인 한 번: 승인 페이지를 앱 안 Safari View로 열어 두고, 승인될 때까지 토큰을 폴링한다.
+/// Copilot은 발급받은 코드를 페이지에 입력하고, 페이지 승인만으로 끝나는 흐름은 코드가 없다.
+struct PollingLogin {
+    /// 승인 페이지에 입력할 코드. 코드 없이 승인만 하는 흐름은 nil.
+    let userCode: String?
+    /// 승인(로그인) 페이지.
+    let verificationURL: URL?
+    /// 승인될 때까지 기다려 토큰을 돌려준다. 만료·거부 시 throw, 화면 이탈(Task 취소) 시 CancellationError.
+    let poll: () async throws -> OAuthTokens
 }
 
 // MARK: - Usage 디스패치 + 공통 오케스트레이션

@@ -381,6 +381,12 @@ struct L10n: Sendable {
         lang == .ko ? "코드가 만료되었습니다. 다시 시도해 주세요." : "The code expired. Please try again."
     }
     var deviceFlowDenied: String { lang == .ko ? "인증이 거부되었습니다." : "Authorization was denied." }
+    /// 코드 입력 없이 로그인 페이지 승인만으로 끝나는 폴링 로그인(예: Cursor).
+    func pollingLoginPrompt(provider: String) -> String {
+        lang == .ko ? "앱 안에 열린 \(provider) 로그인 페이지에서 로그인하고 승인하세요. 승인되면 자동으로 연결됩니다."
+                    : "Sign in on the \(provider) page opened in the app and approve. It connects automatically once approved."
+    }
+    var pollingLoginOpen: String { lang == .ko ? "[ 로그인 페이지 열기 ↗ ]" : "[ open sign-in page ↗ ]" }
 
     // MARK: Codex 사용량 라벨
     var codexAdditionalLimit: String { lang == .ko ? "추가 한도" : "Additional limit" }

@@ -64,6 +64,14 @@ struct ProviderExpansionTests {
         }
     }
 
+    /// GA4 유저 속성 `providers`는 축약 태그를 쉼표로 잇는다 — 겹치면 구분이 안 되고, 36자를 넘으면 잘린다.
+    @MainActor
+    @Test func analyticsShortTagsAreUniqueAndFitUserPropertyLimit() {
+        let tags = AgentProvider.allCases.map(\.analyticsShortTag)
+        #expect(Set(tags).count == tags.count, "축약 태그 중복")
+        #expect(tags.joined(separator: ",").count <= 36)
+    }
+
     @Test func apiKeyProvidersExposeKeyIssuanceURL() {
         for p in AgentProvider.allCases where p.authKind == .apiKey {
             #expect(p.apiKeyURL != nil, "\(p)는 apiKey 방식인데 apiKeyURL이 없음")
@@ -77,9 +85,9 @@ struct ProviderExpansionTests {
     }
 
     @Test func providerCountMatchesExpectation() {
-        // 2026-08 정리 결과 스냅샷: 공식 API 기반 7개만 남긴다.
-        // (Claude·Codex=OAuth, Copilot=device flow, OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
-        #expect(AgentProvider.allCases.count == 7)
+        // 2026-08 정리 결과 7개 + 2026-09 Grok 재도입.
+        // (Claude·Codex·Grok=OAuth, Copilot=device flow, OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
+        #expect(AgentProvider.allCases.count == 8)
     }
 
     // MARK: 저장 데이터 마이그레이션 (지원 종료 provider 걸러내기)
@@ -100,9 +108,9 @@ struct ProviderExpansionTests {
 
     @Test func decodeAgentsKeepsAllSupportedProviders() {
         // 지원 provider만 있으면 그대로 전부 유지.
-        let json = #"[{"id":"44444444-4444-4444-4444-444444444444","provider":"poe"}]"#
+        let json = #"[{"id":"44444444-4444-4444-4444-444444444444","provider":"poe"},{"id":"55555555-5555-5555-5555-555555555555","provider":"grok"}]"#
         let (kept, dropped) = AgentStore.decodeAgents(from: Data(json.utf8))
-        #expect(kept.count == 1)
+        #expect(kept.map(\.provider) == [.poe, .grok])
         #expect(dropped.isEmpty)
     }
 
@@ -161,9 +169,9 @@ struct ProviderExpansionTests {
     // MARK: 상태 페이지 메타데이터 불변식
 
     /// 머신리더블 엔드포인트가 없는(=메인 목록에 상태를 안 띄우는) provider 집합.
-    private let noStatusSource: Set<AgentProvider> = [.openrouter]
+    private let noStatusSource: Set<AgentProvider> = [.openrouter, .grok]
 
-    @Test func onlyOpenRouterLacksStatusSource() {
+    @Test func onlyOpenRouterAndGrokLackStatusSource() {
         for p in AgentProvider.allCases {
             if noStatusSource.contains(p) {
                 #expect(p.statusSource == nil, "\(p)는 상태 소스가 없어야 함")

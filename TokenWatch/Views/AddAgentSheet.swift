@@ -4,7 +4,7 @@
 //
 //  + 버튼 시트(터미널 스타일): 제공자 선택 → 로그인 → 토큰 교환 → 추가.
 //  로그인 방식은 provider의 authKind로 갈린다:
-//   - oauthBrowser(Claude): 앱 안 인증 시트 + 루프백 콜백 자동 수신(폴백: 코드 붙여넣기)
+//   - oauthBrowser(Claude·Grok): 앱 안 인증 시트 + 루프백 콜백 자동 수신(Claude만 폴백: 코드 붙여넣기)
 //   - oauthCode(Codex): 인앱 WKWebView에서 콜백 가로채기
 //   - oauthDeviceFlow(Copilot) / apiKey(그 외)
 //

@@ -5,7 +5,7 @@
 //  에이전트별 OAuth 토큰을 Keychain에 저장/로드하고, 만료 시 자동 갱신해
 //  유효한 토큰을 제공한다.
 //
-//  ⚠️ refresh token 로테이션 주의 — Claude/Codex 모두 갱신 응답에 "새" refresh token을
+//  ⚠️ refresh token 로테이션 주의 — Claude/Codex/Grok 모두 갱신 응답에 "새" refresh token을
 //     실어 보내고 직전 토큰을 무효화한다. 즉 갱신 왕복은 원자적이어야 한다:
 //     서버가 로테이션했는데 우리가 새 토큰을 저장하지 못하면 그 자격증명은 영구히 죽는다
 //     (이후 모든 갱신이 invalid_grant → 재로그인 외 복구 불가).

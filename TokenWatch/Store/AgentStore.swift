@@ -27,7 +27,7 @@ final class AgentStore {
     private(set) var loadingIDs: Set<UUID> = []
 
     /// provider별 서비스 운영 상태(정상/장애/점검). 사용량과 별개 축이라 provider 단위로
-    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter)는 키가 없으며,
+    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter, Grok)는 키가 없으며,
     /// UI는 그 경우를 "알 수 없음"으로 취급한다.
     private(set) var serviceStatus: [AgentProvider: ServiceHealth] = [:]
     /// provider별 마지막 "성공한" 상태 조회 시각 — 짧은 간격 중복 조회를 막는 스로틀 기준.

@@ -20,7 +20,7 @@
 //   - Atlassian Statuspage: GET /api/v2/components.json → components[].status (소문자_언더스코어)
 //  (Instatus·Better Stack 파서는 해당 플랫폼을 쓰던 provider들이 정리되면서 함께 제거했다.)
 //
-//  머신리더블 엔드포인트가 없는 provider(OpenRouter)는 statusSource가
+//  머신리더블 엔드포인트가 없는 provider(OpenRouter, Grok)는 statusSource가
 //  nil이라 이 클라이언트를 타지 않고, 메인 목록에 상태 점을 아예 그리지 않는다.
 //
 

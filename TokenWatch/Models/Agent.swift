@@ -15,7 +15,7 @@ enum AuthKind: Sendable {
     /// 주의: 이 방식은 `window.open` 팝업으로 동작하는 소셜 로그인(구글 등)을 지원하지 못한다.
     case oauthCode
     /// 앱 안의 시스템 인증 시트(ASWebAuthenticationSession)로 로그인 → 루프백 콜백으로 code를
-    /// 자동 수신하거나, 사용자가 콘솔 페이지의 코드를 복사해 붙여넣는다. (Claude)
+    /// 자동 수신한다. Claude는 폴백으로 콘솔 페이지의 코드를 복사해 붙여넣을 수도 있다. (Claude, Grok)
     /// Safari 엔진이라 팝업 기반 소셜 로그인(구글)도 동작한다. 케이스 이름은 분석 값과 묶여 있어 유지한다.
     case oauthBrowser
     /// user code를 발급받아 브라우저에서 승인 → 토큰을 폴링한다. (예: GitHub Copilot)
@@ -40,10 +40,13 @@ enum UsageCategory: Sendable {
 /// 선불 크레딧만 보여주던 창작 계열(fal/Stability/Recraft/Luma/Runway/D-ID/HeyGen/
 /// Leonardo)은 2026-08 정리에서 제거했다 — 동작이 애매한 provider를 노출하지 않기 위함.
 /// (제거된 rawValue를 가진 저장 데이터는 `AgentStore.load()`가 걸러낸다.)
+/// Grok은 2026-09에 방식을 바꿔 다시 넣었다: grok.com 쿠키 대신 공식 Grok CLI의 OAuth와,
+/// 잘못된 토큰에 401을 돌려주는 JSON 사용량 엔드포인트를 쓴다(로그인 만료를 감지할 수 있다).
 enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     case claude
     case codex
     case copilot
+    case grok
     case openrouter
     case deepseek
     case poe
@@ -57,6 +60,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: return "Claude"
         case .codex: return "Codex"
         case .copilot: return "Copilot"
+        case .grok: return "Grok"
         case .openrouter: return "OpenRouter"
         case .deepseek: return "DeepSeek"
         case .poe: return "Poe"
@@ -70,6 +74,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: return "sparkle"
         case .codex: return "chevron.left.forwardslash.chevron.right"
         case .copilot: return "curlybraces"
+        case .grok: return "x.square.fill"
         case .openrouter: return "arrow.triangle.branch"
         case .deepseek: return "brain"
         case .poe: return "bubble.left.and.bubble.right"
@@ -83,6 +88,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: return .orange
         case .codex: return .green
         case .copilot: return .teal
+        case .grok: return .gray
         case .openrouter: return .mint
         case .deepseek: return .pink
         case .poe: return .indigo
@@ -96,6 +102,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: return "[C]"
         case .codex:  return "[X]"
         case .copilot: return "[cp]"
+        case .grok: return "[gr]"
         case .openrouter: return "[or]"
         case .deepseek: return "[ds]"
         case .poe: return "[P]"
@@ -109,6 +116,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: return Term.yellow
         case .codex:  return Term.cyan
         case .copilot: return Term.magenta
+        case .grok: return Term.fg
         case .openrouter: return Term.green
         case .deepseek: return Term.pink
         case .poe: return Term.teal
@@ -119,7 +127,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 이 provider의 로그인/인증 방식. `AddAgentSheet`가 이 값으로 UI를 분기한다.
     var authKind: AuthKind {
         switch self {
-        case .claude: return .oauthBrowser
+        case .claude, .grok: return .oauthBrowser
         case .codex: return .oauthCode
         case .copilot: return .oauthDeviceFlow
         case .openrouter, .deepseek, .poe, .elevenlabs: return .apiKey
@@ -129,8 +137,9 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 이 provider가 보여주는 사용량의 성격(구독 잔여 vs 개발자 API 크레딧).
     var usageCategory: UsageCategory {
         switch self {
-        // ElevenLabs=구독 문자 할당량, Copilot=구독 프리미엄 요청, Poe=구독 컴퓨트 포인트 잔액.
-        case .claude, .codex, .copilot, .poe, .elevenlabs: return .subscription
+        // ElevenLabs=구독 문자 할당량, Copilot=구독 프리미엄 요청, Grok=구독 주간 사용량 풀,
+        // Poe=구독 컴퓨트 포인트 잔액.
+        case .claude, .codex, .copilot, .grok, .poe, .elevenlabs: return .subscription
         // 개발자 API 선불 크레딧 잔액.
         case .openrouter, .deepseek: return .apiCredit
         }
@@ -139,7 +148,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     /// apiKey 방식일 때 "키 발급 페이지" 안내 링크. 그 외에는 nil.
     var apiKeyURL: URL? {
         switch self {
-        case .claude, .codex, .copilot: return nil
+        case .claude, .codex, .copilot, .grok: return nil
         case .openrouter: return URL(string: "https://openrouter.ai/settings/keys")
         case .deepseek: return URL(string: "https://platform.deepseek.com/api_keys")
         case .poe: return URL(string: "https://poe.com/api_key")
@@ -153,6 +162,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude:     return URL(string: "https://status.claude.com")
         case .codex:      return URL(string: "https://status.openai.com")
         case .copilot:    return URL(string: "https://www.githubstatus.com")
+        case .grok:       return URL(string: "https://status.x.ai")
         case .openrouter: return URL(string: "https://status.openrouter.ai")
         case .deepseek:   return URL(string: "https://status.deepseek.com")
         case .poe:        return URL(string: "https://status.poe.com")
@@ -161,7 +171,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     /// 서비스 운영 상태를 자동 조회할 공개 JSON 엔드포인트(+플랫폼). 없으면 nil.
-    /// nil인 provider(OpenRouter=turbo-stream 전용이라 머신리더블 엔드포인트 없음)는
+    /// nil인 provider(OpenRouter=turbo-stream 전용이라 머신리더블 엔드포인트 없음,
+    /// Grok=status.x.ai가 Cloudflare로 자동 조회를 막음)는
     /// 메인 목록에 상태를 표시하지 않고, 상세에서만 "알 수 없음"으로 표기한다.
     var statusSource: ServiceStatusSource? {
         func atlassian(_ host: String) -> ServiceStatusSource {
@@ -179,7 +190,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .poe:        return atlassian("status.poe.com")
         case .elevenlabs: return atlassian("status.elevenlabs.io")
         // 신뢰할 만한 머신리더블 엔드포인트 없음.
-        case .openrouter: return nil
+        case .openrouter, .grok: return nil
         }
     }
 }

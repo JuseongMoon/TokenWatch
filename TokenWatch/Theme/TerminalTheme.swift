@@ -21,6 +21,7 @@ enum Term {
     static let magenta = Color(red: 0.80, green: 0.52, blue: 0.90)    // #CC85E6 provider 구분색
     static let pink   = Color(red: 0.95, green: 0.45, blue: 0.65)     // #F273A6 provider 구분색
     static let teal   = Color(red: 0.30, green: 0.78, blue: 0.70)     // #4CC7B3 provider 구분색
+    static let blue   = Color(red: 0.40, green: 0.62, blue: 0.95)     // #669EF2 provider 구분색
     static let track  = Color(red: 0.14, green: 0.17, blue: 0.13)     // 게이지 빈 칸 배경(거의 안 씀)
     static let graveGray = Color(white: 0.22)                         // #383838 전체이상 — 검정에 가까운 회색(정적·점멸 없음, 배경과는 구별)
     static let signalCaution = Color(red: 1.0, green: 0.84, blue: 0.10) // #FFD61A 신호등 '주의' 전용 쨍한 노랑(공용 yellow와 분리)

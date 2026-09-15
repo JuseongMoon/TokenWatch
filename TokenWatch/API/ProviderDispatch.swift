@@ -83,7 +83,7 @@ enum ProviderAuth {
         case .grok:
             guard let redirect else { preconditionFailure("Grok authorizeURL에는 루프백 redirect가 필요합니다") }
             return GrokOAuth.authorizeURL(pkce: pkce, redirect: redirect)
-        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs:
+        case .copilot, .cursor, .openrouter, .deepseek, .poe, .elevenlabs:
             preconditionFailure("authorizeURL는 OAuth provider 전용입니다: \(provider)")
         }
     }
@@ -93,7 +93,7 @@ enum ProviderAuth {
         case .claude: return ClaudeOAuth.parseCallback(url)
         case .codex: return CodexOAuth.parseCallback(url)
         // Grok 콜백은 루프백 리스너가 직접 파싱한다(웹뷰 가로채기 경로가 아니다).
-        case .grok, .copilot, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        case .grok, .copilot, .cursor, .openrouter, .deepseek, .poe, .elevenlabs: return nil
         }
     }
 
@@ -102,7 +102,7 @@ enum ProviderAuth {
         switch provider {
         case .claude: return ClaudeOAuth.loopbackRedirectURI(port: port)
         case .grok: return GrokOAuth.loopbackRedirectURI(port: port)
-        case .codex, .copilot, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        case .codex, .copilot, .cursor, .openrouter, .deepseek, .poe, .elevenlabs: return nil
         }
     }
 
@@ -111,7 +111,7 @@ enum ProviderAuth {
     static func manualCodeRedirect(_ provider: AgentProvider) -> String? {
         switch provider {
         case .claude: return ClaudeOAuth.redirectURI
-        case .codex, .grok, .copilot, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        case .codex, .grok, .copilot, .cursor, .openrouter, .deepseek, .poe, .elevenlabs: return nil
         }
     }
 
@@ -126,7 +126,7 @@ enum ProviderAuth {
             // 루프백으로 받은 code만 있다(코드 붙여넣기 폴백 없음).
             guard let redirect else { throw OAuthError.notAuthenticated }
             return try await GrokOAuth.exchange(code: code, pkce: pkce, redirect: redirect)
-        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
+        case .copilot, .cursor, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
         }
     }
 
@@ -136,7 +136,8 @@ enum ProviderAuth {
         case .codex: return try await CodexOAuth.refresh(tokens: tokens)
         case .grok: return try await GrokOAuth.refresh(tokens: tokens)
         // device flow·API 키 자격증명은 refresh 개념이 없다(만료 없음). 401 시 재로그인 유도.
-        case .copilot, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
+        // Cursor v1도 refresh 없이 토큰(약 60일)이 만료되면 다시 로그인한다.
+        case .copilot, .cursor, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
         }
     }
 
@@ -155,6 +156,10 @@ enum ProviderAuth {
             let device = try await CopilotDeviceFlow.requestDeviceCode()
             return PollingLogin(userCode: device.userCode, verificationURL: device.verificationURI,
                                 poll: { try await CopilotDeviceFlow.pollForToken(device) })
+        case .cursor:
+            let handshake = CursorAuth.makeHandshake()
+            return PollingLogin(userCode: nil, verificationURL: handshake.loginURL,
+                                poll: { try await CursorAuth.completeLogin(handshake) })
         case .claude, .codex, .grok, .openrouter, .deepseek, .poe, .elevenlabs:
             throw OAuthError.notAuthenticated
         }
@@ -182,6 +187,7 @@ enum ProviderUsage {
         case .codex: return try await CodexUsageClient.fetch(tokens: tokens)
         case .copilot: return try await CopilotUsageClient.fetch(tokens: tokens)
         case .grok: return try await GrokUsageClient.fetch(tokens: tokens)
+        case .cursor: return try await CursorUsageClient.fetch(tokens: tokens)
         case .openrouter: return try await OpenRouterUsageClient.fetch(tokens: tokens)
         case .deepseek: return try await DeepSeekUsageClient.fetch(tokens: tokens)
         case .poe: return try await PoeUsageClient.fetch(tokens: tokens)
@@ -219,7 +225,7 @@ enum ProviderUsage {
             //  "no usage data"만 남는다.)
             guard !windows.isEmpty else { throw UsageError.noWindows }
 
-            // 사용량 응답에 플랜 라벨이 실려 오는 provider(Grok, 선택 필드)는 토큰(Keychain)의 plan에
+            // 사용량 응답에 플랜 라벨이 실려 오는 provider(Grok·Cursor)는 토큰(Keychain)의 plan에
             // 반영한다. 추가 요청 없이 매 조회에 따라오므로 수동/자동을 가리지 않는다. 없으면 기존 값 유지.
             if let livePlan = usage.plan, livePlan != tokens.plan {
                 tokens.plan = livePlan
@@ -262,6 +268,8 @@ enum ProviderUsage {
         switch provider {
         case .grok:
             return try await GrokUsageClient.fetchUsage(tokens: tokens)
+        case .cursor:
+            return try await CursorUsageClient.fetchUsage(tokens: tokens)
         case .claude, .codex, .copilot, .openrouter, .deepseek, .poe, .elevenlabs:
             return (try await fetchWindows(provider, tokens: tokens), nil)
         }

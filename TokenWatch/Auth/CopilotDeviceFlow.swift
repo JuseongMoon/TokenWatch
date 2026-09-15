@@ -122,6 +122,8 @@ enum CopilotDeviceFlow {
 enum DeviceFlowError: LocalizedError {
     case expired
     case denied
+    /// 코드 없는 폴링 로그인(Cursor)이 승인을 기다리다 시간이 다 됐다.
+    case timedOut
     case http(String)
 
     var errorDescription: String? {
@@ -129,6 +131,7 @@ enum DeviceFlowError: LocalizedError {
         switch self {
         case .expired: return loc.deviceFlowExpired
         case .denied:  return loc.deviceFlowDenied
+        case .timedOut: return loc.pollingLoginTimedOut
         case .http(let m): return m
         }
     }

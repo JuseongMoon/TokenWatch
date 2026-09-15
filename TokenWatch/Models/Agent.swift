@@ -18,7 +18,7 @@ enum AuthKind: Sendable {
     /// 자동 수신한다. Claude는 폴백으로 콘솔 페이지의 코드를 복사해 붙여넣을 수도 있다. (Claude, Grok)
     /// Safari 엔진이라 팝업 기반 소셜 로그인(구글)도 동작한다. 케이스 이름은 분석 값과 묶여 있어 유지한다.
     case oauthBrowser
-    /// user code를 발급받아 브라우저에서 승인 → 토큰을 폴링한다. (예: GitHub Copilot)
+    /// 승인 페이지를 앱 안 Safari View로 열고 토큰을 폴링한다. Copilot은 user code를 입력하고, Cursor는 페이지 승인만 한다.
     case oauthDeviceFlow
     /// 사용자가 발급한 API 키를 직접 붙여넣는다. (예: ElevenLabs/OpenRouter)
     case apiKey
@@ -42,11 +42,14 @@ enum UsageCategory: Sendable {
 /// (제거된 rawValue를 가진 저장 데이터는 `AgentStore.load()`가 걸러낸다.)
 /// Grok은 2026-09에 방식을 바꿔 다시 넣었다: grok.com 쿠키 대신 공식 Grok CLI의 OAuth와,
 /// 잘못된 토큰에 401을 돌려주는 JSON 사용량 엔드포인트를 쓴다(로그인 만료를 감지할 수 있다).
+/// Cursor도 2026-09에 다시 넣었다: 쿠키 캡처 대신 Cursor CLI와 같은 로그인(페이지 승인 + 폴링)과, 세션이
+/// 없으면 401을 주는 대시보드 사용량 요약(usage-summary)을 쓴다. 공식 API는 아니다.
 enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     case claude
     case codex
     case copilot
     case grok
+    case cursor
     case openrouter
     case deepseek
     case poe
@@ -61,6 +64,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex: return "Codex"
         case .copilot: return "Copilot"
         case .grok: return "Grok"
+        case .cursor: return "Cursor"
         case .openrouter: return "OpenRouter"
         case .deepseek: return "DeepSeek"
         case .poe: return "Poe"
@@ -75,6 +79,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex: return "chevron.left.forwardslash.chevron.right"
         case .copilot: return "curlybraces"
         case .grok: return "x.square.fill"
+        case .cursor: return "cursorarrow.rays"
         case .openrouter: return "arrow.triangle.branch"
         case .deepseek: return "brain"
         case .poe: return "bubble.left.and.bubble.right"
@@ -89,6 +94,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex: return .green
         case .copilot: return .teal
         case .grok: return .gray
+        case .cursor: return .blue
         case .openrouter: return .mint
         case .deepseek: return .pink
         case .poe: return .indigo
@@ -103,6 +109,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex:  return "[X]"
         case .copilot: return "[cp]"
         case .grok: return "[gr]"
+        case .cursor: return "[cr]"
         case .openrouter: return "[or]"
         case .deepseek: return "[ds]"
         case .poe: return "[P]"
@@ -117,6 +124,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex:  return Term.cyan
         case .copilot: return Term.magenta
         case .grok: return Term.fg
+        case .cursor: return Term.blue
         case .openrouter: return Term.green
         case .deepseek: return Term.pink
         case .poe: return Term.teal
@@ -129,7 +137,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .claude, .grok: return .oauthBrowser
         case .codex: return .oauthCode
-        case .copilot: return .oauthDeviceFlow
+        case .copilot, .cursor: return .oauthDeviceFlow
         case .openrouter, .deepseek, .poe, .elevenlabs: return .apiKey
         }
     }
@@ -138,8 +146,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     var usageCategory: UsageCategory {
         switch self {
         // ElevenLabs=구독 문자 할당량, Copilot=구독 프리미엄 요청, Grok=구독 주간 사용량 풀,
-        // Poe=구독 컴퓨트 포인트 잔액.
-        case .claude, .codex, .copilot, .grok, .poe, .elevenlabs: return .subscription
+        // Cursor=구독 월간 사용량 풀, Poe=구독 컴퓨트 포인트 잔액.
+        case .claude, .codex, .copilot, .grok, .cursor, .poe, .elevenlabs: return .subscription
         // 개발자 API 선불 크레딧 잔액.
         case .openrouter, .deepseek: return .apiCredit
         }
@@ -148,7 +156,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     /// apiKey 방식일 때 "키 발급 페이지" 안내 링크. 그 외에는 nil.
     var apiKeyURL: URL? {
         switch self {
-        case .claude, .codex, .copilot, .grok: return nil
+        case .claude, .codex, .copilot, .grok, .cursor: return nil
         case .openrouter: return URL(string: "https://openrouter.ai/settings/keys")
         case .deepseek: return URL(string: "https://platform.deepseek.com/api_keys")
         case .poe: return URL(string: "https://poe.com/api_key")
@@ -163,6 +171,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codex:      return URL(string: "https://status.openai.com")
         case .copilot:    return URL(string: "https://www.githubstatus.com")
         case .grok:       return URL(string: "https://status.x.ai")
+        case .cursor:     return URL(string: "https://status.cursor.com")
         case .openrouter: return URL(string: "https://status.openrouter.ai")
         case .deepseek:   return URL(string: "https://status.deepseek.com")
         case .poe:        return URL(string: "https://status.poe.com")
@@ -184,6 +193,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude:     return atlassian("status.claude.com")
         case .codex:      return atlassian("status.openai.com")
         case .copilot:    return atlassian("www.githubstatus.com")
+        case .cursor:     return atlassian("status.cursor.com")
         // status.deepseek.com은 지역 DNS 제한으로 해석 실패할 수 있어, 전 세계에서
         // 뜨는 원 호스트를 직접 조회한다(동일 페이지).
         case .deepseek:   return atlassian("deepseek.statuspage.io")

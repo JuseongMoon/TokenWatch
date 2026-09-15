@@ -104,7 +104,7 @@ enum DemoData {
             // API 키 방식 — 이메일·만료·갱신 개념이 없다.
             return AccountInfo(email: nil, plan: nil, scopes: [], expiresAt: nil,
                                canRefresh: false, accountId: nil)
-        case .claude, .codex, .copilot, .grok:
+        case .claude, .codex, .copilot, .grok, .cursor:
             return AccountInfo(email: accountEmail, plan: nil,
                                scopes: ["user:inference", "user:profile"],
                                expiresAt: Date().addingTimeInterval(21 * 24 * 3600),

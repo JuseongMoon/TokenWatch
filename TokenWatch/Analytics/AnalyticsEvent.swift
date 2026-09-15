@@ -199,13 +199,14 @@ enum AnalyticsEvent {
 }
 
 extension AgentProvider {
-    /// 유저 속성 `providers`용 축약 태그 — GA4 속성값 36자 제한 대응(8종 전부여도 20자).
+    /// 유저 속성 `providers`용 축약 태그 — GA4 속성값 36자 제한 대응(9종 전부여도 23자).
     var analyticsShortTag: String {
         switch self {
         case .claude: return "c"
         case .codex: return "x"
         case .copilot: return "cp"
         case .grok: return "gr"
+        case .cursor: return "cr"
         case .openrouter: return "or"
         case .deepseek: return "ds"
         case .poe: return "p"

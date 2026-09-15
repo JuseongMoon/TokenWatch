@@ -295,6 +295,20 @@ extension ISO8601DateFormatter {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
+
+    /// RFC 3339 시각을 소수 초 자릿수(없음·밀리초·마이크로초)와 무관하게 읽는다.
+    static func tokenwatchDate(from raw: String) -> Date? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let date = tokenwatch.date(from: text) { return date }
+        if let date = tokenwatchNoFraction.date(from: text) { return date }
+        // 포매터가 소수 자릿수를 거부하는 경우: 소수 초를 떼어 파싱한 뒤 다시 더한다.
+        guard let dot = text.firstIndex(of: "."),
+              let zone = text[dot...].firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" }),
+              let base = tokenwatchNoFraction.date(from: String(text[..<dot]) + String(text[zone...])),
+              let fraction = Double("0" + text[dot..<zone])
+        else { return nil }
+        return base.addingTimeInterval(fraction)
+    }
 }
 
 // MARK: - 응답 -> UI 창 매핑

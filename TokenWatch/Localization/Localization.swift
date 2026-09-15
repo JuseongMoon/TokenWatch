@@ -387,6 +387,9 @@ struct L10n: Sendable {
                     : "Sign in on the \(provider) page opened in the app and approve. It connects automatically once approved."
     }
     var pollingLoginOpen: String { lang == .ko ? "[ 로그인 페이지 열기 ↗ ]" : "[ open sign-in page ↗ ]" }
+    var pollingLoginTimedOut: String {
+        lang == .ko ? "로그인 대기 시간이 지났습니다. 다시 시도해 주세요." : "Sign-in timed out. Please try again."
+    }
 
     // MARK: Codex 사용량 라벨
     var codexAdditionalLimit: String { lang == .ko ? "추가 한도" : "Additional limit" }

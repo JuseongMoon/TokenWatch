@@ -85,19 +85,19 @@ struct ProviderExpansionTests {
     }
 
     @Test func providerCountMatchesExpectation() {
-        // 2026-08 정리 결과 7개 + 2026-09 Grok 재도입.
-        // (Claude·Codex·Grok=OAuth, Copilot=device flow, OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
-        #expect(AgentProvider.allCases.count == 8)
+        // 2026-08 정리 결과 7개 + 2026-09 Grok·Cursor 재도입.
+        // (Claude·Codex·Grok=OAuth, Copilot·Cursor=폴링 로그인, OpenRouter·DeepSeek·Poe·ElevenLabs=API키)
+        #expect(AgentProvider.allCases.count == 9)
     }
 
     // MARK: 저장 데이터 마이그레이션 (지원 종료 provider 걸러내기)
 
     @Test func decodeAgentsDropsUnsupportedProviders() {
-        // 구버전 저장 데이터에 지원 종료된 provider(cursor)가 섞여 있어도
+        // 구버전 저장 데이터에 지원 종료된 provider(windsurf)가 섞여 있어도
         // 나머지 에이전트는 살아남고, 걸러진 ID는 고아 정리 대상으로 반환돼야 한다.
         let json = #"""
         [{"id":"11111111-1111-1111-1111-111111111111","provider":"claude","accountLabel":"pro"},
-         {"id":"22222222-2222-2222-2222-222222222222","provider":"cursor"},
+         {"id":"22222222-2222-2222-2222-222222222222","provider":"windsurf"},
          {"id":"33333333-3333-3333-3333-333333333333","provider":"codex","accountLabel":"dev@x.io"}]
         """#
         let (kept, dropped) = AgentStore.decodeAgents(from: Data(json.utf8))
@@ -108,9 +108,9 @@ struct ProviderExpansionTests {
 
     @Test func decodeAgentsKeepsAllSupportedProviders() {
         // 지원 provider만 있으면 그대로 전부 유지.
-        let json = #"[{"id":"44444444-4444-4444-4444-444444444444","provider":"poe"},{"id":"55555555-5555-5555-5555-555555555555","provider":"grok"}]"#
+        let json = #"[{"id":"44444444-4444-4444-4444-444444444444","provider":"poe"},{"id":"55555555-5555-5555-5555-555555555555","provider":"grok"},{"id":"66666666-6666-6666-6666-666666666666","provider":"cursor"}]"#
         let (kept, dropped) = AgentStore.decodeAgents(from: Data(json.utf8))
-        #expect(kept.map(\.provider) == [.poe, .grok])
+        #expect(kept.map(\.provider) == [.poe, .grok, .cursor])
         #expect(dropped.isEmpty)
     }
 

@@ -2,9 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Claude 로그인: 루프백 리스너가 code를 받으면 tokenwatch://login-complete로 302 리다이렉트하고,
-	     인증 시트(ASWebAuthenticationSession)가 이 스킴을 보고 스스로 닫힌다. 시트는 등록 없이도
-	     스킴을 가로채지만, 시트 밖에서 열려도 앱으로 돌아오도록 등록해 둔다. 별도 핸들러는 없다. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.ScienceFiction.TokenWatch.refresh</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -16,25 +17,19 @@
 			</array>
 		</dict>
 	</array>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>com.ScienceFiction.TokenWatch.refresh</string>
-	</array>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>fetch</string>
-	</array>
-	<!-- Firebase Analytics 최소 수집 구성: IDFV 수집 끔(식별자는 무작위 앱 인스턴스 ID만),
-	     광고 관련 동의 전부 거부, screen_view는 수동 로깅(자동은 SwiftUI에서 무의미). -->
 	<key>FirebaseAutomaticScreenReportingEnabled</key>
 	<false/>
-	<key>GOOGLE_ANALYTICS_IDFV_COLLECTION_ENABLED</key>
+	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS</key>
 	<false/>
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE</key>
 	<false/>
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_USER_DATA</key>
 	<false/>
-	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS</key>
+	<key>GOOGLE_ANALYTICS_IDFV_COLLECTION_ENABLED</key>
 	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

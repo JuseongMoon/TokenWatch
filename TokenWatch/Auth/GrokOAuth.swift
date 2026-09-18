@@ -65,8 +65,9 @@ enum GrokOAuth {
         } catch let error as OAuthError {
             switch error {
             // 교환 단계의 invalid_grant는 "코드 만료/재사용"이다 — 재로그인 안내 대신 코드 문구로.
-            case .refreshRevoked: throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errCodeExpired)
-            case .refreshFailed(let message): throw OAuthError.exchangeFailed(message)
+            case .refreshRevoked:
+                throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errCodeExpired, code: "invalid_grant")
+            case .refreshFailed(let message, let code): throw OAuthError.exchangeFailed(message, code: code)
             default: throw error
             }
         }
@@ -100,10 +101,11 @@ enum GrokOAuth {
         do {
             response = try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {
-            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription))
+            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription),
+                                           code: "parse")
         }
         guard !response.access_token.isEmpty else {
-            throw OAuthError.refreshFailed("empty access_token")
+            throw OAuthError.refreshFailed("empty access_token", code: "parse")
         }
         let refreshToken = response.refresh_token.flatMap { $0.isEmpty ? nil : $0 } ?? previous?.refreshToken
         let idToken = response.id_token.flatMap { $0.isEmpty ? nil : $0 } ?? previous?.idToken
@@ -124,7 +126,7 @@ enum GrokOAuth {
         if status == 400 || status == 401, message.contains("invalid_grant") {
             return .refreshRevoked
         }
-        return .refreshFailed("HTTP \(status): \(message)")
+        return .refreshFailed("HTTP \(status): \(message)", code: LoginFailureCode.http(status: status, body: body))
     }
 
     /// `application/x-www-form-urlencoded` 본문. `A-Za-z0-9-._~`만 그대로 두고 나머지는 전부 퍼센트 인코딩한다.

@@ -19,8 +19,8 @@ struct LoginWebView: UIViewRepresentable {
     let startURL: URL
     /// 콜백에서 (code, state)를 뽑으면 호출.
     var onCode: ((String, String) -> Void)? = nil
-    /// 로드 실패 시.
-    var onError: ((String) -> Void)? = nil
+    /// 로드 실패 시 (표시 문구, 분석 코드 `webview_<n>`).
+    var onError: ((_ message: String, _ analyticsCode: String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(provider: provider, onCode: onCode, onError: onError)
@@ -42,12 +42,12 @@ struct LoginWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         let provider: AgentProvider
         let onCode: ((String, String) -> Void)?
-        let onError: ((String) -> Void)?
+        let onError: ((_ message: String, _ analyticsCode: String) -> Void)?
         private var finished = false
 
         init(provider: AgentProvider,
              onCode: ((String, String) -> Void)?,
-             onError: ((String) -> Void)?) {
+             onError: ((_ message: String, _ analyticsCode: String) -> Void)?) {
             self.provider = provider
             self.onCode = onCode
             self.onError = onError
@@ -73,7 +73,7 @@ struct LoginWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             guard !finished else { return }
-            onError?(error.localizedDescription)
+            onError?(error.localizedDescription, LoginFailureCode.webview(error))
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -81,7 +81,7 @@ struct LoginWebView: UIViewRepresentable {
             guard !finished else { return }
             let nsError = error as NSError
             if nsError.code == NSURLErrorCancelled { return }
-            onError?(error.localizedDescription)
+            onError?(error.localizedDescription, LoginFailureCode.webview(error))
         }
     }
 }

@@ -167,7 +167,8 @@ final class OAuthBrowserLoginCoordinator {
             stopServer()
         } else {
             // 분석에는 에러 코드 정수만 싣는다(원문 메시지 금지).
-            fail(sessionFailedMessage, analyticsCode: "auth_session_\(errorCode ?? -1)")
+            // 코드 규칙(`[a-z0-9_]`)에 맞게 부호를 떼고, 코드가 없으면 other로 둔다.
+            fail(sessionFailedMessage, analyticsCode: errorCode.map { "auth_session_\(abs($0))" } ?? LoginFailureCode.other)
         }
     }
 

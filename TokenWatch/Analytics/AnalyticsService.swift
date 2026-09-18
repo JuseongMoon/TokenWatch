@@ -6,6 +6,7 @@
 //  - GoogleService-Info.plist가 번들에 없으면 전부 no-op — plist 미동봉 빌드에서도 안전.
 //  - DEBUG 빌드는 -FIRDebugEnabled 실행 인자(DebugView 검증) 때만 수집 — 개발 노이즈 차단.
 //  - 옵트아웃(설정 PRIVACY): 기본 ON, 끄면 SDK 수집 자체를 중지하고 래퍼에서도 원천 차단.
+//  - login_fail은 같은 게이트로 로그인 실패 진단 보고(LoginFailureReporter)에도 보낸다.
 //
 
 import Foundation
@@ -68,6 +69,10 @@ final class AnalyticsService {
     }
 
     func log(_ event: AnalyticsEvent) {
+        // 로그인 실패 진단 보고 — Firebase 구성 여부와 별개로 자체 게이트를 탄다(DEBUG 인자 예외).
+        if case .loginFail(let provider, let stage, let code) = event, loginFailureReportAllowed {
+            LoginFailureReporter.report(provider: provider, stage: stage, code: code)
+        }
         guard configured, isEnabled else { return }
         let demo = isDemo()
         if event.isProviderScoped, demo { return }
@@ -75,6 +80,17 @@ final class AnalyticsService {
         // 데모 중 살아남는 이벤트(screen_view 등)에서도 provider 차원은 제거한다.
         if demo { params["provider"] = nil }
         Analytics.logEvent(event.name, parameters: params.isEmpty ? nil : params)
+    }
+
+    /// 로그인 실패 진단 보고를 보내도 되는지 — 분석과 같은 게이트(구성·옵트아웃·데모).
+    /// DEBUG 빌드는 -FIRDebugEnabled와 무관하게 -TWReportLoginFailures 인자가 있을 때만 보낸다.
+    private var loginFailureReportAllowed: Bool {
+        guard isEnabled, !isDemo() else { return false }
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("-TWReportLoginFailures")
+        #else
+        return configured
+        #endif
     }
 
     // MARK: 유저 속성

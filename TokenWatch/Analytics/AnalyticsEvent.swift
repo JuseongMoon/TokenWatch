@@ -150,7 +150,7 @@ enum AnalyticsEvent {
             return ["provider": p.rawValue, "auth_kind": Self.authKindTag(p), "agents_total": total]
         case .loginFail(let p, let stage, let code):
             return ["provider": p.rawValue, "auth_kind": Self.authKindTag(p),
-                    "stage": stage.rawValue, "code": String(code.prefix(40))]
+                    "stage": stage.rawValue, "code": LoginFailureCode.sanitized(code)]
         case .loginAbandon(let p, let stage):
             return ["provider": p.rawValue, "stage": stage.rawValue]
         case .activationComplete(let p):
@@ -199,7 +199,8 @@ enum AnalyticsEvent {
         }
     }
 
-    private static func authKindTag(_ provider: AgentProvider) -> String {
+    /// `auth_kind` 값. 로그인 실패 진단 보고(LoginFailureReporter)도 같은 값을 쓴다.
+    static func authKindTag(_ provider: AgentProvider) -> String {
         switch provider.authKind {
         case .oauthCode: return "oauth"
         case .oauthBrowser: return "oauth_browser"

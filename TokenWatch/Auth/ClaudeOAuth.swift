@@ -35,8 +35,9 @@ struct OAuthTokens: Codable, Sendable {
 }
 
 enum OAuthError: LocalizedError {
-    case exchangeFailed(String)
-    case refreshFailed(String)
+    /// `code`는 로그인 실패 분석용 기계 코드(`LoginFailureCode`). 표시 문구에는 쓰지 않는다.
+    case exchangeFailed(String, code: String? = nil)
+    case refreshFailed(String, code: String? = nil)
     /// 서버가 refresh token 자체를 거부(invalid_grant) — 재시도로 복구되지 않는다.
     /// 로테이션으로 무효화됐거나 만료된 경우로, 재로그인 외에는 방법이 없다.
     case refreshRevoked
@@ -45,8 +46,8 @@ enum OAuthError: LocalizedError {
     var errorDescription: String? {
         let loc = L10n(lang: currentLang())
         switch self {
-        case .exchangeFailed(let m): return loc.errTokenExchange(m)
-        case .refreshFailed(let m): return loc.errTokenRefresh(m)
+        case .exchangeFailed(let m, _): return loc.errTokenExchange(m)
+        case .refreshFailed(let m, _): return loc.errTokenRefresh(m)
         case .refreshRevoked: return loc.errAuthExpired
         case .notAuthenticated: return loc.errNotAuthenticated
         }
@@ -136,12 +137,12 @@ enum ClaudeOAuth {
             let resp = try await postTokenRetryingTransientFailure(body)
             return tokens(from: resp, fallbackScopes: scopes, previousRefresh: nil)
         } catch let e as OAuthError {
-            if case .refreshFailed(let m) = e { throw OAuthError.exchangeFailed(m) }
+            if case .refreshFailed(let m, let code) = e { throw OAuthError.exchangeFailed(m, code: code) }
             // 교환 단계의 invalid_grant는 "코드 만료/재사용"이다. postToken은 이를
             // refresh 관점의 .refreshRevoked("재로그인 필요")로 바꾸는데, 붙여넣기
             // 흐름에서는 오해를 부르므로 코드 문구로 되돌린다.
             if case .refreshRevoked = e {
-                throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errCodeExpired)
+                throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errCodeExpired, code: "invalid_grant")
             }
             throw e
         }
@@ -234,12 +235,14 @@ enum ClaudeOAuth {
             if status == 400 || status == 401, msg.contains("invalid_grant") {
                 throw OAuthError.refreshRevoked
             }
-            throw OAuthError.refreshFailed("HTTP \(status): \(msg)")
+            throw OAuthError.refreshFailed("HTTP \(status): \(msg)",
+                                           code: LoginFailureCode.http(status: status, body: data))
         }
         do {
             return try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {
-            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription))
+            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription),
+                                           code: "parse")
         }
     }
 

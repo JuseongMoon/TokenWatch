@@ -124,12 +124,14 @@ enum CodexOAuth {
             if status == 400 || status == 401, msg.contains("invalid_grant") {
                 throw OAuthError.refreshRevoked
             }
-            throw OAuthError.exchangeFailed("HTTP \(status): \(msg)")
+            throw OAuthError.exchangeFailed("HTTP \(status): \(msg)",
+                                            code: LoginFailureCode.http(status: status, body: data))
         }
         do {
             return try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {
-            throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errParse(error.localizedDescription))
+            throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errParse(error.localizedDescription),
+                                            code: "parse")
         }
     }
 

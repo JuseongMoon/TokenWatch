@@ -185,8 +185,8 @@ struct AddAgentSheet: View {
                 phase = .exchanging
                 Task { await exchange(provider: provider, code: code, state: state) }
             },
-            onError: { message in
-                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .authorize, code: "webview"))
+            onError: { message, code in
+                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .authorize, code: code))
                 phase = .failed(message)
             }
         )
@@ -319,9 +319,9 @@ struct AddAgentSheet: View {
             let tokens = try await ProviderAuth.credential(provider, apiKey: key)
             await addOrFail(provider: provider, tokens: tokens)
         } catch {
-            // code에는 원문 메시지 대신 에러 타입명만 — 키·URL 혼입 방지.
+            // code에는 원문 메시지 대신 분류 코드만 — 키·URL 혼입 방지.
             AnalyticsService.shared.log(.loginFail(provider: provider, stage: .apiKeyEntry,
-                                                   code: String(describing: type(of: error))))
+                                                   code: LoginFailureCode.from(error)))
             phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
     }
@@ -336,8 +336,8 @@ struct AddAgentSheet: View {
                 phase = .exchanging
                 Task { await addOrFail(provider: provider, tokens: tokens) }
             },
-            onError: { message in
-                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .devicePoll, code: "device_flow"))
+            onError: { message, code in
+                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .devicePoll, code: code))
                 phase = .failed(message)
             }
         )
@@ -408,9 +408,9 @@ struct AddAgentSheet: View {
             pendingExchange = nil
             await addOrFail(provider: provider, tokens: tokens)
         } catch {
-            // code에는 원문 메시지 대신 에러 타입명만 — 계정 정보·URL 혼입 방지.
+            // code에는 원문 메시지 대신 분류 코드만 — 계정 정보·URL 혼입 방지.
             AnalyticsService.shared.log(.loginFail(provider: provider, stage: .exchange,
-                                                   code: String(describing: type(of: error))))
+                                                   code: LoginFailureCode.from(error)))
             // 네트워크가 끊겨 요청이 서버에 닿지 못한 경우엔 코드가 살아 있으므로 보관한다.
             if let urlError = error as? URLError, ClaudeOAuth.isTransient(urlError) {
                 pendingExchange = PendingExchange(provider: provider, code: code, state: state, redirect: redirect)
@@ -591,7 +591,8 @@ private struct DeviceFlowView: View {
     let provider: AgentProvider
     let loc: L10n
     let onComplete: (OAuthTokens) -> Void
-    let onError: (String) -> Void
+    /// (표시 문구, 분석 코드)
+    let onError: (_ message: String, _ analyticsCode: String) -> Void
 
     /// 로그인이 시작돼 승인 페이지 정보를 받았다.
     @State private var started = false
@@ -686,7 +687,8 @@ private struct DeviceFlowView: View {
             // 화면 이탈로 진행 중이던 요청이 끊김 — 취소와 같다(로그인 실패로 기록하지 않는다).
         } catch {
             InAppSafari.close()
-            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                    LoginFailureCode.from(error))
         }
     }
 }

@@ -37,8 +37,12 @@ enum CopilotDeviceFlow {
         let json = try await postForm(deviceCodeURL, body: body)
         guard let deviceCode = json["device_code"] as? String,
               let userCode = json["user_code"] as? String else {
+            // GitHub은 거부도 200 + `error`로 준다(device flow 비활성화·클라이언트 거부 등).
+            let code = (json["error"] as? String).map {
+                LoginFailureCode.oauthError($0) ?? LoginFailureCode.http(200)
+            } ?? "parse"
             throw DeviceFlowError.http(json["error_description"] as? String
-                                       ?? L10n(lang: currentLang()).errNotAuthenticated)
+                                       ?? L10n(lang: currentLang()).errNotAuthenticated, code: code)
         }
         let uri = (json["verification_uri"] as? String) ?? "https://github.com/login/device"
         return DeviceCode(
@@ -85,7 +89,8 @@ enum CopilotDeviceFlow {
             case "access_denied":
                 throw DeviceFlowError.denied
             case .some(let other):
-                throw DeviceFlowError.http(json["error_description"] as? String ?? other)
+                throw DeviceFlowError.http(json["error_description"] as? String ?? other,
+                                           code: LoginFailureCode.oauthError(other) ?? LoginFailureCode.http(200))
             case .none:
                 continue
             }
@@ -106,8 +111,10 @@ enum CopilotDeviceFlow {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-            throw DeviceFlowError.http("HTTP \(status): \(msg)")
+            throw DeviceFlowError.http("HTTP \(status): \(msg)",
+                                       code: LoginFailureCode.http(status: status, body: data))
         }
+        // 해석 실패(NSCocoaErrorDomain 3840)는 LoginFailureCode가 `parse`로 분류한다.
         let obj = try JSONSerialization.jsonObject(with: data)
         return (obj as? [String: Any]) ?? [:]
     }
@@ -124,7 +131,8 @@ enum DeviceFlowError: LocalizedError {
     case denied
     /// 코드 없는 폴링 로그인(Cursor)이 승인을 기다리다 시간이 다 됐다.
     case timedOut
-    case http(String)
+    /// `code`는 로그인 실패 분석용 기계 코드(`LoginFailureCode`). 표시 문구에는 쓰지 않는다.
+    case http(String, code: String? = nil)
 
     var errorDescription: String? {
         let loc = L10n(lang: currentLang())
@@ -132,7 +140,7 @@ enum DeviceFlowError: LocalizedError {
         case .expired: return loc.deviceFlowExpired
         case .denied:  return loc.deviceFlowDenied
         case .timedOut: return loc.pollingLoginTimedOut
-        case .http(let m): return m
+        case .http(let m, _): return m
         }
     }
 }

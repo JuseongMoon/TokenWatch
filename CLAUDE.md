@@ -20,7 +20,8 @@ xcodebuild build-for-testing -project TokenWatch.xcodeproj -scheme TokenWatch \
 
 - **OAuth 토큰·API 키는 기기 Keychain에만** 저장한다(`Auth/Keychain.swift`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`). UserDefaults·파일·로그에 절대 쓰지 않는다.
 - **분석 이벤트 파라미터에는 provider rawValue·열거 문자열·정수만** 넣는다. 계정 라벨·이메일·토큰·API 키·원문 에러 메시지·사용률 수치는 어떤 경로로도 보내지 않는다. Firebase 접점은 `Analytics/AnalyticsService.swift` 한 파일뿐이다.
-- 사용량은 기기에서 각 provider로 **직접** 조회한다. 개발자 서버를 경유하지 않는다(유일한 예외: 읽기 전용 공지 피드 조회, 아래).
+- 사용량은 기기에서 각 provider로 **직접** 조회한다. 개발자 서버를 경유하지 않는다(예외: 읽기 전용 공지 피드 조회(아래), 로그인 실패 진단 보고).
+- **로그인 실패 진단 보고**(`Analytics/LoginFailureReporter.swift`) — `login_fail`이 기록될 때 개발자 서버(`bot02LoginFailureReport`, 텔레그램 알림)로 한 번 POST한다(보내고 잊기, 재시도 없음). 본문은 `platform`·`appVersion`·`build`·`provider`·`authKind`·`stage`·`code` 7개 키뿐이고(서버가 그 외 키를 400으로 거절), 기기·계정 식별자·이메일·토큰·원문 에러는 싣지 않는다. 게이트는 분석과 같다(PRIVACY 토글·데모 모드·DEBUG 빌드 차단). DEBUG에서는 `-TWReportLoginFailures` 실행 인자로만 켠다. `code` 값은 `Analytics/LoginFailureCode.swift`가 유일한 소스이며 서버 분류표와 맞춰야 한다.
 
 ## 공개 저장소 규칙
 

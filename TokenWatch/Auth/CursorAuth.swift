@@ -56,7 +56,7 @@ enum CursorAuth {
     static func completeLogin(_ handshake: Handshake) async throws -> OAuthTokens {
         let accessToken = try await pollForAccessToken(handshake)
         guard let id = userID(fromJWT: accessToken) else {
-            throw DeviceFlowError.http(L10n(lang: currentLang()).errParse("Cursor token"))
+            throw DeviceFlowError.http(L10n(lang: currentLang()).errParse("Cursor token"), code: "parse")
         }
         // 이메일은 카드 라벨·중복 방지용 부가 정보라 실패해도 로그인은 끝낸다.
         let email = try? await fetchEmail(accessToken: accessToken, userID: id)
@@ -106,14 +106,16 @@ enum CursorAuth {
             case .switchToGET:
                 useGET = true
             case .unavailable:
-                throw DeviceFlowError.http("Cursor auth/poll unavailable")
+                throw DeviceFlowError.http("Cursor auth/poll unavailable", code: "unavailable")
             case .denied:
                 throw DeviceFlowError.denied
             case .malformed:
-                throw DeviceFlowError.http(L10n(lang: currentLang()).errParse("Cursor auth/poll"))
+                throw DeviceFlowError.http(L10n(lang: currentLang()).errParse("Cursor auth/poll"), code: "malformed")
             case .retry:
                 consecutiveErrors += 1
-                if consecutiveErrors >= 3 { throw DeviceFlowError.http("HTTP \(status)") }
+                if consecutiveErrors >= 3 {
+                    throw DeviceFlowError.http("HTTP \(status)", code: LoginFailureCode.http(status))
+                }
                 try await Task.sleep(for: .seconds(delay))
             }
         }

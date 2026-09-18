@@ -7,11 +7,13 @@
 //
 
 import SwiftUI
+import StoreKit
 
 struct ContentView: View {
     @Environment(AgentStore.self) private var store
     @Environment(AnnouncementStore.self) private var announcements
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.requestReview) private var requestReview
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
@@ -72,6 +74,28 @@ struct ContentView: View {
             applyIdleTimer(phase: scenePhase)
         }
         .onAppear { AnalyticsService.shared.log(.screenView(.main)) }
+        // 리뷰 프롬프트: 조건 충족(스토어 판정) 후 시트·공지 팝업이 모두 걷힌 메인 화면에서만.
+        .onChange(of: store.reviewPromptPending) { _, _ in tryPresentReviewPrompt() }
+        .onChange(of: sheetShowing) { _, _ in tryPresentReviewPrompt() }
+        .onChange(of: announcements.presented?.id) { _, _ in tryPresentReviewPrompt() }
+    }
+
+    /// 리뷰 프롬프트를 띄울 수 있는 화면 상태인지 — 공지 오버레이와 같은 이유로 시트를 피한다.
+    private var canPresentReviewPrompt: Bool {
+        store.reviewPromptPending && !sheetShowing && announcements.presented == nil
+            && scenePhase == .active
+    }
+
+    /// 게이지가 그려진 뒤 잠깐 기다렸다가 조건을 다시 확인하고 요청한다(그 사이 시트가 열릴 수 있다).
+    private func tryPresentReviewPrompt() {
+        guard canPresentReviewPrompt else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard canPresentReviewPrompt else { return }
+            store.markReviewPrompted()
+            requestReview()
+            AnalyticsService.shared.log(.storeReview(source: .prompt))
+        }
     }
 
     private func applyScenePhase(_ phase: ScenePhase) {
@@ -80,6 +104,8 @@ struct ContentView: View {
             store.startAutoRefresh(interval: refreshInterval)
             // 콜드 스타트(initial: true)와 포그라운드 복귀 모두 여기를 지난다. 스로틀은 스토어가 판단.
             announcements.check()
+            // 알림센터에서 권한을 승격·해제했을 수 있으니 복귀할 때마다 속성을 맞춘다.
+            Task { await NotificationManager.shared.syncAuthorizationProperty() }
         default:
             store.stopAutoRefresh()
         }

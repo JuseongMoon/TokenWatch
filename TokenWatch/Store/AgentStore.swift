@@ -60,6 +60,9 @@ final class AgentStore {
     @ObservationIgnored private var rescheduleInFlight = false
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
+    /// 리뷰 프롬프트를 띄울 조건이 이번 실행에서 충족됐다 — ContentView가 시트·공지가 없을 때 띄운다.
+    private(set) var reviewPromptPending = false
+
     /// 데모 모드(로그인 없이 표본 데이터로 둘러보기) 여부. 메모리 한정 — 앱을 다시 켜면 항상 꺼진 상태다.
     /// 켜져 있는 동안 이 스토어는 네트워크·Keychain·UserDefaults·알림을 일절 건드리지 않는다.
     private(set) var isDemo = false
@@ -197,9 +200,16 @@ final class AgentStore {
         AnalyticsService.shared.syncUserProperties(agents: agents)
         // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
         await NotificationManager.shared.requestAuthorizationIfNeeded()
+        await NotificationManager.shared.syncAuthorizationProperty()
         // 이 refresh는 직전 관측이 없어 자동으로 baseline만 기록한다(처음 추가 시 무알림).
         await refresh(agent)
         return true
+    }
+
+    /// 리뷰 프롬프트를 요청했다 — 설치당 1회이므로 영구 기록한다.
+    func markReviewPrompted() {
+        ReviewPromptState().markPrompted()
+        reviewPromptPending = false
     }
 
     func remove(_ agent: Agent) {
@@ -349,6 +359,19 @@ final class AgentStore {
         if snapshot.error == nil, !UserDefaults.standard.bool(forKey: Self.activatedKey) {
             UserDefaults.standard.set(true, forKey: Self.activatedKey)
             AnalyticsService.shared.log(.activationComplete(provider: agent.provider))
+        }
+
+        // 리뷰 프롬프트: 가치를 이미 확인한 사용자가 모든 카드가 정상인 화면을 보고 있을 때만.
+        if !reviewPromptPending {
+            let review = ReviewPromptState()
+            let healthy = agents.allSatisfy { a in
+                guard let s = snapshots[a.id] else { return false }
+                return s.error == nil && !s.windows.isEmpty
+            }
+            reviewPromptPending = ReviewPromptPolicy.shouldPrompt(
+                activated: UserDefaults.standard.bool(forKey: Self.activatedKey),
+                firstLaunchAt: review.firstLaunchAt, launchCount: review.launchCount,
+                alreadyPrompted: review.prompted, allSnapshotsHealthy: healthy, now: Date())
         }
 
         // 플랜 라벨을 얻으면 accountLabel 보강. 이메일을 표시 중이면 건드리지 않고,

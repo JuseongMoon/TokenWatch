@@ -640,7 +640,17 @@ struct SettingsSheet: View {
 
     private var infoSection: some View {
         TerminalBox(title: "INFO") {
-            KVRow(key: "version", value: appVersion, keyWidth: 84)
+            VStack(alignment: .leading, spacing: 8) {
+                KVRow(key: "version", value: appVersion, keyWidth: 84)
+                Button {
+                    AnalyticsService.shared.log(.storeReview(source: .settings))
+                    UIApplication.shared.open(ReviewPromptPolicy.writeReviewURL)
+                } label: {
+                    Text("rate on App Store")
+                        .font(.term(12)).foregroundStyle(Term.cyan)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 

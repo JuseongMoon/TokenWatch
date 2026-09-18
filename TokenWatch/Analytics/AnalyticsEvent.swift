@@ -92,6 +92,14 @@ enum AnalyticsEvent {
     case announcementAction(id: String, action: AnnouncementAction)
     /// 공지함 목록에서 상세를 열어 다시 읽었다(팝업으로 본 것과 구분).
     case announcementOpen(id: String, kind: Announcement.Kind)
+    // 평점·리뷰 — 시스템 프롬프트를 요청했거나 설정에서 리뷰 화면을 열었다.
+    // (프롬프트는 시스템이 실제로 띄울지 결정하므로 "요청"까지만 셀 수 있다.)
+    case storeReview(source: StoreReviewSource)
+
+    enum StoreReviewSource: String, Sendable {
+        case prompt
+        case settings
+    }
 
     enum DemoSource: String, Sendable {
         case emptyList = "empty_list"
@@ -130,6 +138,7 @@ enum AnalyticsEvent {
         case .announcementShown: return "announcement_shown"
         case .announcementAction: return "announcement_action"
         case .announcementOpen: return "announcement_open"
+        case .storeReview: return "store_review"
         }
     }
 
@@ -173,6 +182,8 @@ enum AnalyticsEvent {
             return ["announcement_id": String(id.prefix(40)), "action": action.rawValue]
         case .announcementOpen(let id, let kind):
             return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
+        case .storeReview(let source):
+            return ["source": source.rawValue]
         }
     }
 
@@ -181,7 +192,7 @@ enum AnalyticsEvent {
     var isProviderScoped: Bool {
         switch self {
         case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen,
-             .announcementShown, .announcementAction, .announcementOpen:
+             .announcementShown, .announcementAction, .announcementOpen, .storeReview:
             return false
         default:
             return true

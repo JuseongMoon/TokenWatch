@@ -23,6 +23,8 @@ struct TokenWatchApp: App {
         // 데모 판별 주입 + 시작 시 유저 속성 1회 동기화(드리프트 방지).
         AnalyticsService.shared.isDemo = { [weak store] in store?.isDemo ?? false }
         AnalyticsService.shared.syncUserProperties(agents: store.agents)
+        // 리뷰 프롬프트 판정용 콜드 스타트 기록.
+        ReviewPromptState().recordLaunch()
     }
 
     var body: some Scene {

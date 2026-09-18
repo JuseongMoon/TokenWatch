@@ -117,6 +117,13 @@ final class AnalyticsService {
         }
     }
 
+    /// 알림 권한 상태(`NotificationManager.authorizationTag()`) — provisional로 조용히 시작하므로
+    /// 사용자가 알림센터에서 승격했는지·껐는지를 본다. 설정값과 같은 성격이라 데모 게이트가 없다.
+    func syncNotificationAuthorization(_ tag: String) {
+        guard configured, isEnabled else { return }
+        setProperty(tag, "notif_auth")
+    }
+
     /// 주당 업무시간 → 속성 버킷. 기능이 꺼져 있으면 시간 수와 무관하게 "off"
     /// (토글을 끈 사용자가 시간대를 보존하고 있어도 "실효 없음"으로 보고한다).
     static func workHoursBucket(_ hours: Int, enabled: Bool) -> String {

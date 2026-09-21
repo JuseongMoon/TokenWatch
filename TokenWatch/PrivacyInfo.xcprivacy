@@ -2,9 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 트래킹 없음(광고 식별자·교차 앱 추적 미사용). 수집은 Firebase Analytics 익명 통계 3종뿐:
-	     기기 ID(무작위 앱 인스턴스 ID)·제품 상호작용·대략적 위치(IP 기반 도시 단위).
-	     전부 신원 비연결·비추적·분석 목적(스토어 라벨 매핑은 비공개 docs/의 계측 설계 문서). -->
+	<!-- 트래킹 없음(광고 식별자·교차 앱 추적 미사용). 수집은 네 가지다:
+	     Firebase Analytics 익명 통계 3종 — 기기 ID(무작위 앱 인스턴스 ID)·제품 상호작용·
+	     대략적 위치(IP 기반 도시 단위), 전부 분석 목적.
+	     여기에 기타 진단 데이터 1종 — 로그인 실패 진단 보고(LoginFailureReporter)가 보내는
+	     플랫폼·앱 버전·빌드·provider·인증 방식·단계·오류 코드뿐이며 앱 동작 유지 목적이다.
+	     전부 신원 비연결·비추적(스토어 라벨 매핑은 비공개 docs/의 계측 설계 문서). -->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
@@ -45,6 +48,18 @@
 			<key>NSPrivacyCollectedDataTypePurposes</key>
 			<array>
 				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
 	</array>

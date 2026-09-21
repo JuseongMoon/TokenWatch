@@ -291,8 +291,8 @@ struct L10n: Sendable {
 
     // MARK: 프라이버시(설정 PRIVACY — 익명 통계 옵트아웃)
     var settingsAnalyticsHelp: String {
-        lang == .ko ? "익명 사용 통계로 앱 개선을 돕습니다. 계정·이메일·토큰·사용량 수치는 절대 포함되지 않습니다."
-                    : "Anonymous usage stats help improve the app. Never includes your accounts, emails, tokens, or usage numbers."
+        lang == .ko ? "익명 사용 통계와 로그인 실패 진단(서비스·단계·오류 코드)으로 앱 개선을 돕습니다. 계정·이메일·토큰·사용량 수치는 절대 포함되지 않습니다."
+                    : "Anonymous usage stats and login failure diagnostics (service, step, error code) help improve the app. Never includes your accounts, emails, tokens, or usage numbers."
     }
 
     // MARK: 에러(ProviderDispatch · OAuth 등)

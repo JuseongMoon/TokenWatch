@@ -75,9 +75,13 @@ struct UsageWindow: Identifiable, Sendable, Hashable {
     var id: String { label }
 
     /// 전혀 쓰지 않은(사용률 0%) 게이지 창인지. "미사용 창 숨김" 설정의 판정 기준.
-    /// balance(잔액 텍스트)·creditGauge(충전형)는 "0% = 미사용" 개념이 없어 항상 false
-    /// — 충전형은 잔액 가득(used 0%)이 정상이므로 숨기면 안 된다.
+    /// balance(잔액 텍스트)·creditGauge(충전형)는 항상 false — 충전형은 별도 판정 `isUnusedCredit`.
     var isUnused: Bool { style == .gauge && usedPercent <= 0 }
+
+    /// 한 번도 쓰지 않은 충전형 게이지 창인지(예: 이번 달 $0 쓴 Claude Extra usage). "미사용 충전식 숨김" 판정 기준.
+    /// API가 총액을 준 경우만 판정한다 — 총액이 관측 최고 잔액 추정치(estimatedTotal)면 "가득 = 미사용"이
+    /// 아니므로 false, 잔액 텍스트(balance)는 총액을 몰라 false.
+    var isUnusedCredit: Bool { style == .creditGauge && !estimatedTotal && usedPercent <= 0 }
 
     /// 게이지처럼 그려지는 창(구독 사용률 gauge + 충전형 creditGauge).
     /// 하트비트 usage 추적·자동새로고침 변화 신호·설정 그래프 피커의 공통 판정 기준.

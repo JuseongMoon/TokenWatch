@@ -45,7 +45,8 @@ struct SettingsSheet: View {
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage(NotificationDefaults.sessionKey) private var notifySession = false
     @AppStorage(NotificationDefaults.weeklyKey) private var notifyWeekly = true
-    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage(UnusedWindowFilter.hidePercentKey) private var hideUnusedPercent = false
+    @AppStorage(UnusedWindowFilter.hideCreditKey) private var hideUnusedCredit = false
     @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
     /// 업무시간 시간대(168자 "0/1"). 기능을 꺼도 이 값은 그대로 보존된다.
     @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
@@ -287,19 +288,18 @@ struct SettingsSheet: View {
         TerminalBox(title: "DISPLAY") {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        hideUnusedWindows.toggle()
-                        logSetting("hide_unused", onOff(hideUnusedWindows))
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(hideUnusedWindows ? "[x]" : "[ ]")
-                                .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
-                            Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
-                            Spacer()
-                        }
-                        .font(.term(14))
+                    Text("hide unused graphs")
+                        .font(.term(14)).foregroundStyle(Term.fg)
+
+                    hideUnusedToggle("percentage (0%)", isOn: hideUnusedPercent) {
+                        hideUnusedPercent.toggle()
+                        // 단일 설정 시절 이름 유지 — GA 시계열 연속성.
+                        logSetting("hide_unused", onOff(hideUnusedPercent))
                     }
-                    .buttonStyle(.plain)
+                    hideUnusedToggle("credit (never used)", isOn: hideUnusedCredit) {
+                        hideUnusedCredit.toggle()
+                        logSetting("hide_unused_credit", onOff(hideUnusedCredit))
+                    }
 
                     Text(loc.settingsHideUnusedHelp)
                         .font(.term(10)).foregroundStyle(Term.dim)
@@ -327,6 +327,21 @@ struct SettingsSheet: View {
                 }
             }
         }
+    }
+
+    /// "hide unused graphs" 제목 아래 하위 체크박스(한 단계 작은 폰트, 살짝 들여쓰기).
+    private func hideUnusedToggle(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(isOn ? "[x]" : "[ ]")
+                    .foregroundStyle(isOn ? Term.green : Term.dim)
+                Text(title).foregroundStyle(isOn ? Term.fg : Term.dim)
+                Spacer()
+            }
+            .font(.term(12))
+            .padding(.leading, 8)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: 업무시간

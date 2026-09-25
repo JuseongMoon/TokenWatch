@@ -16,7 +16,8 @@ struct AgentCardView: View {
     /// — 메인 목록에는 조회 가능한 provider의 상태만 노출한다.
     var serviceHealth: ServiceHealth? = nil
 
-    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage(UnusedWindowFilter.hidePercentKey) private var hideUnusedPercent = false
+    @AppStorage(UnusedWindowFilter.hideCreditKey) private var hideUnusedCredit = false
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
@@ -97,9 +98,9 @@ struct AgentCardView: View {
         return label
     }
 
-    /// "미사용 창 숨김" 설정이 켜져 있으면 사용률 0% 게이지 창을 제외한다.
+    /// "hide unused graphs" 설정(퍼센테이지 / 충전식)에 따라 미사용 창을 제외한다.
     private func visibleWindows(_ windows: [UsageWindow]) -> [UsageWindow] {
-        hideUnusedWindows ? windows.filter { !$0.isUnused } : windows
+        UnusedWindowFilter.visible(windows, hidePercent: hideUnusedPercent, hideCredit: hideUnusedCredit)
     }
 
     @ViewBuilder
@@ -109,7 +110,7 @@ struct AgentCardView: View {
             // 에러(429 등)는 이름과 그래프 사이에 표시하고, 그래프는 지우지 않고 그대로 유지한다.
             if let error = snapshot.error { errorRow(error) }
             if windows.isEmpty {
-                // 모든 창이 미사용(0%)이라 숨겨진 경우 — 카드가 비지 않도록 안내.
+                // 모든 창이 미사용이라 숨겨진 경우 — 카드가 비지 않도록 안내.
                 Text(loc.usageAllUnusedHidden)
                     .font(.term(12)).foregroundStyle(Term.dim)
                     .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)

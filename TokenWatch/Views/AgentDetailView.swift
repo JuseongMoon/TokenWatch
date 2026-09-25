@@ -15,7 +15,8 @@ struct AgentDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
-    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage(UnusedWindowFilter.hidePercentKey) private var hideUnusedPercent = false
+    @AppStorage(UnusedWindowFilter.hideCreditKey) private var hideUnusedCredit = false
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     @State private var account: AccountInfo?
@@ -130,9 +131,9 @@ struct AgentDetailView: View {
 
     // MARK: USAGE
 
-    /// "미사용 창 숨김" 설정이 켜져 있으면 사용률 0% 게이지 창을 제외한다.
+    /// "hide unused graphs" 설정(퍼센테이지 / 충전식)에 따라 미사용 창을 제외한다.
     private func visibleWindows(_ windows: [UsageWindow]) -> [UsageWindow] {
-        hideUnusedWindows ? windows.filter { !$0.isUnused } : windows
+        UnusedWindowFilter.visible(windows, hidePercent: hideUnusedPercent, hideCredit: hideUnusedCredit)
     }
 
     private var usageCard: some View {
@@ -142,7 +143,7 @@ struct AgentDetailView: View {
                     let windows = visibleWindows(snapshot.windows)
                     if isLoading { refreshingLine }
                     if windows.isEmpty {
-                        // 모든 창이 미사용(0%)이라 숨겨진 경우 — 안내 문구.
+                        // 모든 창이 미사용이라 숨겨진 경우 — 안내 문구.
                         Text(loc.usageAllUnusedHidden)
                             .font(.term(12)).foregroundStyle(Term.dim)
                             .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)

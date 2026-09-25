@@ -100,8 +100,8 @@ struct L10n: Sendable {
                     : "When on, the screen stays awake while you view the app."
     }
     var settingsHideUnusedHelp: String {
-        lang == .ko ? "사용률이 0%인(전혀 쓰지 않은) 그래프를 목록·상세에서 숨깁니다."
-                    : "Hides usage graphs sitting at 0% from the list and detail."
+        lang == .ko ? "목록·상세에서 미사용 그래프를 숨깁니다. 퍼센테이지는 사용률 0%인 구독 그래프, 충전식은 한 번도 쓰지 않은 충전식 잔액(Extra usage 등)입니다. 총액을 알 수 없는 잔액은 항상 표시합니다."
+                    : "Hides unused graphs from the list and detail. Percentage covers plan graphs at 0%; credit covers prepaid balances never spent (e.g. Extra usage). Balances with an unknown total always stay visible."
     }
     var settingsGaugeCritterHelp: String {
         lang == .ko ? "사용률 100%가 된 게이지 위를 픽셀 슬라임이 통통 튀며 지나갑니다."
@@ -173,7 +173,7 @@ struct L10n: Sendable {
     }
     /// "미사용 창 숨김" 설정으로 모든 창이 숨겨졌을 때의 안내(카드·상세 공용).
     var usageAllUnusedHidden: String {
-        lang == .ko ? "미사용(0%) 창은 숨김" : "unused (0%) windows hidden"
+        lang == .ko ? "미사용 창은 숨김" : "unused windows hidden"
     }
 
     func paceAhead(_ p: Int) -> String { lang == .ko ? "↑ 시간 대비 \(p)%p 빠름" : "↑ \(p)%p ahead of pace" }

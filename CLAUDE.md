@@ -7,11 +7,14 @@ AI 서비스 사용량을 한 화면에 모아 보여주는 iOS 앱(SwiftUI, iOS
 ```bash
 # 앱 + 테스트 타깃 컴파일 (기본 검증)
 xcodebuild build-for-testing -project TokenWatch.xcodeproj -scheme TokenWatch \
-  -destination 'generic/platform=iOS Simulator' -quiet
+  -destination 'generic/platform=iOS Simulator' -quiet \
+  -derivedDataPath ~/Library/Developer/Xcode/DerivedData-CLI/TokenWatch
 ```
 
-- **검증은 빌드(컴파일)까지만 한다.** 실기기·시뮬레이터 실행, `xcodebuild test`, 앱 설치는 하지 않는다. 동작 확인이 필요하면 "무엇을 / 어디서 / 어떻게 봐주세요"로 정리해 사용자에게 넘긴다.
-- **테스트는 작성하되 실행하지 않으므로 검증된 것이 아니다.** 넘길 때 그 사실을 명시한다. 구현의 초기화 시점·호출 순서를 바꾸면 그에 의존하는 테스트를 반드시 다시 읽는다(과거에 이 누락으로 단언 205개가 한꺼번에 실패한 적이 있다).
+- CLI 빌드는 **항상 위의 별도 `-derivedDataPath`**를 쓴다. 사용자는 Xcode를 열어 둔 채 작업하는데, 기본 DerivedData를 함께 쓰면 공유 `SourcePackages`가 꼬여 Xcode 빌드가 "Missing package product"로 깨질 수 있다. 경로가 고정이라 패키지 fetch로 느린 건 첫 빌드뿐이다.
+
+- **검증은 빌드(컴파일)까지만 한다.** 실기기·시뮬레이터 실행, `xcodebuild test`, 앱 설치는 하지 않는다 — 설치가 사용자 기기의 앱 데이터(계정 목록)를 날릴 수 있고, 실사용 확인은 사용자가 직접 한다. 동작 확인이 필요하면 "무엇을 / 어디서 / 어떻게 봐주세요"로 정리해 사용자에게 넘긴다.
+- **테스트는 작성하되 실행하지 않으므로 검증된 것이 아니다.** 넘길 때 그 사실을 명시한다. 구현의 초기화 시점·호출 순서를 바꾸면 그에 의존하는 테스트를 반드시 다시 읽는다(그런 테스트는 빌드를 통과한 채 단언이 한꺼번에 깨진다).
 - `TokenWatch/`·`TokenWatchTests/` 아래에 `.swift` 파일을 만들면 **자동으로 타깃에 포함**된다(PBXFileSystemSynchronizedRootGroup). pbxproj를 손댈 필요 없다. 새 파일 직후 SourceKit이 "Cannot find type" 진단을 쏟아내지만 인덱싱 지연일 뿐이니 **빌드 결과로 판정**한다.
 - `Info.plist`는 **프로젝트 루트**에 둔다(synchronized 폴더 안에 두면 "Multiple commands produce" 충돌).
 - 기본 격리가 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`다. 모델·파서처럼 격리가 필요 없는 타입은 `nonisolated`로 선언해야 Swift 6 모드 경고를 피한다.
@@ -36,7 +39,7 @@ xcodebuild build-for-testing -project TokenWatch.xcodeproj -scheme TokenWatch \
 
 - **`docs/`는 `.gitignore`로 제외돼 있다 — 되돌리지 말 것.** 스토어 메타데이터(가격 전략), 계측 설계, 미출시 기능 기획, 공지 서버 계약(관리자 계정·대시보드 경로·보안규칙 구조 포함)처럼 공개 목적이 없는 자료다. 작업 폴더에는 그대로 있으니 참조는 자유롭게 하되, 새 내부 문서도 `docs/`에 두면 자동으로 비공개가 된다. 코드 주석에서 이 문서들을 **경로로 링크하지 않는다**(방문자에겐 끊어진 링크가 된다).
 - `main`이 공개 기본 브랜치다. 작업은 `dev`에서 하고, `main` 병합은 해당 버전이 **출시된 뒤**에 한다(미출시 기능을 먼저 노출하지 않기 위해).
-- **작업 결과는 가능하면 빨리 push한다.** 여러 세션이 같은 저장소를 만지므로 미푸시 커밋은 다른 세션의 이력 재작성에 휩쓸릴 수 있다(실제로 한 번 발생, reflog로 복구).
+- **커밋했으면 미루지 말고 바로 push한다.** 여러 세션이 같은 저장소를 만지므로 미푸시 커밋은 다른 세션의 이력 재작성에 휩쓸릴 수 있다.
 
 ## 구조 요점
 

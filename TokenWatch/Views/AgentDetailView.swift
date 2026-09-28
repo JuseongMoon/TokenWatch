@@ -21,6 +21,8 @@ struct AgentDetailView: View {
 
     @State private var account: AccountInfo?
     @State private var showLogoutConfirm = false
+    /// peak 재설정을 확인 중인 충전형 창. 값이 있으면 확인 다이얼로그가 뜬다.
+    @State private var pendingPeakReset: UsageWindow?
 
     private var snapshot: AgentSnapshot? { store.snapshots[agent.id] }
     private var isLoading: Bool { store.loadingIDs.contains(agent.id) }
@@ -84,6 +86,15 @@ struct AgentDetailView: View {
                 store.remove(agent)
                 dismiss()
             }
+        )
+        .terminalConfirm(
+            item: $pendingPeakReset,
+            title: { _ in loc.creditResetTitle },
+            accountLabel: { $0.label.uppercased() },
+            message: { _ in loc.creditResetMessage },
+            confirmLabel: "[ \(loc.creditResetConfirm) ]",
+            cancelLabel: "[ \(loc.cancel) ]",
+            onConfirm: { store.resetCreditPeak(agentID: agent.id, windowLabel: $0.label) }
         )
     }
 
@@ -152,8 +163,8 @@ struct AgentDetailView: View {
                         ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                             if index > 0 { hDivider }
                             DetailUsageRow(window: window, loc: loc,
-                                           onResetPeak: window.estimatedTotal ? {
-                                               store.resetCreditPeak(agentID: agent.id, windowLabel: window.label)
+                                           onRequestResetPeak: window.estimatedTotal ? {
+                                               pendingPeakReset = window
                                            } : nil)
                         }
                     }
@@ -298,10 +309,9 @@ struct AgentDetailView: View {
 private struct DetailUsageRow: View {
     let window: UsageWindow
     let loc: L10n
-    /// 충전형 추정 게이지의 peak 재설정 액션(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
-    var onResetPeak: (() -> Void)? = nil
-
-    @State private var showResetConfirm = false
+    /// 충전형 추정 게이지의 peak 재설정 요청(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
+    /// 확인 다이얼로그는 화면 전체를 덮어야 해서 상위 AgentDetailView가 띄운다.
+    var onRequestResetPeak: (() -> Void)? = nil
 
     /// 업무시간 스케줄(주간 마커용).
     @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
@@ -357,8 +367,8 @@ private struct DetailUsageRow: View {
                     Text(loc.creditApproxNote)
                         .font(.term(11)).foregroundStyle(Term.dim)
                     Spacer(minLength: 0)
-                    if onResetPeak != nil {
-                        Button { showResetConfirm = true } label: {
+                    if let onRequestResetPeak {
+                        Button(action: onRequestResetPeak) {
                             Text(loc.creditResetButton)
                                 .font(.term(11)).foregroundStyle(Term.yellow)
                         }
@@ -366,12 +376,6 @@ private struct DetailUsageRow: View {
                     }
                 }
             }
-        }
-        .confirmationDialog(loc.creditResetTitle, isPresented: $showResetConfirm, titleVisibility: .visible) {
-            Button(loc.creditResetConfirm, role: .destructive) { onResetPeak?() }
-            Button(loc.cancel, role: .cancel) {}
-        } message: {
-            Text(loc.creditResetMessage)
         }
     }
 
@@ -491,7 +495,7 @@ private struct DetailUsageRow: View {
                                            kind: .weekly, style: .creditGauge,
                                            valueText: "18.00 USD", balanceRemaining: 18,
                                            estimatedTotal: true),
-                       loc: L10n(lang: .ko), onResetPeak: {})
+                       loc: L10n(lang: .ko), onRequestResetPeak: {})
     }
     .padding()
     .background(Term.bg)

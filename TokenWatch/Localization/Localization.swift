@@ -47,7 +47,10 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// 실제 렌더링 언어(해석 완료된 값).
-enum Lang: Sendable { case ko, en }
+/// `nonisolated`인 이유: 프로젝트 기본 격리가 MainActor라 그냥 두면 Equatable 준수까지
+/// MainActor에 묶여, nonisolated 모델(예: `Announcement.LocalizedText.resolved(for:)`)에서
+/// `lang == .ko` 비교가 Swift 6 모드 에러가 된다.
+nonisolated enum Lang: Sendable { case ko, en }
 
 /// 뷰 밖(네트워크/모델 등 SwiftUI 환경에 접근할 수 없는 곳)에서 현재 언어를
 /// 스레드 안전하게 읽는다. UserDefaults/Locale 모두 스레드 안전.
@@ -97,8 +100,8 @@ struct L10n: Sendable {
                     : "When on, the screen stays awake while you view the app."
     }
     var settingsHideUnusedHelp: String {
-        lang == .ko ? "사용률이 0%인(전혀 쓰지 않은) 그래프를 목록·상세에서 숨깁니다."
-                    : "Hides usage graphs sitting at 0% from the list and detail."
+        lang == .ko ? "목록·상세에서 미사용 그래프를 숨깁니다. 퍼센테이지는 사용률 0%인 구독 그래프, 충전식은 한 번도 쓰지 않은 충전식 잔액(Extra usage 등)입니다. 총액을 알 수 없는 잔액은 항상 표시합니다."
+                    : "Hides unused graphs from the list and detail. Percentage covers plan graphs at 0%; credit covers prepaid balances never spent (e.g. Extra usage). Balances with an unknown total always stay visible."
     }
     var settingsGaugeCritterHelp: String {
         lang == .ko ? "사용률 100%가 된 게이지 위를 픽셀 슬라임이 통통 튀며 지나갑니다."
@@ -107,8 +110,8 @@ struct L10n: Sendable {
 
     // MARK: 업무시간(WorkHours)
     var settingsWorkHoursHelp: String {
-        lang == .ko ? "주간 그래프의 현재 시각 세로선이 설정한 업무시간에만 흐릅니다. 비워 두면 한 주 내내 균일하게 흐릅니다."
-                    : "The current-time line on weekly graphs advances only during your work hours. Leave empty to flow evenly across the whole week."
+        lang == .ko ? "주간 그래프의 현재 시각 세로선이 설정한 업무시간에만 흐릅니다. 체크를 끄면 한 주 내내 균일하게 흐르고, 설정해 둔 시간대는 그대로 보관됩니다."
+                    : "The current-time line on weekly graphs advances only during your work hours. Uncheck to flow evenly across the whole week — your saved hours are kept."
     }
     var workHoursButton: String { lang == .ko ? "[ 업무시간 설정 ]" : "[ set work hours ]" }
     var workHoursNotSet: String { lang == .ko ? "설정 안 됨" : "not set" }
@@ -170,7 +173,7 @@ struct L10n: Sendable {
     }
     /// "미사용 창 숨김" 설정으로 모든 창이 숨겨졌을 때의 안내(카드·상세 공용).
     var usageAllUnusedHidden: String {
-        lang == .ko ? "미사용(0%) 창은 숨김" : "unused (0%) windows hidden"
+        lang == .ko ? "미사용 창은 숨김" : "unused windows hidden"
     }
 
     func paceAhead(_ p: Int) -> String { lang == .ko ? "↑ 시간 대비 \(p)%p 빠름" : "↑ \(p)%p ahead of pace" }
@@ -288,8 +291,8 @@ struct L10n: Sendable {
 
     // MARK: 프라이버시(설정 PRIVACY — 익명 통계 옵트아웃)
     var settingsAnalyticsHelp: String {
-        lang == .ko ? "익명 사용 통계로 앱 개선을 돕습니다. 계정·이메일·토큰·사용량 수치는 절대 포함되지 않습니다."
-                    : "Anonymous usage stats help improve the app. Never includes your accounts, emails, tokens, or usage numbers."
+        lang == .ko ? "익명 사용 통계와 로그인 실패 진단(서비스·단계·오류 코드)으로 앱 개선을 돕습니다. 계정·이메일·토큰·사용량 수치는 절대 포함되지 않습니다."
+                    : "Anonymous usage stats and login failure diagnostics (service, step, error code) help improve the app. Never includes your accounts, emails, tokens, or usage numbers."
     }
 
     // MARK: 에러(ProviderDispatch · OAuth 등)
@@ -311,15 +314,83 @@ struct L10n: Sendable {
     func errTokenExchange(_ m: String) -> String { lang == .ko ? "토큰 교환 실패: \(m)" : "Token exchange failed: \(m)" }
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }
+    var errInvalidAPIKey: String {
+        lang == .ko ? "API 키가 올바르지 않습니다. 키를 다시 확인해 주세요." : "That API key isn't valid. Please check it and try again."
+    }
+    /// API 키 입력 화면에 provider별로 덧붙이는 안내 한 줄. 없으면 nil.
+    func apiKeyHint(provider: AgentProvider) -> String? {
+        switch provider {
+        case .kimi:
+            return lang == .ko ? "Kimi Code 콘솔에서 이 앱 전용 키를 새로 만들어 붙여넣으세요. 키로 쿼터를 사용할 수도 있습니다."
+                               : "Create a new key just for this app in the Kimi Code console. A key can also spend your quota."
+        case .claude, .codex, .copilot, .grok, .cursor, .openrouter, .deepseek, .poe, .elevenlabs:
+            return nil
+        }
+    }
     var errStateMismatch: String {
         lang == .ko ? "로그인 응답 검증에 실패했습니다(state 불일치). 다시 시도해 주세요."
                     : "Login response failed verification (state mismatch). Please try again."
+    }
+    var errCodeInvalid: String {
+        lang == .ko ? "코드 형식을 알아볼 수 없습니다. 복사한 내용을 다시 확인해 주세요."
+                    : "That code isn't in a format we recognize. Check what you copied."
+    }
+    var errCodeExpired: String {
+        lang == .ko ? "코드가 만료되었거나 이미 사용되었습니다. 다시 로그인해 주세요."
+                    : "The code expired or was already used. Please sign in again."
     }
     var errKeychainSave: String {
         lang == .ko ? "토큰을 안전 저장소(Keychain)에 저장하지 못했습니다. 다시 시도해 주세요."
                     : "Couldn't save the token to the Keychain. Please try again."
     }
     func errParse(_ m: String) -> String { lang == .ko ? "응답 파싱 실패: \(m)" : "Failed to parse response: \(m)" }
+
+    // MARK: 에이전트 추가 화면 안내
+    /// 제공자 선택 목록 맨 위 고지 — 로그인·조회 방식이 각 provider 정책에 달려 있어 예고 없이 막힐 수 있지만,
+    /// 장애를 감시하고 있어 문제가 생기면 바로 고친다는 약속까지 함께 알린다.
+    var addAgentPolicyNotice: String {
+        lang == .ko ? "로그인 및 사용량 조회는 각 제공업체의 정책에 의존하며, 정책 변경 시 예고 없이 중단될 수 있습니다. 장애는 여러 경로로 상시 모니터링 중이며, 문제 발생 시 신속히 대응합니다."
+                    : "Sign-in and usage lookups depend on each provider's policies and may stop working without notice when those change. Outages are monitored continuously across multiple signals; issues are addressed promptly."
+    }
+    /// 고지 박스 오른쪽 아래, 슬라임 앞에 붙는 서명.
+    var addAgentNoticeSignature: String { lang == .ko ? "토큰워치 팀" : "TokenWatch team" }
+
+    // MARK: 인증 시트 로그인(앱 안 인증 시트 + 루프백, Claude 폴백: 코드 붙여넣기)
+    func browserSheetIntro(provider: String) -> String {
+        lang == .ko ? "\(provider) 계정으로 로그인하고 연결을 승인하세요. 로그인 창은 앱 안에서 열리고, 승인하면 자동으로 닫힙니다."
+                    : "Sign in with your \(provider) account and approve the connection. The sign-in window opens inside the app and closes automatically once you approve."
+    }
+    var browserSheetOpen: String { lang == .ko ? "[ 로그인 ]" : "[ sign in ]" }
+    var browserOtherAccountHint: String {
+        lang == .ko ? "이미 로그인돼 있으면 바로 승인 화면이 열립니다. 다른 계정을 추가하려면 아래 버튼을 쓰세요."
+                    : "If you're already signed in, the approval screen opens right away. To add a different account, use the button below."
+    }
+    var browserOtherAccount: String { lang == .ko ? "[ 다른 계정으로 로그인 ]" : "[ sign in with another account ]" }
+    var browserWaiting: String { lang == .ko ? "로그인 창에서 승인을 기다리는 중…" : "waiting for approval in the sign-in window…" }
+    var browserCancelledHint: String {
+        lang == .ko ? "로그인 창이 닫혔습니다. 다시 시도할 수 있습니다." : "The sign-in window was closed. You can try again."
+    }
+    /// - Parameter manualFallback: 코드 붙여넣기 폴백이 있는 provider면 true — 그 방법도 함께 안내한다.
+    func browserSessionFailed(manualFallback: Bool) -> String {
+        guard manualFallback else {
+            return lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도해 주세요."
+                               : "Couldn't open the sign-in window. Please try again."
+        }
+        return lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도하거나 코드를 직접 입력해 주세요."
+                           : "Couldn't open the sign-in window. Try again or enter the code manually."
+    }
+    var browserManualHint: String {
+        lang == .ko ? "자동으로 연결되지 않나요?" : "Not connecting automatically?"
+    }
+    var browserManualButton: String { lang == .ko ? "[ 코드 직접 입력 ]" : "[ enter code manually ]" }
+
+    var manualCodeGet: String { lang == .ko ? "[ 코드 받기 ↗ ]" : "[ get code ↗ ]" }
+    var manualCodePrompt: String {
+        lang == .ko ? "승인 후 표시되는 코드를 복사해 아래에 붙여넣으세요."
+                    : "Copy the code shown after approving and paste it below."
+    }
+    var manualCodePlaceholder: String { lang == .ko ? "코드 붙여넣기…" : "paste code…" }
+    var manualConnect: String { lang == .ko ? "[ CONNECT ]" : "[ CONNECT ]" }
 
     // MARK: 디바이스 플로우(GitHub Copilot 등)
     var deviceFlowRequesting: String { lang == .ko ? "코드 요청 중…" : "requesting code…" }
@@ -333,6 +404,15 @@ struct L10n: Sendable {
         lang == .ko ? "코드가 만료되었습니다. 다시 시도해 주세요." : "The code expired. Please try again."
     }
     var deviceFlowDenied: String { lang == .ko ? "인증이 거부되었습니다." : "Authorization was denied." }
+    /// 코드 입력 없이 로그인 페이지 승인만으로 끝나는 폴링 로그인(예: Cursor).
+    func pollingLoginPrompt(provider: String) -> String {
+        lang == .ko ? "앱 안에 열린 \(provider) 로그인 페이지에서 로그인하고 승인하세요. 승인되면 자동으로 연결됩니다."
+                    : "Sign in on the \(provider) page opened in the app and approve. It connects automatically once approved."
+    }
+    var pollingLoginOpen: String { lang == .ko ? "[ 로그인 페이지 열기 ↗ ]" : "[ open sign-in page ↗ ]" }
+    var pollingLoginTimedOut: String {
+        lang == .ko ? "로그인 대기 시간이 지났습니다. 다시 시도해 주세요." : "Sign-in timed out. Please try again."
+    }
 
     // MARK: Codex 사용량 라벨
     var codexAdditionalLimit: String { lang == .ko ? "추가 한도" : "Additional limit" }
@@ -359,6 +439,35 @@ struct L10n: Sendable {
 
     /// 메인 카드 신호등 배지에 인라인으로 띄우는 점검 표시(전체점검 전용).
     var serviceMaintenanceBadge: String { lang == .ko ? "점검중" : "maintenance" }
+
+    // MARK: 공지 팝업(AnnouncementOverlay) · 공지함(AnnouncementListSheet)
+    var announcementClose: String { lang == .ko ? "닫기" : "Close" }
+    var announcementNever: String { lang == .ko ? "다시 열지 않기" : "Don't show again" }
+    var announcementsEmpty: String {
+        lang == .ko ? "아직 받은 공지가 없습니다." : "No announcements yet."
+    }
+    var announcementsUnavailable: String {
+        lang == .ko ? "공지를 불러오지 못했습니다. 잠시 뒤 다시 열어보세요."
+                    : "Couldn't load announcements. Try again in a moment."
+    }
+    /// 상단 바 공지 버튼의 접근성 라벨. 안 읽은 게 있으면 개수까지 읽어준다.
+    func a11yAnnouncements(unread: Int) -> String {
+        guard unread > 0 else { return lang == .ko ? "공지" : "Announcements" }
+        return lang == .ko ? "공지, 안 읽음 \(unread)개" : "Announcements, \(unread) unread"
+    }
+    /// 공지 발행일. 연도는 올해가 아닐 때만 붙인다.
+    func announcementDate(_ date: Date, now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = dateLocale
+        let sameYear = Calendar.current.isDate(date, equalTo: now, toGranularity: .year)
+        switch (lang, sameYear) {
+        case (.ko, true):  f.dateFormat = "M월 d일"
+        case (.ko, false): f.dateFormat = "yyyy년 M월 d일"
+        case (.en, true):  f.dateFormat = "MMM d"
+        case (.en, false): f.dateFormat = "MMM d, yyyy"
+        }
+        return f.string(from: date)
+    }
 
     // MARK: 날짜/시간 포맷
     var dateLocale: Locale { Locale(identifier: lang == .ko ? "ko_KR" : "en_US") }

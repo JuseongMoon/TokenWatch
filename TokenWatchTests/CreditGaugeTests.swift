@@ -80,7 +80,7 @@ struct CreditGaugeTests {
     // MARK: 창 스타일 불변식
 
     @Test func creditGaugeIsGaugeLikeButNotUnused() {
-        // 잔액 가득(used 0%)이어도 충전형 게이지는 미사용이 아니다(hide unused에 안 걸림).
+        // 잔액 가득(used 0%)이어도 충전형 게이지는 퍼센테이지 판정(isUnused)에 안 걸린다(충전식은 isUnusedCredit).
         let w = UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil, kind: .weekly,
                             style: .creditGauge, valueText: "500 credits",
                             balanceRemaining: 500, balanceTotal: 500)

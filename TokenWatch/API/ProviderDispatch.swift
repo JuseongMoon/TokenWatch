@@ -68,14 +68,23 @@ func parseRetryAfter(_ value: String?, now: Date = Date()) -> Date? {
 // MARK: - OAuth 디스패치
 
 enum ProviderAuth {
-    // 아래 authorizeURL/parseCallback/exchange/refresh는 oauthCode 방식 provider 전용이다.
+    // 아래 authorizeURL/parseCallback/exchange/refresh는 OAuth 인가코드 방식
+    // provider(oauthBrowser=Claude·Grok, oauthCode=Codex) 전용이다.
     // apiKey/deviceFlow provider는 AddAgentSheet가 이 경로로 오지 않도록 라우팅한다.
+    // switch에 `default:`를 두지 않는다 — 새 provider를 추가하며 여기를 빠뜨리면 컴파일 에러로
+    // 드러나야 한다(빠뜨린 채 빌드되면 로그인 크래시나 "로그인 필요"가 조용히 난다).
 
-    static func authorizeURL(_ provider: AgentProvider, pkce: PKCE) -> URL {
+    /// - Parameter redirect: 인증 시트 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
+    ///   (Claude·Grok. Codex는 콜백이 고정이라 무시한다. Grok은 루프백 redirect가 반드시 있어야 한다.)
+    static func authorizeURL(_ provider: AgentProvider, pkce: PKCE, redirect: String? = nil) -> URL {
         switch provider {
-        case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce)
+        case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce, redirect: redirect)
         case .codex: return CodexOAuth.authorizeURL(pkce: pkce)
-        default: preconditionFailure("authorizeURL는 oauthCode provider 전용입니다: \(provider)")
+        case .grok:
+            guard let redirect else { preconditionFailure("Grok authorizeURL에는 루프백 redirect가 필요합니다") }
+            return GrokOAuth.authorizeURL(pkce: pkce, redirect: redirect)
+        case .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
+            preconditionFailure("authorizeURL는 OAuth provider 전용입니다: \(provider)")
         }
     }
 
@@ -83,15 +92,41 @@ enum ProviderAuth {
         switch provider {
         case .claude: return ClaudeOAuth.parseCallback(url)
         case .codex: return CodexOAuth.parseCallback(url)
-        default: return nil
+        // Grok 콜백은 루프백 리스너가 직접 파싱한다(웹뷰 가로채기 경로가 아니다).
+        case .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
         }
     }
 
-    static func exchange(_ provider: AgentProvider, code: String, state: String, pkce: PKCE) async throws -> OAuthTokens {
+    /// 인증 시트 로그인(oauthBrowser)의 루프백 redirect_uri. 루프백 콜백을 쓰지 않는 provider는 nil.
+    static func loopbackRedirectURI(_ provider: AgentProvider, port: UInt16) -> String? {
         switch provider {
-        case .claude: return try await ClaudeOAuth.exchange(code: code, state: state, pkce: pkce)
+        case .claude: return ClaudeOAuth.loopbackRedirectURI(port: port)
+        case .grok: return GrokOAuth.loopbackRedirectURI(port: port)
+        case .codex, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 코드 붙여넣기 폴백이 쓰는 redirect_uri(콘솔 코드 페이지). 이 폴백이 없는 provider는 nil이고,
+    /// 인증 시트 로그인 화면은 그때 수동 입력 버튼을 숨긴다.
+    static func manualCodeRedirect(_ provider: AgentProvider) -> String? {
+        switch provider {
+        case .claude: return ClaudeOAuth.redirectURI
+        case .codex, .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// - Parameter redirect: authorize에 쓴 redirect_uri와 같은 값을 넘겨야 한다.
+    static func exchange(_ provider: AgentProvider, code: String, state: String, pkce: PKCE,
+                         redirect: String? = nil) async throws -> OAuthTokens {
+        switch provider {
+        case .claude:
+            return try await ClaudeOAuth.exchange(code: code, state: state, pkce: pkce, redirect: redirect)
         case .codex: return try await CodexOAuth.exchange(code: code, state: state, pkce: pkce)
-        default: throw OAuthError.notAuthenticated
+        case .grok:
+            // 루프백으로 받은 code만 있다(코드 붙여넣기 폴백 없음).
+            guard let redirect else { throw OAuthError.notAuthenticated }
+            return try await GrokOAuth.exchange(code: code, pkce: pkce, redirect: redirect)
+        case .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
         }
     }
 
@@ -99,17 +134,54 @@ enum ProviderAuth {
         switch provider {
         case .claude: return try await ClaudeOAuth.refresh(tokens: tokens)
         case .codex: return try await CodexOAuth.refresh(tokens: tokens)
-        // apiKey/세션 자격증명은 refresh 개념이 없다(만료 없음). 401 시 재로그인 유도.
-        default: throw OAuthError.notAuthenticated
+        case .grok: return try await GrokOAuth.refresh(tokens: tokens)
+        // device flow·API 키 자격증명은 refresh 개념이 없다(만료 없음). 401 시 재로그인 유도.
+        // Cursor v1도 refresh 없이 토큰(약 60일)이 만료되면 다시 로그인한다.
+        case .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: throw OAuthError.notAuthenticated
         }
     }
 
     /// apiKey 방식 provider: 사용자가 입력한 키를 저장용 자격증명으로 만든다.
-    /// (키 유효성은 이후 첫 usage 조회에서 판별된다.) provider별 특수 처리가
-    /// 필요하면 여기서 분기한다.
-    static func credential(_ provider: AgentProvider, apiKey: String) -> OAuthTokens {
-        OAuthTokens.apiKey(apiKey)
+    /// 대부분은 키 유효성을 이후 첫 usage 조회에서 판별하고, Kimi는 추가하기 전에 키가 통하는
+    /// 지역 호스트를 확인한다(두 호스트가 모두 거부하면 throw — 카드를 만들지 않는다).
+    static func credential(_ provider: AgentProvider, apiKey: String) async throws -> OAuthTokens {
+        switch provider {
+        case .kimi:
+            return try await KimiUsageClient.prepareCredential(apiKey: apiKey)
+        case .openrouter, .deepseek, .poe, .elevenlabs:
+            return OAuthTokens.apiKey(apiKey)
+        case .claude, .codex, .copilot, .grok, .cursor:
+            throw OAuthError.notAuthenticated
+        }
     }
+
+    /// 폴링 로그인(`.oauthDeviceFlow`)을 시작한다 — 승인 페이지 정보와, 승인될 때까지 토큰을 기다리는 폴러.
+    /// 다른 인증 방식 provider는 AddAgentSheet가 이 경로로 보내지 않는다.
+    static func startPollingLogin(_ provider: AgentProvider) async throws -> PollingLogin {
+        switch provider {
+        case .copilot:
+            let device = try await CopilotDeviceFlow.requestDeviceCode()
+            return PollingLogin(userCode: device.userCode, verificationURL: device.verificationURI,
+                                poll: { try await CopilotDeviceFlow.pollForToken(device) })
+        case .cursor:
+            let handshake = CursorAuth.makeHandshake()
+            return PollingLogin(userCode: nil, verificationURL: handshake.loginURL,
+                                poll: { try await CursorAuth.completeLogin(handshake) })
+        case .claude, .codex, .grok, .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
+            throw OAuthError.notAuthenticated
+        }
+    }
+}
+
+/// 폴링 로그인 한 번: 승인 페이지를 앱 안 Safari View로 열어 두고, 승인될 때까지 토큰을 폴링한다.
+/// Copilot은 발급받은 코드를 페이지에 입력하고, 페이지 승인만으로 끝나는 흐름은 코드가 없다.
+struct PollingLogin {
+    /// 승인 페이지에 입력할 코드. 코드 없이 승인만 하는 흐름은 nil.
+    let userCode: String?
+    /// 승인(로그인) 페이지.
+    let verificationURL: URL?
+    /// 승인될 때까지 기다려 토큰을 돌려준다. 만료·거부 시 throw, 화면 이탈(Task 취소) 시 CancellationError.
+    let poll: () async throws -> OAuthTokens
 }
 
 // MARK: - Usage 디스패치 + 공통 오케스트레이션
@@ -121,6 +193,9 @@ enum ProviderUsage {
         case .claude: return try await ClaudeUsageClient.fetch(tokens: tokens)
         case .codex: return try await CodexUsageClient.fetch(tokens: tokens)
         case .copilot: return try await CopilotUsageClient.fetch(tokens: tokens)
+        case .grok: return try await GrokUsageClient.fetch(tokens: tokens)
+        case .cursor: return try await CursorUsageClient.fetch(tokens: tokens)
+        case .kimi: return try await KimiUsageClient.fetch(tokens: tokens)
         case .openrouter: return try await OpenRouterUsageClient.fetch(tokens: tokens)
         case .deepseek: return try await DeepSeekUsageClient.fetch(tokens: tokens)
         case .poe: return try await PoeUsageClient.fetch(tokens: tokens)
@@ -144,18 +219,26 @@ enum ProviderUsage {
 
         do {
             var tokens = try await TokenStore.shared.validTokens(for: agentID, provider: provider)
-            let windows: [UsageWindow]
+            let usage: (windows: [UsageWindow], plan: String?)
             do {
-                windows = try await fetchWindows(provider, tokens: tokens)
+                usage = try await fetchUsage(provider, tokens: tokens)
             } catch UsageError.unauthorized {
                 tokens = try await TokenStore.shared.forceRefresh(for: agentID, provider: provider)
-                windows = try await fetchWindows(provider, tokens: tokens)
+                usage = try await fetchUsage(provider, tokens: tokens)
             }
+            let windows = usage.windows
 
             // 200이지만 창이 하나도 없으면 성공으로 캐싱하지 않고 명시적 에러로 처리한다.
             // (조용히 빈 스냅샷을 저장하면 last-good 캐시까지 오염되고, 카드에는 이유 없는
             //  "no usage data"만 남는다.)
             guard !windows.isEmpty else { throw UsageError.noWindows }
+
+            // 사용량 응답에 플랜 라벨이 실려 오는 provider(Grok·Cursor)는 토큰(Keychain)의 plan에
+            // 반영한다. 추가 요청 없이 매 조회에 따라오므로 수동/자동을 가리지 않는다. 없으면 기존 값 유지.
+            if let livePlan = usage.plan, livePlan != tokens.plan {
+                tokens.plan = livePlan
+                await TokenStore.shared.updatePlan(livePlan, for: agentID)
+            }
 
             // Codex plan 라이브 갱신: id_token(JWT)의 chatgpt_plan_type은 최초 로그인 시점
             // 값에 고정되어 refresh로도 안 바뀐다(실증됨). 그래서 수동 새로고침 시에는
@@ -184,6 +267,19 @@ enum ProviderUsage {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
                                  errorReason: FetchErrorReason(classifying: error))
+        }
+    }
+
+    /// 사용량 창 + 응답에 실려 오는 플랜 라벨. 플랜을 주지 않는 provider는 nil.
+    private static func fetchUsage(_ provider: AgentProvider,
+                                   tokens: OAuthTokens) async throws -> (windows: [UsageWindow], plan: String?) {
+        switch provider {
+        case .grok:
+            return try await GrokUsageClient.fetchUsage(tokens: tokens)
+        case .cursor:
+            return try await CursorUsageClient.fetchUsage(tokens: tokens)
+        case .claude, .codex, .copilot, .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
+            return (try await fetchWindows(provider, tokens: tokens), nil)
         }
     }
 

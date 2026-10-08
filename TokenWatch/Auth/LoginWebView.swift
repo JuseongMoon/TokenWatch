@@ -3,8 +3,12 @@
 //  TokenWatch
 //
 //  로그인 페이지를 WKWebView로 띄우고, OAuth 콜백 리다이렉트를 가로채
-//  authorization code를 캡처한다(Claude/Codex).
-//  콜백이 커스텀 스킴이 아니라 https 페이지라 ASWebAuthenticationSession 대신 WKWebView를 쓴다.
+//  authorization code를 캡처한다(현재는 Codex 전용).
+//  콜백이 커스텀 스킴이 아니라 http(s) 주소라 ASWebAuthenticationSession 대신 WKWebView를 쓴다.
+//
+//  ⚠️ 한계: WKUIDelegate가 없어 `window.open` 팝업이 열리지 않는다. 팝업으로 동작하는
+//     소셜 로그인(구글 "Continue with Google" 등)은 이 경로에서 실패한다. Claude는 그래서
+//     앱 안 인증 시트 방식(OAuthBrowserLoginCoordinator + LoopbackCallbackServer)으로 옮겼다.
 //
 
 import SwiftUI
@@ -15,8 +19,8 @@ struct LoginWebView: UIViewRepresentable {
     let startURL: URL
     /// 콜백에서 (code, state)를 뽑으면 호출.
     var onCode: ((String, String) -> Void)? = nil
-    /// 로드 실패 시.
-    var onError: ((String) -> Void)? = nil
+    /// 로드 실패 시 (표시 문구, 분석 코드 `webview_<n>`).
+    var onError: ((_ message: String, _ analyticsCode: String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(provider: provider, onCode: onCode, onError: onError)
@@ -38,12 +42,12 @@ struct LoginWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         let provider: AgentProvider
         let onCode: ((String, String) -> Void)?
-        let onError: ((String) -> Void)?
+        let onError: ((_ message: String, _ analyticsCode: String) -> Void)?
         private var finished = false
 
         init(provider: AgentProvider,
              onCode: ((String, String) -> Void)?,
-             onError: ((String) -> Void)?) {
+             onError: ((_ message: String, _ analyticsCode: String) -> Void)?) {
             self.provider = provider
             self.onCode = onCode
             self.onError = onError
@@ -69,7 +73,7 @@ struct LoginWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             guard !finished else { return }
-            onError?(error.localizedDescription)
+            onError?(error.localizedDescription, LoginFailureCode.webview(error))
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -77,7 +81,7 @@ struct LoginWebView: UIViewRepresentable {
             guard !finished else { return }
             let nsError = error as NSError
             if nsError.code == NSURLErrorCancelled { return }
-            onError?(error.localizedDescription)
+            onError?(error.localizedDescription, LoginFailureCode.webview(error))
         }
     }
 }

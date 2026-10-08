@@ -8,13 +8,13 @@ Claude의 5시간 세션 창이 언제 초기화되는지, ElevenLabs 크레딧�
 - 언어: 한국어 / 영어
 - Android 구현: [TokenWatchAndroid](https://github.com/JuseongMoon/TokenWatchAndroid)
 
-## 지원 서비스 7종
+## 지원 서비스 10종
 
 | 인증 방식 | 서비스 |
 | --- | --- |
-| OAuth (PKCE) | Claude, Codex |
-| OAuth Device Flow | Copilot |
-| API 키 | OpenRouter, DeepSeek, Poe, ElevenLabs |
+| OAuth (PKCE) | Claude, Codex, Grok |
+| 승인 페이지 + 토큰 폴링 | Copilot, Cursor |
+| API 키 | Kimi, OpenRouter, DeepSeek, Poe, ElevenLabs |
 
 서비스마다 사용량의 **성격이 다릅니다.** 구독형은 "기간 내 몇 % 소진"이고,
 충전형은 "잔액이 얼마"입니다. `AgentProvider`가 `authKind`와 `usageCategory`를
@@ -57,8 +57,9 @@ Claude의 사용량 엔드포인트는 429를 공격적으로 돌려줍니다.
 토큰과 API 키가 실리는 요청은 **ephemeral `URLSession`** 전용으로 분리했습니다.
 응답 캐시·쿠키·자격증명이 전부 메모리에만 있다가 사라집니다.
 민감하지 않은 공개 상태 페이지 조회는 공유 세션을 그대로 씁니다.
-토큰 자체는 Keychain에만 저장하고, 서버는 두지 않았습니다 — 앱이 각 서비스의
-공식 엔드포인트를 직접 호출합니다.
+토큰 자체는 Keychain에만 저장하고, 사용량 조회를 중계하는 서버는 두지 않았습니다 — 앱이
+각 서비스의 엔드포인트를 직접 호출합니다. 개발자 서버와 오가는 것은 읽기 전용 공지 피드 조회와,
+설정에서 끌 수 있는 로그인 실패 진단 보고(오류 코드만 전송)뿐입니다.
 → [`API/APISession.swift`](TokenWatch/API/APISession.swift), [`Auth/Keychain.swift`](TokenWatch/Auth/Keychain.swift)
 
 **5. 터미널 감성 UI**

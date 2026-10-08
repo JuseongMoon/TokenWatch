@@ -15,11 +15,14 @@ struct AgentDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
-    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage(UnusedWindowFilter.hidePercentKey) private var hideUnusedPercent = false
+    @AppStorage(UnusedWindowFilter.hideCreditKey) private var hideUnusedCredit = false
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     @State private var account: AccountInfo?
     @State private var showLogoutConfirm = false
+    /// peak 재설정을 확인 중인 충전형 창. 값이 있으면 확인 다이얼로그가 뜬다.
+    @State private var pendingPeakReset: UsageWindow?
 
     private var snapshot: AgentSnapshot? { store.snapshots[agent.id] }
     private var isLoading: Bool { store.loadingIDs.contains(agent.id) }
@@ -84,6 +87,15 @@ struct AgentDetailView: View {
                 dismiss()
             }
         )
+        .terminalConfirm(
+            item: $pendingPeakReset,
+            title: { _ in loc.creditResetTitle },
+            accountLabel: { $0.label.uppercased() },
+            message: { _ in loc.creditResetMessage },
+            confirmLabel: "[ \(loc.creditResetConfirm) ]",
+            cancelLabel: "[ \(loc.cancel) ]",
+            onConfirm: { store.resetCreditPeak(agentID: agent.id, windowLabel: $0.label) }
+        )
     }
 
     /// 수동 새로고침: 사용량을 갱신하고(Codex는 현재 plan을 라이브로 조회해 반영),
@@ -130,9 +142,9 @@ struct AgentDetailView: View {
 
     // MARK: USAGE
 
-    /// "미사용 창 숨김" 설정이 켜져 있으면 사용률 0% 게이지 창을 제외한다.
+    /// "hide unused graphs" 설정(퍼센테이지 / 충전식)에 따라 미사용 창을 제외한다.
     private func visibleWindows(_ windows: [UsageWindow]) -> [UsageWindow] {
-        hideUnusedWindows ? windows.filter { !$0.isUnused } : windows
+        UnusedWindowFilter.visible(windows, hidePercent: hideUnusedPercent, hideCredit: hideUnusedCredit)
     }
 
     private var usageCard: some View {
@@ -142,7 +154,7 @@ struct AgentDetailView: View {
                     let windows = visibleWindows(snapshot.windows)
                     if isLoading { refreshingLine }
                     if windows.isEmpty {
-                        // 모든 창이 미사용(0%)이라 숨겨진 경우 — 안내 문구.
+                        // 모든 창이 미사용이라 숨겨진 경우 — 안내 문구.
                         Text(loc.usageAllUnusedHidden)
                             .font(.term(12)).foregroundStyle(Term.dim)
                             .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
@@ -151,8 +163,8 @@ struct AgentDetailView: View {
                         ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                             if index > 0 { hDivider }
                             DetailUsageRow(window: window, loc: loc,
-                                           onResetPeak: window.estimatedTotal ? {
-                                               store.resetCreditPeak(agentID: agent.id, windowLabel: window.label)
+                                           onRequestResetPeak: window.estimatedTotal ? {
+                                               pendingPeakReset = window
                                            } : nil)
                         }
                     }
@@ -297,26 +309,32 @@ struct AgentDetailView: View {
 private struct DetailUsageRow: View {
     let window: UsageWindow
     let loc: L10n
-    /// 충전형 추정 게이지의 peak 재설정 액션(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
-    var onResetPeak: (() -> Void)? = nil
+    /// 충전형 추정 게이지의 peak 재설정 요청(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
+    /// 확인 다이얼로그는 화면 전체를 덮어야 해서 상위 AgentDetailView가 띄운다.
+    var onRequestResetPeak: (() -> Void)? = nil
 
-    @State private var showResetConfirm = false
-
-    /// 업무시간 스케줄(주간 마커용). 비어 있으면 nil → 균일 흐름.
+    /// 업무시간 스케줄(주간 마커용).
     @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
+    /// 업무시간 기능 on/off. 키 부재(nil)면 스케줄 유무로 판단 — 구버전 사용자 보존.
+    @AppStorage(workHoursEnabledStorageKey) private var workHoursEnabled: Bool?
 
     private var usedFraction: Double { max(0, min(1, window.usedPercent / 100)) }
     private var statusColor: Color { Term.statusColor(remainingPercent: window.remainingPercent) }
 
-    /// 주간 창의 마커 위치. 업무시간 스케줄이 있으면 그 시간에만 흐르고, 없거나 세션 창이면 실시간 균일.
-    private func markerFraction(at now: Date) -> Double? {
-        guard window.kind == .weekly else { return window.elapsedFraction(at: now) }
-        return window.markerFraction(at: now, schedule: WorkHoursSchedule.active(from: workHoursRaw))
+    /// 마커에 실제로 쓸 스케줄. 기능이 꺼졌거나 비어 있으면 nil → 균일 흐름.
+    private var activeSchedule: WorkHoursSchedule? {
+        WorkHoursSchedule.active(from: workHoursRaw, enabled: workHoursEnabled)
     }
 
-    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — 주간 창 + 스케줄 활성 + 지금이 업무시간 밖일 때만.
+    /// 주간 창의 마커 위치. 업무시간이 켜져 있으면 그 시간에만 흐르고, 꺼졌거나 세션 창이면 실시간 균일.
+    private func markerFraction(at now: Date) -> Double? {
+        guard window.kind == .weekly else { return window.elapsedFraction(at: now) }
+        return window.markerFraction(at: now, schedule: activeSchedule)
+    }
+
+    /// 마커가 "멈춤"(업무시간 밖) 상태인지 — 주간 창 + 업무시간 활성 + 지금이 업무시간 밖일 때만.
     private func markerPaused(at now: Date) -> Bool {
-        guard window.kind == .weekly, let schedule = WorkHoursSchedule.active(from: workHoursRaw) else { return false }
+        guard window.kind == .weekly, let schedule = activeSchedule else { return false }
         return !WorkHours.isWorkingTime(at: now, schedule: schedule)
     }
 
@@ -349,8 +367,8 @@ private struct DetailUsageRow: View {
                     Text(loc.creditApproxNote)
                         .font(.term(11)).foregroundStyle(Term.dim)
                     Spacer(minLength: 0)
-                    if onResetPeak != nil {
-                        Button { showResetConfirm = true } label: {
+                    if let onRequestResetPeak {
+                        Button(action: onRequestResetPeak) {
                             Text(loc.creditResetButton)
                                 .font(.term(11)).foregroundStyle(Term.yellow)
                         }
@@ -358,12 +376,6 @@ private struct DetailUsageRow: View {
                     }
                 }
             }
-        }
-        .confirmationDialog(loc.creditResetTitle, isPresented: $showResetConfirm, titleVisibility: .visible) {
-            Button(loc.creditResetConfirm, role: .destructive) { onResetPeak?() }
-            Button(loc.cancel, role: .cancel) {}
-        } message: {
-            Text(loc.creditResetMessage)
         }
     }
 
@@ -483,7 +495,7 @@ private struct DetailUsageRow: View {
                                            kind: .weekly, style: .creditGauge,
                                            valueText: "18.00 USD", balanceRemaining: 18,
                                            estimatedTotal: true),
-                       loc: L10n(lang: .ko), onResetPeak: {})
+                       loc: L10n(lang: .ko), onRequestResetPeak: {})
     }
     .padding()
     .background(Term.bg)

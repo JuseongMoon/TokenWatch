@@ -6,6 +6,7 @@
 //  - GoogleService-Info.plist가 번들에 없으면 전부 no-op — plist 미동봉 빌드에서도 안전.
 //  - DEBUG 빌드는 -FIRDebugEnabled 실행 인자(DebugView 검증) 때만 수집 — 개발 노이즈 차단.
 //  - 옵트아웃(설정 PRIVACY): 기본 ON, 끄면 SDK 수집 자체를 중지하고 래퍼에서도 원천 차단.
+//  - login_fail은 같은 게이트로 로그인 실패 진단 보고(LoginFailureReporter)에도 보낸다.
 //
 
 import Foundation
@@ -68,6 +69,10 @@ final class AnalyticsService {
     }
 
     func log(_ event: AnalyticsEvent) {
+        // 로그인 실패 진단 보고 — Firebase 구성 여부와 별개로 자체 게이트를 탄다(DEBUG 인자 예외).
+        if case .loginFail(let provider, let stage, let code) = event, loginFailureReportAllowed {
+            LoginFailureReporter.report(provider: provider, stage: stage, code: code)
+        }
         guard configured, isEnabled else { return }
         let demo = isDemo()
         if event.isProviderScoped, demo { return }
@@ -75,6 +80,17 @@ final class AnalyticsService {
         // 데모 중 살아남는 이벤트(screen_view 등)에서도 provider 차원은 제거한다.
         if demo { params["provider"] = nil }
         Analytics.logEvent(event.name, parameters: params.isEmpty ? nil : params)
+    }
+
+    /// 로그인 실패 진단 보고를 보내도 되는지 — 분석과 같은 게이트(구성·옵트아웃·데모).
+    /// DEBUG 빌드는 -FIRDebugEnabled와 무관하게 -TWReportLoginFailures 인자가 있을 때만 보낸다.
+    private var loginFailureReportAllowed: Bool {
+        guard isEnabled, !isDemo() else { return false }
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("-TWReportLoginFailures")
+        #else
+        return configured
+        #endif
     }
 
     // MARK: 유저 속성
@@ -104,7 +120,7 @@ final class AnalyticsService {
         setProperty(session ? (weekly ? "both" : "session") : (weekly ? "weekly" : "none"), "notify")
 
         let hours = WorkHoursSchedule(encoded: d.string(forKey: workHoursStorageKey) ?? "").onHours
-        setProperty(Self.workHoursBucket(hours), "work_hours")
+        setProperty(Self.workHoursBucket(hours, enabled: WorkHoursSchedule.isEnabled(in: d)), "work_hours")
 
         let heartbeat = d.bool(forKey: "tokenwatch.heartbeatCursor")
         let tracking = d.bool(forKey: "tokenwatch.heartbeatTracking")
@@ -117,8 +133,17 @@ final class AnalyticsService {
         }
     }
 
-    /// 주당 업무시간 → 속성 버킷.
-    static func workHoursBucket(_ hours: Int) -> String {
+    /// 알림 권한 상태(`NotificationManager.authorizationTag()`) — provisional로 조용히 시작하므로
+    /// 사용자가 알림센터에서 승격했는지·껐는지를 본다. 설정값과 같은 성격이라 데모 게이트가 없다.
+    func syncNotificationAuthorization(_ tag: String) {
+        guard configured, isEnabled else { return }
+        setProperty(tag, "notif_auth")
+    }
+
+    /// 주당 업무시간 → 속성 버킷. 기능이 꺼져 있으면 시간 수와 무관하게 "off"
+    /// (토글을 끈 사용자가 시간대를 보존하고 있어도 "실효 없음"으로 보고한다).
+    static func workHoursBucket(_ hours: Int, enabled: Bool) -> String {
+        guard enabled else { return "off" }
         switch hours {
         case ..<1: return "off"
         case 1...20: return "1-20"

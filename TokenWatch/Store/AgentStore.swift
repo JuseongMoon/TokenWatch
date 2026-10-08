@@ -27,7 +27,7 @@ final class AgentStore {
     private(set) var loadingIDs: Set<UUID> = []
 
     /// provider별 서비스 운영 상태(정상/장애/점검). 사용량과 별개 축이라 provider 단위로
-    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter)는 키가 없으며,
+    /// 캐시한다. 엔드포인트가 없는 provider(OpenRouter, Grok)는 키가 없으며,
     /// UI는 그 경우를 "알 수 없음"으로 취급한다.
     private(set) var serviceStatus: [AgentProvider: ServiceHealth] = [:]
     /// provider별 마지막 "성공한" 상태 조회 시각 — 짧은 간격 중복 조회를 막는 스로틀 기준.
@@ -59,6 +59,9 @@ final class AgentStore {
     /// 예약 재조정 재진입 가드 — refreshAll의 병렬 refresh가 pending 조회를 인터리브하지 않게.
     @ObservationIgnored private var rescheduleInFlight = false
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
+
+    /// 리뷰 프롬프트를 띄울 조건이 이번 실행에서 충족됐다 — ContentView가 시트·공지가 없을 때 띄운다.
+    private(set) var reviewPromptPending = false
 
     /// 데모 모드(로그인 없이 표본 데이터로 둘러보기) 여부. 메모리 한정 — 앱을 다시 켜면 항상 꺼진 상태다.
     /// 켜져 있는 동안 이 스토어는 네트워크·Keychain·UserDefaults·알림을 일절 건드리지 않는다.
@@ -178,6 +181,16 @@ final class AgentStore {
         // 데모 중에는 목록이 표본으로 대체돼 있어, 추가하면 나갈 때 사라지고 토큰만 남는다.
         // UI가 데모 중 추가 진입점을 감추지만 방어적으로 한 번 더 막는다.
         guard !isDemo else { return false }
+        // 같은 계정으로 다시 로그인했으면 카드를 새로 만들지 않고 토큰만 교체한다.
+        // (인증 시트는 Safari에 로그인된 계정을 그대로 쓰므로 같은 계정이 다시 들어오기 쉽다.
+        //  카드가 둘이면 한 계정의 refresh token 계열을 두 곳에서 갱신해 로테이션 충돌이 난다.)
+        if let email = tokens.accountEmail,
+           let existing = agents.first(where: { $0.provider == provider && $0.accountLabel == email }) {
+            guard await TokenStore.shared.save(tokens, for: existing.id) else { return false }
+            AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+            await refresh(existing)
+            return true
+        }
         var agent = Agent(provider: provider)
         agent.accountLabel = tokens.accountEmail ?? tokens.plan
         guard await TokenStore.shared.save(tokens, for: agent.id) else { return false }
@@ -187,9 +200,16 @@ final class AgentStore {
         AnalyticsService.shared.syncUserProperties(agents: agents)
         // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
         await NotificationManager.shared.requestAuthorizationIfNeeded()
+        await NotificationManager.shared.syncAuthorizationProperty()
         // 이 refresh는 직전 관측이 없어 자동으로 baseline만 기록한다(처음 추가 시 무알림).
         await refresh(agent)
         return true
+    }
+
+    /// 리뷰 프롬프트를 요청했다 — 설치당 1회이므로 영구 기록한다.
+    func markReviewPrompted() {
+        ReviewPromptState().markPrompted()
+        reviewPromptPending = false
     }
 
     func remove(_ agent: Agent) {
@@ -339,6 +359,19 @@ final class AgentStore {
         if snapshot.error == nil, !UserDefaults.standard.bool(forKey: Self.activatedKey) {
             UserDefaults.standard.set(true, forKey: Self.activatedKey)
             AnalyticsService.shared.log(.activationComplete(provider: agent.provider))
+        }
+
+        // 리뷰 프롬프트: 가치를 이미 확인한 사용자가 모든 카드가 정상인 화면을 보고 있을 때만.
+        if !reviewPromptPending {
+            let review = ReviewPromptState()
+            let healthy = agents.allSatisfy { a in
+                guard let s = snapshots[a.id] else { return false }
+                return s.error == nil && !s.windows.isEmpty
+            }
+            reviewPromptPending = ReviewPromptPolicy.shouldPrompt(
+                activated: UserDefaults.standard.bool(forKey: Self.activatedKey),
+                firstLaunchAt: review.firstLaunchAt, launchCount: review.launchCount,
+                alreadyPrompted: review.prompted, allSnapshotsHealthy: healthy, now: Date())
         }
 
         // 플랜 라벨을 얻으면 accountLabel 보강. 이메일을 표시 중이면 건드리지 않고,

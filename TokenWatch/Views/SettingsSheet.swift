@@ -45,10 +45,13 @@ struct SettingsSheet: View {
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
     @AppStorage(NotificationDefaults.sessionKey) private var notifySession = false
     @AppStorage(NotificationDefaults.weeklyKey) private var notifyWeekly = true
-    @AppStorage("tokenwatch.hideUnusedWindows") private var hideUnusedWindows = false
+    @AppStorage(UnusedWindowFilter.hidePercentKey) private var hideUnusedPercent = false
+    @AppStorage(UnusedWindowFilter.hideCreditKey) private var hideUnusedCredit = false
     @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
-    /// 업무시간 스케줄(168자 "0/1"). 비어 있으면 기능 꺼짐(주간 마커 균일 흐름).
+    /// 업무시간 시간대(168자 "0/1"). 기능을 꺼도 이 값은 그대로 보존된다.
     @AppStorage(workHoursStorageKey) private var workHoursRaw = ""
+    /// 업무시간 기능 on/off. 키 부재(nil)면 스케줄 유무로 판단 — 구버전 사용자 보존.
+    @AppStorage(workHoursEnabledStorageKey) private var workHoursEnabledRaw: Bool?
     @AppStorage("tokenwatch.heartbeatCursor") private var heartbeatCursor = false
     @AppStorage("tokenwatch.heartbeatTracking") private var heartbeatTracking = false
     /// 다중 선택된 추적 대상. GraphOption.id("uuid|label")들을 개행으로 이어 저장.
@@ -285,19 +288,18 @@ struct SettingsSheet: View {
         TerminalBox(title: "DISPLAY") {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        hideUnusedWindows.toggle()
-                        logSetting("hide_unused", onOff(hideUnusedWindows))
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(hideUnusedWindows ? "[x]" : "[ ]")
-                                .foregroundStyle(hideUnusedWindows ? Term.green : Term.dim)
-                            Text("hide unused (0%) graphs").foregroundStyle(Term.fg)
-                            Spacer()
-                        }
-                        .font(.term(14))
+                    Text("hide unused graphs")
+                        .font(.term(14)).foregroundStyle(Term.fg)
+
+                    hideUnusedToggle("percentage (0%)", isOn: hideUnusedPercent) {
+                        hideUnusedPercent.toggle()
+                        // 단일 설정 시절 이름 유지 — GA 시계열 연속성.
+                        logSetting("hide_unused", onOff(hideUnusedPercent))
                     }
-                    .buttonStyle(.plain)
+                    hideUnusedToggle("credit (never used)", isOn: hideUnusedCredit) {
+                        hideUnusedCredit.toggle()
+                        logSetting("hide_unused_credit", onOff(hideUnusedCredit))
+                    }
 
                     Text(loc.settingsHideUnusedHelp)
                         .font(.term(10)).foregroundStyle(Term.dim)
@@ -327,11 +329,35 @@ struct SettingsSheet: View {
         }
     }
 
+    /// "hide unused graphs" 제목 아래 하위 체크박스(한 단계 작은 폰트, 살짝 들여쓰기).
+    private func hideUnusedToggle(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(isOn ? "[x]" : "[ ]")
+                    .foregroundStyle(isOn ? Term.green : Term.dim)
+                Text(title).foregroundStyle(isOn ? Term.fg : Term.dim)
+                Spacer()
+            }
+            .font(.term(12))
+            .padding(.leading, 8)
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: 업무시간
 
+    /// 저장된 시간대. 요약 라벨과 색 판정이 같은 값을 보게 한 번만 디코드한다.
+    private var workHoursSchedule: WorkHoursSchedule { WorkHoursSchedule(encoded: workHoursRaw) }
+
+    /// 현재 유효한 on/off(명시 설정 우선, 없으면 시간대 유무로 파생).
+    private var workHoursEnabled: Bool {
+        WorkHoursSchedule.isEnabled(explicit: workHoursEnabledRaw, raw: workHoursRaw)
+    }
+
     /// 설정 버튼 옆 요약 라벨("설정 안 됨" 또는 "주 N시간").
+    /// 기능을 꺼도 저장된 시간대를 그대로 보여준다 — 설정이 살아있음을 눈으로 확인시키는 게 핵심.
     private var workHoursSummaryLabel: String {
-        let s = WorkHoursSchedule(encoded: workHoursRaw)
+        let s = workHoursSchedule
         return s.isEmpty ? loc.workHoursNotSet : loc.workHoursSummary(hours: s.onHours)
     }
 
@@ -339,12 +365,31 @@ struct SettingsSheet: View {
         TerminalBox(title: "WORK HOURS") {
             VStack(alignment: .leading, spacing: 8) {
                 Button {
+                    let next = !workHoursEnabled
+                    workHoursEnabledRaw = next
+                    logSetting("work_hours_enabled", onOff(next))
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(workHoursEnabled ? "[x]" : "[ ]")
+                            .foregroundStyle(workHoursEnabled ? Term.green : Term.dim)
+                        Text("use work hours").foregroundStyle(Term.fg)
+                        Spacer()
+                    }
+                    .font(.term(14))
+                }
+                .buttonStyle(.plain)
+
+                // 꺼진 상태에서도 시간대 편집은 열어 둔다(미리 준비해 두거나 고칠 수 있게).
+                Button {
                     showingWorkHours = true
                 } label: {
                     HStack(spacing: 8) {
-                        Text(loc.workHoursButton).foregroundStyle(Term.green)
+                        Text(loc.workHoursButton)
+                            .foregroundStyle(workHoursEnabled ? Term.green : Term.dim)
                         Spacer()
-                        Text(workHoursSummaryLabel).foregroundStyle(Term.dim)
+                        Text(workHoursSummaryLabel)
+                            .foregroundStyle(workHoursEnabled && !workHoursSchedule.isEmpty
+                                             ? Term.green : Term.dim)
                     }
                     .font(.term(14))
                 }
@@ -610,7 +655,17 @@ struct SettingsSheet: View {
 
     private var infoSection: some View {
         TerminalBox(title: "INFO") {
-            KVRow(key: "version", value: appVersion, keyWidth: 84)
+            VStack(alignment: .leading, spacing: 8) {
+                KVRow(key: "version", value: appVersion, keyWidth: 84)
+                Button {
+                    AnalyticsService.shared.log(.storeReview(source: .settings))
+                    UIApplication.shared.open(ReviewPromptPolicy.writeReviewURL)
+                } label: {
+                    Text("rate on App Store")
+                        .font(.term(12)).foregroundStyle(Term.cyan)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 

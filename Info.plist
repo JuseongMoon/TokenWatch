@@ -6,21 +6,30 @@
 	<array>
 		<string>com.ScienceFiction.TokenWatch.refresh</string>
 	</array>
-	<key>UIBackgroundModes</key>
+	<key>CFBundleURLTypes</key>
 	<array>
-		<string>fetch</string>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.ScienceFiction.TokenWatch</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tokenwatch</string>
+			</array>
+		</dict>
 	</array>
-	<!-- Firebase Analytics 최소 수집 구성: IDFV 수집 끔(식별자는 무작위 앱 인스턴스 ID만),
-	     광고 관련 동의 전부 거부, screen_view는 수동 로깅(자동은 SwiftUI에서 무의미). -->
 	<key>FirebaseAutomaticScreenReportingEnabled</key>
 	<false/>
-	<key>GOOGLE_ANALYTICS_IDFV_COLLECTION_ENABLED</key>
+	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS</key>
 	<false/>
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE</key>
 	<false/>
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_USER_DATA</key>
 	<false/>
-	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS</key>
+	<key>GOOGLE_ANALYTICS_IDFV_COLLECTION_ENABLED</key>
 	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

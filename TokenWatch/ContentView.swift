@@ -3,14 +3,17 @@
 //  TokenWatch
 //
 //  메인 화면(터미널 스타일): 상단 프롬프트 헤더 + 에이전트 카드 리스트 +
-//  하단 추가 셀. 우측 상단 [SETTINGS] 설정 버튼.
+//  하단 추가 셀. 우측 상단에 공지함 [✉]·설정 [⚙] 버튼.
 //
 
 import SwiftUI
+import StoreKit
 
 struct ContentView: View {
     @Environment(AgentStore.self) private var store
+    @Environment(AnnouncementStore.self) private var announcements
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.requestReview) private var requestReview
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
     @AppStorage("tokenwatch.keepScreenOn") private var keepScreenOn = false
@@ -23,13 +26,17 @@ struct ContentView: View {
 
     @State private var showingAdd = false
     @State private var showingSettings = false
+    @State private var showingAnnouncements = false
+
+    /// 시트가 하나라도 떠 있는지 — 공지 팝업 보류 판단에 쓴다(아래 overlay 주석 참고).
+    private var sheetShowing: Bool { showingAdd || showingSettings || showingAnnouncements }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Term.bg.ignoresSafeArea()
                 VStack(spacing: 0) {
-                    topBar   // 앱 이름·상태 라인·[SETTINGS] 를 최상단에 고정
+                    topBar   // 앱 이름·상태 라인·[✉]·[⚙] 를 최상단에 고정
                     list     // 아래 리스트만 스크롤
                 }
             }
@@ -41,8 +48,20 @@ struct ContentView: View {
             .sheet(isPresented: $showingSettings) {
                 SettingsSheet().environment(store)
             }
+            .sheet(isPresented: $showingAnnouncements) {
+                AnnouncementListSheet().environment(announcements)
+            }
         }
         .tint(Term.green)
+        // 서버 공지 팝업. NavigationStack 바깥에 얹어 push된 상세 화면 위에도 뜬다.
+        // 시트(추가/설정/공지함)는 UIKit 프레젠테이션이라 이 오버레이를 덮으므로, 시트가 열려 있으면
+        // 보류하고 닫힌 뒤에 뜬다(로그인 퍼널을 가로막지 않기 위해서도).
+        .overlay {
+            if let announcement = announcements.presented, !sheetShowing {
+                AnnouncementOverlay(announcement: announcement)
+            }
+        }
+        .animation(.snappy(duration: 0.22), value: announcements.presented?.id)
         // 씬 라이프사이클: 활성일 때만 자동 새로고침. 화면 유지는 전면(.active/.inactive)에서
         // 유지하고 백그라운드에서만 해제한다(아래 applyIdleTimer 참고).
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -55,12 +74,38 @@ struct ContentView: View {
             applyIdleTimer(phase: scenePhase)
         }
         .onAppear { AnalyticsService.shared.log(.screenView(.main)) }
+        // 리뷰 프롬프트: 조건 충족(스토어 판정) 후 시트·공지 팝업이 모두 걷힌 메인 화면에서만.
+        .onChange(of: store.reviewPromptPending) { _, _ in tryPresentReviewPrompt() }
+        .onChange(of: sheetShowing) { _, _ in tryPresentReviewPrompt() }
+        .onChange(of: announcements.presented?.id) { _, _ in tryPresentReviewPrompt() }
+    }
+
+    /// 리뷰 프롬프트를 띄울 수 있는 화면 상태인지 — 공지 오버레이와 같은 이유로 시트를 피한다.
+    private var canPresentReviewPrompt: Bool {
+        store.reviewPromptPending && !sheetShowing && announcements.presented == nil
+            && scenePhase == .active
+    }
+
+    /// 게이지가 그려진 뒤 잠깐 기다렸다가 조건을 다시 확인하고 요청한다(그 사이 시트가 열릴 수 있다).
+    private func tryPresentReviewPrompt() {
+        guard canPresentReviewPrompt else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard canPresentReviewPrompt else { return }
+            store.markReviewPrompted()
+            requestReview()
+            AnalyticsService.shared.log(.storeReview(source: .prompt))
+        }
     }
 
     private func applyScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
             store.startAutoRefresh(interval: refreshInterval)
+            // 콜드 스타트(initial: true)와 포그라운드 복귀 모두 여기를 지난다. 스로틀은 스토어가 판단.
+            announcements.check()
+            // 알림센터에서 권한을 승격·해제했을 수 있으니 복귀할 때마다 속성을 맞춘다.
+            Task { await NotificationManager.shared.syncAuthorizationProperty() }
         default:
             store.stopAutoRefresh()
         }
@@ -81,7 +126,7 @@ struct ContentView: View {
 
     // MARK: 상단 고정 바
 
-    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[SETTINGS] 모두 스크롤과 무관하게 고정.
+    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[✉]·[⚙] 모두 스크롤과 무관하게 고정.
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
@@ -89,20 +134,32 @@ struct ContentView: View {
                 statusPrompt
             }
             Spacer(minLength: 8)
-            Button {
-                showingSettings = true
-            } label: {
-                Text("[SETTINGS]")
-                    .font(.term(13, weight: .semibold))
-                    .foregroundStyle(Term.cyan)
+            HStack(spacing: 10) {
+                announcementsButton
+                TerminalGlyphButton(systemImage: "gearshape") { showingSettings = true }
+                    .accessibilityLabel(loc.a11ySettings)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(loc.a11ySettings)
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 10)
         .background(Term.bg)
+    }
+
+    /// 공지함 버튼. 안 읽은 공지가 있으면 우상단에 초록 점을 얹는다(개수는 접근성 라벨로만 읽어준다).
+    private var announcementsButton: some View {
+        let unread = announcements.unreadCount
+        return TerminalGlyphButton(systemImage: "envelope") { showingAnnouncements = true }
+            .overlay(alignment: .topTrailing) {
+                if unread > 0 {
+                    Circle()
+                        .fill(Term.green)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 2, y: -2)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityLabel(loc.a11yAnnouncements(unread: unread))
     }
 
     /// `tokenwatch` 타이틀의 글자별 색 — 참조 이미지 `ultrathink`의 파스텔 무지개

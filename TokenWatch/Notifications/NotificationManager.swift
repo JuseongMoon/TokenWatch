@@ -67,6 +67,22 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         await center.notificationSettings().authorizationStatus == .denied
     }
 
+    /// 권한 상태의 분석용 태그(유저 속성 `notif_auth`).
+    func authorizationTag() async -> String {
+        switch await center.notificationSettings().authorizationStatus {
+        case .authorized: return "authorized"
+        case .provisional: return "provisional"
+        case .denied: return "denied"
+        case .notDetermined: return "not_determined"
+        default: return "other"
+        }
+    }
+
+    /// 현재 권한 상태를 유저 속성에 반영한다 — 포그라운드 진입과 권한 요청 직후.
+    func syncAuthorizationProperty() async {
+        AnalyticsService.shared.syncNotificationAuthorization(await authorizationTag())
+    }
+
     // MARK: 감지형 즉시 발화
 
     /// 서프라이즈 리셋 이벤트들을 즉시 알림으로 발화한다(권한 있을 때만).

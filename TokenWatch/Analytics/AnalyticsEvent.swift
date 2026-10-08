@@ -2,7 +2,7 @@
 //  AnalyticsEvent.swift
 //  TokenWatch
 //
-//  분석 이벤트의 타입세이프 정의(docs/ga-analytics-plan.md §4와 1:1). Firebase를 모른다 —
+//  분석 이벤트의 타입세이프 정의(계측 설계 문서와 1:1 — 문서는 비공개 docs/, 저장소 밖). Firebase를 모른다 —
 //  이름/파라미터로만 변환되고 실제 전송은 AnalyticsService(유일한 Firebase 접점)가 한다.
 //  파라미터에는 provider rawValue·열거 문자열·정수만 허용한다. 계정 라벨/이메일/토큰/
 //  원문 에러 메시지/사용률 수치는 어떤 경로로도 넣지 않는다.
@@ -13,6 +13,8 @@ import Foundation
 /// 로그인 퍼널에서 실패/이탈이 일어난 단계.
 enum LoginStage: String, Sendable {
     case authorize                          // 웹뷰 인가 페이지 진행 중
+    case browserWait = "browser_wait"       // 로그인 창(인증 시트)에서 승인을 기다리는 중
+    case codeEntry = "code_entry"           // 인가 코드 직접 입력(붙여넣기) 화면
     case stateMismatch = "state_mismatch"   // CSRF state 불일치
     case exchange                           // code → token 교환
     case devicePoll = "device_poll"         // device flow 코드 발급·승인 폴링
@@ -39,6 +41,8 @@ enum ScreenName: String, Sendable {
     case agentDetail = "agent_detail"
     case settings
     case workHours = "work_hours"
+    case announcements
+    case announcementDetail = "announcement_detail"
 
     /// screen_class로 함께 보낼 뷰 이름. 생략하면 SDK가 UIHostingController의 제네릭
     /// 타입명(274자)을 채워 넣는데, 이는 100자 제한을 넘겨 이벤트에 오류 파라미터가 붙고
@@ -50,8 +54,16 @@ enum ScreenName: String, Sendable {
         case .agentDetail: return "AgentDetailView"
         case .settings: return "SettingsSheet"
         case .workHours: return "WorkHoursEditor"
+        case .announcements: return "AnnouncementListSheet"
+        case .announcementDetail: return "AnnouncementDetailView"
         }
     }
+}
+
+/// 공지 팝업에서 사용자가 누른 버튼.
+enum AnnouncementAction: String, Sendable {
+    case close                              // [닫기] — 이번 실행 동안만 숨김
+    case never                              // [다시 열지 않기] — 영구 제외
 }
 
 /// 앱이 기록하는 모든 분석 이벤트.
@@ -75,6 +87,19 @@ enum AnalyticsEvent {
     // 신뢰성(정상↔에러 전이 시에만 — AgentStore가 보장)
     case usageFetchError(provider: AgentProvider, reason: FetchErrorReason)
     case usageFetchRecover(provider: AgentProvider)
+    // 공지 팝업·공지함 — ID·종류·버튼만. 제목/본문 텍스트는 어떤 경로로도 보내지 않는다.
+    case announcementShown(id: String, kind: Announcement.Kind)
+    case announcementAction(id: String, action: AnnouncementAction)
+    /// 공지함 목록에서 상세를 열어 다시 읽었다(팝업으로 본 것과 구분).
+    case announcementOpen(id: String, kind: Announcement.Kind)
+    // 평점·리뷰 — 시스템 프롬프트를 요청했거나 설정에서 리뷰 화면을 열었다.
+    // (프롬프트는 시스템이 실제로 띄울지 결정하므로 "요청"까지만 셀 수 있다.)
+    case storeReview(source: StoreReviewSource)
+
+    enum StoreReviewSource: String, Sendable {
+        case prompt
+        case settings
+    }
 
     enum DemoSource: String, Sendable {
         case emptyList = "empty_list"
@@ -110,6 +135,10 @@ enum AnalyticsEvent {
         case .agentRemove: return "agent_remove"
         case .usageFetchError: return "usage_fetch_error"
         case .usageFetchRecover: return "usage_fetch_recover"
+        case .announcementShown: return "announcement_shown"
+        case .announcementAction: return "announcement_action"
+        case .announcementOpen: return "announcement_open"
+        case .storeReview: return "store_review"
         }
     }
 
@@ -121,7 +150,7 @@ enum AnalyticsEvent {
             return ["provider": p.rawValue, "auth_kind": Self.authKindTag(p), "agents_total": total]
         case .loginFail(let p, let stage, let code):
             return ["provider": p.rawValue, "auth_kind": Self.authKindTag(p),
-                    "stage": stage.rawValue, "code": String(code.prefix(40))]
+                    "stage": stage.rawValue, "code": LoginFailureCode.sanitized(code)]
         case .loginAbandon(let p, let stage):
             return ["provider": p.rawValue, "stage": stage.rawValue]
         case .activationComplete(let p):
@@ -147,6 +176,14 @@ enum AnalyticsEvent {
             return ["provider": p.rawValue, "reason": reason.rawValue]
         case .usageFetchRecover(let p):
             return ["provider": p.rawValue]
+        case .announcementShown(let id, let kind):
+            return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
+        case .announcementAction(let id, let action):
+            return ["announcement_id": String(id.prefix(40)), "action": action.rawValue]
+        case .announcementOpen(let id, let kind):
+            return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
+        case .storeReview(let source):
+            return ["source": source.rawValue]
         }
     }
 
@@ -154,16 +191,19 @@ enum AnalyticsEvent {
     /// 오염시키지 않도록 AnalyticsService가 이 값으로 거른다(데모 격리 원칙과 일관).
     var isProviderScoped: Bool {
         switch self {
-        case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen:
+        case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen,
+             .announcementShown, .announcementAction, .announcementOpen, .storeReview:
             return false
         default:
             return true
         }
     }
 
-    private static func authKindTag(_ provider: AgentProvider) -> String {
+    /// `auth_kind` 값. 로그인 실패 진단 보고(LoginFailureReporter)도 같은 값을 쓴다.
+    static func authKindTag(_ provider: AgentProvider) -> String {
         switch provider.authKind {
         case .oauthCode: return "oauth"
+        case .oauthBrowser: return "oauth_browser"
         case .oauthDeviceFlow: return "device"
         case .apiKey: return "api_key"
         }
@@ -171,12 +211,15 @@ enum AnalyticsEvent {
 }
 
 extension AgentProvider {
-    /// 유저 속성 `providers`용 축약 태그 — GA4 속성값 36자 제한 대응(7종 전부여도 17자).
+    /// 유저 속성 `providers`용 축약 태그 — GA4 속성값 36자 제한 대응(10종 전부여도 26자).
     var analyticsShortTag: String {
         switch self {
         case .claude: return "c"
         case .codex: return "x"
         case .copilot: return "cp"
+        case .grok: return "gr"
+        case .cursor: return "cr"
+        case .kimi: return "km"
         case .openrouter: return "or"
         case .deepseek: return "ds"
         case .poe: return "p"

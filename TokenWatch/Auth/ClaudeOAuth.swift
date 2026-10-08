@@ -35,8 +35,9 @@ struct OAuthTokens: Codable, Sendable {
 }
 
 enum OAuthError: LocalizedError {
-    case exchangeFailed(String)
-    case refreshFailed(String)
+    /// `code`는 로그인 실패 분석용 기계 코드(`LoginFailureCode`). 표시 문구에는 쓰지 않는다.
+    case exchangeFailed(String, code: String? = nil)
+    case refreshFailed(String, code: String? = nil)
     /// 서버가 refresh token 자체를 거부(invalid_grant) — 재시도로 복구되지 않는다.
     /// 로테이션으로 무효화됐거나 만료된 경우로, 재로그인 외에는 방법이 없다.
     case refreshRevoked
@@ -45,8 +46,8 @@ enum OAuthError: LocalizedError {
     var errorDescription: String? {
         let loc = L10n(lang: currentLang())
         switch self {
-        case .exchangeFailed(let m): return loc.errTokenExchange(m)
-        case .refreshFailed(let m): return loc.errTokenRefresh(m)
+        case .exchangeFailed(let m, _): return loc.errTokenExchange(m)
+        case .refreshFailed(let m, _): return loc.errTokenRefresh(m)
         case .refreshRevoked: return loc.errAuthExpired
         case .notAuthenticated: return loc.errNotAuthenticated
         }
@@ -64,15 +65,22 @@ enum ClaudeOAuth {
     /// 이 콜백 경로로 리다이렉트되면 code/state를 뽑아낸다.
     static let callbackPrefix = "https://console.anthropic.com/oauth/code/callback"
 
+    /// 인증 시트 로그인에서 쓰는 루프백 콜백. 앱이 띄운 `LoopbackCallbackServer`가 받는다.
+    static func loopbackRedirectURI(port: UInt16) -> String {
+        "http://localhost:\(port)/callback"
+    }
+
     // MARK: authorize URL
 
-    static func authorizeURL(pkce: PKCE) -> URL {
+    /// - Parameter redirect: 기본값은 콘솔 코드 페이지(수동 복사 흐름). 인증 시트
+    ///   자동 수신 흐름에서는 `loopbackRedirectURI(port:)`를 넘긴다.
+    static func authorizeURL(pkce: PKCE, redirect: String? = nil) -> URL {
         var comp = URLComponents(string: authorizeURL)!
         comp.queryItems = [
             .init(name: "code", value: "true"),
             .init(name: "client_id", value: clientID),
             .init(name: "response_type", value: "code"),
-            .init(name: "redirect_uri", value: redirectURI),
+            .init(name: "redirect_uri", value: redirect ?? redirectURI),
             .init(name: "scope", value: scopes.joined(separator: " ")),
             .init(name: "code_challenge", value: pkce.challenge),
             .init(name: "code_challenge_method", value: "S256"),
@@ -92,22 +100,50 @@ enum ClaudeOAuth {
         return (code, state)
     }
 
+    /// 사용자가 콘솔 페이지에서 복사해 붙여넣은 문자열에서 code/state를 뽑는다.
+    /// 콘솔은 `code#state` 형태로 보여주지만, code만 복사해 오는 경우도 흔해
+    /// state가 없으면 우리가 시작할 때 만든 값(`fallbackState`)으로 채운다.
+    /// 콜백 URL을 통째로 붙여넣은 경우도 받아준다.
+    static func parseManualCode(_ text: String, fallbackState: String) -> (code: String, state: String)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("http"), let url = URL(string: trimmed), let parsed = parseCallback(url) {
+            return (parsed.code, parsed.state.isEmpty ? fallbackState : parsed.state)
+        }
+
+        let parts = trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let code = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else { return nil }
+        let state = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        return (code, state.isEmpty ? fallbackState : state)
+    }
+
     // MARK: 토큰 교환 / 갱신
 
-    static func exchange(code: String, state: String, pkce: PKCE) async throws -> OAuthTokens {
+    /// - Parameter redirect: authorize에 쓴 값과 반드시 같아야 한다(OAuth 규약).
+    ///   nil이면 기본 콘솔 콜백(`redirectURI`).
+    static func exchange(code: String, state: String, pkce: PKCE,
+                         redirect: String? = nil) async throws -> OAuthTokens {
         let body = form([
             "grant_type": "authorization_code",
             "code": code,
             "state": state,
             "client_id": clientID,
-            "redirect_uri": redirectURI,
+            "redirect_uri": redirect ?? redirectURI,
             "code_verifier": pkce.verifier,
         ])
         do {
-            let resp = try await postToken(body)
+            let resp = try await postTokenRetryingTransientFailure(body)
             return tokens(from: resp, fallbackScopes: scopes, previousRefresh: nil)
         } catch let e as OAuthError {
-            if case .refreshFailed(let m) = e { throw OAuthError.exchangeFailed(m) }
+            if case .refreshFailed(let m, let code) = e { throw OAuthError.exchangeFailed(m, code: code) }
+            // 교환 단계의 invalid_grant는 "코드 만료/재사용"이다. postToken은 이를
+            // refresh 관점의 .refreshRevoked("재로그인 필요")로 바꾸는데, 붙여넣기
+            // 흐름에서는 오해를 부르므로 코드 문구로 되돌린다.
+            if case .refreshRevoked = e {
+                throw OAuthError.exchangeFailed(L10n(lang: currentLang()).errCodeExpired, code: "invalid_grant")
+            }
             throw e
         }
     }
@@ -160,6 +196,30 @@ enum ClaudeOAuth {
         )
     }
 
+    /// 교환 전용: 앱이 백그라운드 정지에서 막 깨어난 직후의 첫 요청은 시스템이 닫아 둔
+    /// 소켓 때문에 "network connection was lost"(-1005)로 끊기기 쉽다. 이런 일시적
+    /// 오류는 요청이 서버에 닿기 전에 실패한 것이라 인가 코드가 아직 유효하므로 한 번 더
+    /// 보낸다. (refresh에는 쓰지 않는다 — refresh token은 서버 도달 시 로테이션되어
+    /// 재전송이 자격증명을 죽일 수 있다.)
+    private static func postTokenRetryingTransientFailure(_ body: Data) async throws -> TokenResponse {
+        do {
+            return try await postToken(body)
+        } catch let e as URLError where isTransient(e) {
+            try await Task.sleep(for: .seconds(1))
+            return try await postToken(body)
+        }
+    }
+
+    static func isTransient(_ e: URLError) -> Bool {
+        switch e.code {
+        case .networkConnectionLost, .timedOut, .notConnectedToInternet,
+             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func postToken(_ body: Data) async throws -> TokenResponse {
         var req = URLRequest(url: URL(string: tokenURL)!)
         req.httpMethod = "POST"
@@ -175,12 +235,14 @@ enum ClaudeOAuth {
             if status == 400 || status == 401, msg.contains("invalid_grant") {
                 throw OAuthError.refreshRevoked
             }
-            throw OAuthError.refreshFailed("HTTP \(status): \(msg)")
+            throw OAuthError.refreshFailed("HTTP \(status): \(msg)",
+                                           code: LoginFailureCode.http(status: status, body: data))
         }
         do {
             return try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {
-            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription))
+            throw OAuthError.refreshFailed(L10n(lang: currentLang()).errParse(error.localizedDescription),
+                                           code: "parse")
         }
     }
 

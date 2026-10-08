@@ -10,6 +10,8 @@ import SwiftUI
 @main
 struct TokenWatchApp: App {
     @State private var store: AgentStore
+    /// 서버 공지 팝업 상태. 사용량 스토어와 분리해 두 경로가 서로 영향을 주지 않는다.
+    @State private var announcements = AnnouncementStore()
 
     init() {
         // Firebase는 스토어 생성보다 먼저 구성한다(시작 시 유저 속성 동기화가 곧바로 반영되도록).
@@ -21,12 +23,15 @@ struct TokenWatchApp: App {
         // 데모 판별 주입 + 시작 시 유저 속성 1회 동기화(드리프트 방지).
         AnalyticsService.shared.isDemo = { [weak store] in store?.isDemo ?? false }
         AnalyticsService.shared.syncUserProperties(agents: store.agents)
+        // 리뷰 프롬프트 판정용 콜드 스타트 기록.
+        ReviewPromptState().recordLaunch()
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(store)
+                .environment(announcements)
                 .preferredColorScheme(.dark)   // 블랙 단일 테마 고정
                 .tint(Term.green)
         }

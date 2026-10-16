@@ -5,16 +5,18 @@
 //  앱 계정 화면 공용 부품: 로그인 브랜드 버튼(Apple·Google), 아바타 선택 격자, 닉네임 입력칸, 안내 줄.
 //
 //  로그인 버튼은 터미널 테마의 예외다. Apple은 시스템 `ASAuthorizationAppleIDButton`(검은 배경 → 흰색 스타일),
-//  Google은 SDK의 공식 `GIDSignInButton`(흰색)을 쓴다 — 두 버튼을 같은 높이·같은 눈에 띄는 정도로 둔다.
+//  Google은 Apple 버튼과 톤앤매너를 맞춘 흰 버튼(공식 G 로고 + 문구, DronePass 로그인 버튼과 같은 구성)이다.
+//  두 버튼은 같은 높이·모서리·글자 크기로 둔다. 문구는 영어 고정이다 — 앱이 영어 지역화만 갖고 있어
+//  Apple 버튼이 기기 언어와 무관하게 영어로 그려지므로 Google 쪽도 맞춘다(Android도 영어 고정).
 //  버튼은 탭만 전달하고, 로그인 흐름은 AccountStore가 직접 띄운다(연결·재인증과 같은 경로).
 //
 
 import AuthenticationServices
-import GoogleSignIn
 import SwiftUI
 
-/// 로그인 버튼 높이(두 버튼 공통).
-let accountBrandButtonHeight: CGFloat = 48
+/// 로그인 버튼 높이·모서리(두 버튼 공통).
+let accountBrandButtonHeight: CGFloat = 50
+let accountBrandButtonCorner: CGFloat = 12
 
 struct AppleSignInButton: UIViewRepresentable {
     var type: ASAuthorizationAppleIDButton.ButtonType = .signIn
@@ -24,7 +26,7 @@ struct AppleSignInButton: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
         let button = ASAuthorizationAppleIDButton(authorizationButtonType: type, authorizationButtonStyle: .white)
-        button.cornerRadius = 6
+        button.cornerRadius = accountBrandButtonCorner
         button.addTarget(context.coordinator, action: #selector(TapTarget.tap), for: .touchUpInside)
         return button
     }
@@ -35,22 +37,38 @@ struct AppleSignInButton: UIViewRepresentable {
     }
 }
 
-struct GoogleSignInButton: UIViewRepresentable {
+/// Apple 흰색 버튼과 같은 모양의 Google 버튼 — 흰 배경, 공식 컬러 G 로고(`GoogleLogo` 에셋), 검정 semibold 문구.
+struct GoogleSignInButton: View {
+    /// 로그인 화면은 "Sign in", 연결(Apple `.continue`와 짝)은 "Continue".
+    var continueStyle = false
     let action: () -> Void
 
-    func makeCoordinator() -> TapTarget { TapTarget(action: action) }
-
-    func makeUIView(context: Context) -> GIDSignInButton {
-        let button = GIDSignInButton()
-        button.style = .wide
-        button.colorScheme = .light
-        button.addTarget(context.coordinator, action: #selector(TapTarget.tap), for: .touchUpInside)
-        return button
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image("GoogleLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
+                Text(continueStyle ? "Continue with Google" : "Sign in with Google")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: accountBrandButtonHeight)
+            .background(RoundedRectangle(cornerRadius: accountBrandButtonCorner).fill(.white))
+            .contentShape(RoundedRectangle(cornerRadius: accountBrandButtonCorner))
+        }
+        .buttonStyle(BrandPressStyle())
     }
+}
 
-    func updateUIView(_ view: GIDSignInButton, context: Context) {
-        context.coordinator.action = action
-        view.isEnabled = context.environment.isEnabled
+/// 누르는 동안 살짝 흐려지는 정도의 반응(시스템 Apple 버튼과 비슷하게).
+private struct BrandPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.75 : 1)
     }
 }
 
@@ -75,12 +93,9 @@ struct AccountBrandButtons: View {
             if showApple {
                 AppleSignInButton(type: appleType, action: onApple)
                     .frame(height: accountBrandButtonHeight)
-                    .accessibilityLabel("Sign in with Apple")
             }
             if showGoogle {
-                GoogleSignInButton(action: onGoogle)
-                    .frame(height: accountBrandButtonHeight)
-                    .accessibilityLabel("Sign in with Google")
+                GoogleSignInButton(continueStyle: appleType == .continue, action: onGoogle)
             }
         }
         .disabled(disabled)
@@ -162,4 +177,14 @@ extension AccountStore.Notice {
         if case .linked = self { return true }
         return false
     }
+}
+
+#Preview("login buttons") {
+    VStack(spacing: 24) {
+        AccountBrandButtons(showApple: true, showGoogle: true, disabled: false, onApple: {}, onGoogle: {})
+        AccountBrandButtons(appleType: .continue, showApple: true, showGoogle: true, disabled: false,
+                            onApple: {}, onGoogle: {})
+    }
+    .padding(16)
+    .background(Term.bg)
 }

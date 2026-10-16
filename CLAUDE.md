@@ -22,8 +22,8 @@ xcodebuild build-for-testing -project TokenWatch.xcodeproj -scheme TokenWatch \
 ## 자격증명·프라이버시 (강제 사항)
 
 - **OAuth 토큰·API 키는 기기 Keychain에만** 저장한다(`Auth/Keychain.swift`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`). UserDefaults·파일·로그에 절대 쓰지 않는다.
-- **분석 이벤트 파라미터에는 provider rawValue·열거 문자열·정수만** 넣는다. 계정 라벨·이메일·토큰·API 키·원문 에러 메시지·사용률 수치는 어떤 경로로도 보내지 않는다. Firebase 접점은 `Analytics/AnalyticsService.swift` 한 파일뿐이다.
-- 사용량은 기기에서 각 provider로 **직접** 조회한다. 개발자 서버를 경유하지 않는다(예외: 읽기 전용 공지 피드 조회(아래), 로그인 실패 진단 보고).
+- **분석 이벤트 파라미터에는 provider rawValue·열거 문자열·정수만** 넣는다. 계정 라벨·이메일·토큰·API 키·원문 에러 메시지·사용률 수치는 어떤 경로로도 보내지 않는다. Firebase Analytics 접점은 `Analytics/AnalyticsService.swift` 한 파일뿐이다(Firebase 초기화도 여기서 하며, plist만 있으면 DEBUG에서도 항상 구성하고 수집 여부만 게이트로 정한다). 앱 계정의 FirebaseAuth·GoogleSignIn은 `Account/` 계층에만 둔다.
+- 사용량은 기기에서 각 provider로 **직접** 조회한다. 개발자 서버를 경유하지 않는다(예외: 읽기 전용 공지 피드 조회(아래), 로그인 실패 진단 보고, 선택 사항인 앱 계정(아래)).
 - **로그인 실패 진단 보고**(`Analytics/LoginFailureReporter.swift`) — `login_fail`이 기록될 때 개발자 서버(`bot02LoginFailureReport`, 텔레그램 알림)로 한 번 POST한다(보내고 잊기, 재시도 없음). 본문은 `platform`·`appVersion`·`build`·`provider`·`authKind`·`stage`·`code` 7개 키뿐이고(서버가 그 외 키를 400으로 거절), 기기·계정 식별자·이메일·토큰·원문 에러는 싣지 않는다. 게이트는 분석과 같다(PRIVACY 토글·데모 모드·DEBUG 빌드 차단). DEBUG에서는 `-TWReportLoginFailures` 실행 인자로만 켠다. `code` 값은 `Analytics/LoginFailureCode.swift`가 유일한 소스이며 서버 분류표와 맞춰야 한다.
 
 ## 공개 저장소 규칙
@@ -48,4 +48,5 @@ xcodebuild build-for-testing -project TokenWatch.xcodeproj -scheme TokenWatch \
 - `Theme/` — `Term` 팔레트와 `.term()` 모노스페이스 폰트가 유일한 소스. 시스템 `alert`/`confirmationDialog` 대신 `TerminalKit`의 커스텀 다이얼로그를 쓴다. `List`는 쓰지 않는다(`ScrollView` + `VStack`).
 - `Localization/Localization.swift` — String Catalog가 아니라 수제 `L10n`(ko/en). **터미널 크롬(`[done]`, `SETTINGS` 같은 영어 라벨)은 번역하지 않고**, 자연어 문장만 번역한다.
 - `Analytics/` — `ScreenName`에 화면을 추가하면 `screenClass`도 반드시 정의한다(생략하면 시트 화면에서 `screen_name`까지 유실된다). 새 이벤트는 enum·`name`·`parameters`·`isProviderScoped` 네 곳을 함께 고친다.
+- 앱 계정(`Account/`, `Models/PlayerProfile.swift`, `Theme/AvatarCatalog.swift`, `Views/Player*.swift`) — TokenWatch 자체 계정(Apple·Google, 선택 사항). provider 계정과 별개이며 provider 자격증명·이메일·계정 라벨은 이 경로로 가지 않는다. 인증만 FirebaseAuth SDK, 프로필은 Firestore REST(`documents:commit`, 기존 문서는 `updateMask` 필수, 시각은 `Date` 헤더 시차 보정). 아바타는 `Resources/avatars-v1.json`을 바이트 그대로 번들한다(Android와 SHA-256 parity — 파일을 고치면 양쪽 테스트 상수도 바꾼다). 닉네임 규칙·금칙어·문구는 Android와 같은 값을 쓴다. 데모 중에는 서버 호출 0건.
 - 공지 기능(`Models/Announcement.swift`, `API/AnnouncementFeedClient.swift`, `Store/AnnouncementStore.swift`, `Views/Announcement*.swift`) — 서버 피드 문서 하나를 REST로 읽는다. 팝업과 공지함은 **규칙이 다르다**(목록은 `endAt`·앱 버전 범위·"다시 열지 않기"를 무시한다). 시각은 전부 epoch 밀리초 정수.

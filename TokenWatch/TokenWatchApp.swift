@@ -12,6 +12,8 @@ struct TokenWatchApp: App {
     @State private var store: AgentStore
     /// 서버 공지 팝업 상태. 사용량 스토어와 분리해 두 경로가 서로 영향을 주지 않는다.
     @State private var announcements = AnnouncementStore()
+    /// 앱 계정(TokenWatch 자체 계정). provider 계정(AgentStore)과 별개다.
+    @State private var account: AccountStore
 
     init() {
         // Firebase는 스토어 생성보다 먼저 구성한다(시작 시 유저 속성 동기화가 곧바로 반영되도록).
@@ -23,6 +25,10 @@ struct TokenWatchApp: App {
         // 데모 판별 주입 + 시작 시 유저 속성 1회 동기화(드리프트 방지).
         AnalyticsService.shared.isDemo = { [weak store] in store?.isDemo ?? false }
         AnalyticsService.shared.syncUserProperties(agents: store.agents)
+        // 앱 계정 — Firebase 구성 뒤에 만든다. 데모 중에는 모든 서버 호출을 막는다.
+        let account = AccountStore.live(isDemo: { [weak store] in store?.isDemo ?? false })
+        account.start()
+        _account = State(initialValue: account)
         // 리뷰 프롬프트 판정용 콜드 스타트 기록.
         ReviewPromptState().recordLaunch()
     }
@@ -32,6 +38,9 @@ struct TokenWatchApp: App {
             ContentView()
                 .environment(store)
                 .environment(announcements)
+                .environment(account)
+                // Google 로그인 시트의 URL 콜백(다른 URL은 무시된다).
+                .onOpenURL { _ = GoogleSignInFlow.handle($0) }
                 .preferredColorScheme(.dark)   // 블랙 단일 테마 고정
                 .tint(Term.green)
         }

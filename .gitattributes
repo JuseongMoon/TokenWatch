@@ -1,0 +1,2 @@
+# 아바타 정본은 바이트 단위로 고정한다(양 플랫폼 SHA-256 parity) — 줄바꿈 변환 금지.
+TokenWatch/Resources/avatars-v1.json -text

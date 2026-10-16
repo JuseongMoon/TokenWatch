@@ -7,7 +7,10 @@
 	     대략적 위치(IP 기반 도시 단위), 전부 분석 목적.
 	     여기에 기타 진단 데이터 1종 — 로그인 실패 진단 보고(LoginFailureReporter)가 보내는
 	     플랫폼·앱 버전·빌드·provider·인증 방식·단계·오류 코드뿐이며 앱 동작 유지 목적이다.
-	     전부 신원 비연결·비추적(스토어 라벨 매핑은 비공개 docs/의 계측 설계 문서). -->
+	     전부 신원 비연결·비추적(스토어 라벨 매핑은 비공개 docs/의 계측 설계 문서).
+	     선택 사항인 앱 계정(TokenWatch 계정 — provider 계정과 별개)은 신원 연결·비추적 3종을 앱 기능 목적으로 수집한다:
+	     이메일 주소(Firebase Auth가 Google 로그인 토큰에서 저장 — Apple 로그인은 이메일을 요청하지 않음),
+	     사용자 ID(계정 uid), 기타 사용자 콘텐츠(닉네임·아바타 프리셋 ID). -->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
@@ -55,6 +58,42 @@
 			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
 			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypePurposes</key>

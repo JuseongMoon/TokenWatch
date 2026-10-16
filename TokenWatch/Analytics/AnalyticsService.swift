@@ -2,9 +2,12 @@
 //  AnalyticsService.swift
 //  TokenWatch
 //
-//  유일한 Firebase 접점. 게이트 순서: 미구성(plist 없음) → 옵트아웃 → 데모(provider 이벤트).
+//  Firebase Analytics의 유일한 접점(앱 계정의 FirebaseAuth는 Account/ 계층).
+//  Firebase 초기화도 여기서 한다 — plist만 있으면 항상 구성하고, 수집 여부만 아래 게이트로 정한다.
+//  게이트 순서: 미구성(plist 없음) → 옵트아웃 → 데모(provider 이벤트).
 //  - GoogleService-Info.plist가 번들에 없으면 전부 no-op — plist 미동봉 빌드에서도 안전.
 //  - DEBUG 빌드는 -FIRDebugEnabled 실행 인자(DebugView 검증) 때만 수집 — 개발 노이즈 차단.
+//    Firebase 자체는 구성하므로(계정 로그인용) 수집 플래그를 매번 false로 명시한다.
 //  - 옵트아웃(설정 PRIVACY): 기본 ON, 끄면 SDK 수집 자체를 중지하고 래퍼에서도 원천 차단.
 //  - login_fail은 같은 게이트로 로그인 실패 진단 보고(LoginFailureReporter)에도 보낸다.
 //
@@ -23,8 +26,11 @@ final class AnalyticsService {
     /// 데모 모드 판별 — TokenWatchApp이 실제 AgentStore를 주입한다.
     var isDemo: () -> Bool = { false }
 
-    /// FirebaseApp.configure() 완료 여부. false면 모든 호출이 no-op.
+    /// 분석 수집 경로가 열렸는지. false면 이벤트·속성 호출이 전부 no-op.
+    /// Firebase 구성 여부와 다르다 — DEBUG(인자 없음)는 Firebase를 구성하되 이 값은 false다.
     private var configured = false
+    /// FirebaseApp.configure()를 이미 했는지(앱 시작 1회 보장).
+    private var firebaseConfigured = false
 
     private init() {}
 
@@ -33,21 +39,24 @@ final class AnalyticsService {
             ? true : UserDefaults.standard.bool(forKey: Self.enabledKey)
     }
 
-    /// 앱 시작 시 1회(AgentStore 생성 전에). plist가 있을 때만 configure하고
-    /// 수집 상태를 옵트아웃 설정과 일치시킨다.
+    /// 앱 시작 시 1회(AgentStore 생성 전에). plist가 있으면 Firebase를 **항상** 구성하고
+    /// (앱 계정 로그인이 DEBUG·옵트아웃과 무관하게 동작해야 한다), 수집 상태를 게이트와 일치시킨다.
     func configure() {
-        guard !configured else { return }
+        guard !firebaseConfigured else { return }
         guard Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil else {
-            debugLog("GoogleService-Info.plist를 번들에서 못 찾음 — 분석 꺼짐")
+            debugLog("GoogleService-Info.plist를 번들에서 못 찾음 — 분석·계정 꺼짐")
             return
         }
+        FirebaseApp.configure()
+        firebaseConfigured = true
         #if DEBUG
         guard ProcessInfo.processInfo.arguments.contains("-FIRDebugEnabled") else {
-            debugLog("DEBUG 빌드인데 -FIRDebugEnabled 인자가 없음 — 분석 꺼짐")
+            // 수집 플래그는 실행 사이에 영속된다 — 직전 실행의 true가 남지 않게 매번 끈다.
+            Analytics.setAnalyticsCollectionEnabled(false)
+            debugLog("DEBUG 빌드인데 -FIRDebugEnabled 인자가 없음 — 분석 꺼짐(Firebase는 구성됨)")
             return
         }
         #endif
-        FirebaseApp.configure()
         configured = true
         Analytics.setAnalyticsCollectionEnabled(isEnabled)
         debugLog("Firebase 구성 완료 — 수집 \(isEnabled ? "ON" : "OFF")")

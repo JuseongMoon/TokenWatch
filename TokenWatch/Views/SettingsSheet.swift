@@ -39,6 +39,7 @@ enum RefreshInterval: Int, CaseIterable, Identifiable {
 
 struct SettingsSheet: View {
     @Environment(AgentStore.self) private var store
+    @Environment(AccountStore.self) private var account
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("tokenwatch.refreshInterval") private var refreshInterval = 60
@@ -68,6 +69,8 @@ struct SettingsSheet: View {
     @State private var notifDenied = false
     /// 업무시간 설정 모달 표시 여부.
     @State private var showingWorkHours = false
+    /// 앱 계정 시트(로그인·프로필 설정·계정). nil이면 닫힘.
+    @State private var playerSheet: PlayerSheet.Entry?
 
     var body: some View {
         NavigationStack {
@@ -75,6 +78,10 @@ struct SettingsSheet: View {
                 Term.bg.ignoresSafeArea()
                 ScrollView(.vertical) {
                     VStack(spacing: 16) {
+                        // 앱 계정(TokenWatch 자체 계정) — provider 계정(ACCOUNTS) 바로 위. Firebase가 없으면 숨긴다.
+                        if account.isAvailable {
+                            PlayerSection(loc: loc) { playerSheet = $0 }
+                        }
                         accountSection
                         // 계정이 하나도 없을 때만 DEMO를 위로 올린다(둘러볼 방법을 먼저 보여준다).
                         // 계정이 있으면 평소 쓰는 설정들이 우선이라 맨 아래 INFO 바로 위로 내린다.
@@ -130,6 +137,9 @@ struct SettingsSheet: View {
             if showingWorkHours {
                 WorkHoursEditor(isPresented: $showingWorkHours)
             }
+        }
+        .sheet(item: $playerSheet) { entry in
+            PlayerSheet(entry: entry).environment(account)
         }
         .animation(.snappy(duration: 0.22), value: showingWorkHours)
     }
@@ -677,11 +687,11 @@ struct SettingsSheet: View {
 }
 
 #Preview {
-    SettingsSheet().environment(AgentStore())
+    SettingsSheet().environment(AgentStore()).environment(AccountStore.disabled())
 }
 
 #Preview("demo mode") {
     let store = AgentStore()
     store.enterDemo()
-    return SettingsSheet().environment(store)
+    return SettingsSheet().environment(store).environment(AccountStore.disabled())
 }

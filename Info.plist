@@ -16,6 +16,14 @@
 				<string>tokenwatch</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>google-signin</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.913259208794-u5nqi204cm9r54ae7kjcg8j3oru0lsab</string>
+			</array>
+		</dict>
 	</array>
 	<key>FirebaseAutomaticScreenReportingEnabled</key>
 	<false/>

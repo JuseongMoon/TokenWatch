@@ -57,6 +57,8 @@ final class AccountStore {
     private(set) var methods: [AccountMethod] = []
     /// 서버 쓰기 진행 중(버튼 비활성).
     private(set) var isWorking = false
+    /// 운영자 계정인지(커스텀 클레임). 운영자는 고른 아바타와 무관하게 전용 아바타로 보인다.
+    private(set) var isOperator = false
     var notice: Notice?
 
     @ObservationIgnored private let auth: AccountAuthenticating
@@ -105,6 +107,12 @@ final class AccountStore {
         return nil
     }
 
+    /// 화면에 그릴 아바타. 운영자면 전용 아바타(번들에 있을 때), 아니면 고른 아바타.
+    func displayAvatarID(for profile: PlayerProfile) -> String {
+        if isOperator, let id = AvatarCatalog.operatorAvatar?.id { return id }
+        return profile.avatarID
+    }
+
     /// 다음 닉네임 변경까지 남은 밀리초(0이면 지금 가능). 서버 시차 보정 시각 기준.
     var nicknameCooldownRemainingMs: Int64 {
         guard let profile, let profiles else { return 0 }
@@ -137,7 +145,7 @@ final class AccountStore {
         methods = user.methods
         if let cache = PlayerProfileCache.load(from: defaults), cache.uid == user.uid {
             state = .signedIn(PlayerProfile(
-                nickname: cache.nickname, nicknameLower: NicknamePolicy.lower(cache.nickname),
+                nickname: cache.nickname, nicknameLower: NicknamePolicy.lower(cache.nickname), tag: cache.tag,
                 nicknameChangedAtMs: cache.nicknameChangedAtMs, avatarID: cache.avatarId,
                 termsAcceptedVersion: PlayerProfile.currentTermsVersion,
                 createdAtMs: cache.nicknameChangedAtMs, updatedAtMs: cache.nicknameChangedAtMs))
@@ -152,6 +160,7 @@ final class AccountStore {
             guard state != .deleting else { return }
             currentUID = nil
             methods = []
+            isOperator = false
             PlayerProfileCache.clear(in: defaults)
             if state != .unavailable { state = .signedOut }
             return
@@ -172,6 +181,8 @@ final class AccountStore {
     func refreshProfile() async {
         guard !isDemo(), let profiles, let user = auth.currentUser else { return }
         if profile == nil { state = .loading }
+        // 클레임은 새 토큰에만 실린다 — 프로필을 읽을 때(시작·로그인) 토큰을 새로 받아 운영자 여부를 갱신한다.
+        isOperator = await auth.isOperator(forceRefresh: true)
         switch await profiles.fetchProfile(uid: user.uid) {
         case .found(let p):
             apply(p, uid: user.uid)
@@ -244,13 +255,14 @@ final class AccountStore {
     private func resetLocal() {
         currentUID = nil
         methods = []
+        isOperator = false
         PlayerProfileCache.clear(in: defaults)
         state = .signedOut
     }
 
     // MARK: 프로필
 
-    /// 첫 프로필 저장. 닉네임 예약과 프로필 생성을 한 커밋으로 보낸다.
+    /// 첫 프로필 저장. 배틀태그를 무작위로 뽑아 예약과 프로필 생성을 한 커밋으로 보낸다.
     func createProfile(nickname raw: String, avatarID: String, termsAccepted: Bool) async -> SaveOutcome {
         guard !isDemo(), state == .needsProfile, let profiles, let uid = currentUID, !isWorking else { return .failed }
         let nickname = NicknamePolicy.normalize(raw)
@@ -259,29 +271,38 @@ final class AccountStore {
         let lower = NicknamePolicy.lower(nickname)
         isWorking = true
         defer { isWorking = false }
-        switch await profiles.nicknameAvailability(lower: lower, uid: uid) {
-        case .taken: return .invalid(.taken)
-        case .failed: notice = .saveFailed; return .failed
-        case .available: break
-        }
         await profiles.ensureServerTime(uid: uid)
-        let now = profiles.nowMs
-        let profile = PlayerProfile(nickname: nickname, nicknameLower: lower, nicknameChangedAtMs: now,
-                                    avatarID: avatarID, termsAcceptedVersion: PlayerProfile.currentTermsVersion,
-                                    createdAtMs: now, updatedAtMs: now)
-        switch await profiles.commit(profiles.documents.create(uid: uid, profile: profile),
-                                     uid: uid, nicknameLower: lower) {
-        case .ok:
-            apply(profile, uid: uid)
-            return .saved
-        case .taken:
-            return .invalid(.taken)
-        case .failed:
-            notice = .saveFailed
-            return .failed
+        for _ in 0..<Self.tagAttempts {
+            let tag = NicknamePolicy.randomTag()
+            let key = NicknamePolicy.nametagKey(lower: lower, tag: tag)
+            switch await profiles.nametagAvailability(key: key, uid: uid) {
+            case .taken: continue
+            case .failed: notice = .saveFailed; return .failed
+            case .available: break
+            }
+            let now = profiles.nowMs
+            let profile = PlayerProfile(nickname: nickname, nicknameLower: lower, tag: tag, nicknameChangedAtMs: now,
+                                        avatarID: avatarID, termsAcceptedVersion: PlayerProfile.currentTermsVersion,
+                                        createdAtMs: now, updatedAtMs: now)
+            switch await profiles.commit(profiles.documents.create(uid: uid, profile: profile),
+                                         uid: uid, nametagKey: key) {
+            case .ok:
+                apply(profile, uid: uid)
+                return .saved
+            case .taken:
+                continue   // 그 사이 다른 계정이 같은 태그를 잡았다 — 다시 뽑는다
+            case .failed:
+                notice = .saveFailed
+                return .failed
+            }
         }
+        return .invalid(.taken)   // 같은 닉네임의 태그가 거의 다 찼다(사실상 일어나지 않음)
     }
 
+    /// 태그를 다시 뽑는 최대 횟수.
+    private static let tagAttempts = 6
+
+    /// 닉네임 변경(30일에 1회). 바꿀 때마다 배틀태그를 새로 뽑는다(이전 태그와 다르게).
     func changeNickname(_ raw: String) async -> SaveOutcome {
         guard !isDemo(), let current = profile, let profiles, let uid = currentUID, !isWorking else { return .failed }
         let nickname = NicknamePolicy.normalize(raw)
@@ -292,32 +313,36 @@ final class AccountStore {
         await profiles.ensureServerTime(uid: uid)
         if nicknameCooldownRemainingMs > 0 { return .invalid(.cooldown) }
         let lower = NicknamePolicy.lower(nickname)
-        if lower != current.nicknameLower {
-            switch await profiles.nicknameAvailability(lower: lower, uid: uid) {
-            case .taken: return .invalid(.taken)
+        for _ in 0..<Self.tagAttempts {
+            let tag = NicknamePolicy.randomTag(excluding: current.tag)
+            let key = NicknamePolicy.nametagKey(lower: lower, tag: tag)
+            switch await profiles.nametagAvailability(key: key, uid: uid) {
+            case .taken: continue
             case .failed: notice = .saveFailed; return .failed
             case .available: break
             }
+            let now = profiles.nowMs
+            let writes = profiles.documents.changeNickname(uid: uid, oldKey: current.nametagKey, nickname: nickname,
+                                                           lower: lower, tag: tag, nowMs: now)
+            switch await profiles.commit(writes, uid: uid, nametagKey: key) {
+            case .ok:
+                var updated = current
+                updated.nickname = nickname
+                updated.nicknameLower = lower
+                updated.tag = tag
+                updated.nicknameChangedAtMs = now
+                updated.updatedAtMs = now
+                apply(updated, uid: uid)
+                AnalyticsService.shared.log(.profileUpdate(field: .nickname))
+                return .saved
+            case .taken:
+                continue
+            case .failed:
+                notice = .saveFailed
+                return .failed
+            }
         }
-        let now = profiles.nowMs
-        let writes = profiles.documents.changeNickname(uid: uid, oldLower: current.nicknameLower,
-                                                       nickname: nickname, lower: lower, nowMs: now)
-        switch await profiles.commit(writes, uid: uid, nicknameLower: lower) {
-        case .ok:
-            var updated = current
-            updated.nickname = nickname
-            updated.nicknameLower = lower
-            updated.nicknameChangedAtMs = now
-            updated.updatedAtMs = now
-            apply(updated, uid: uid)
-            AnalyticsService.shared.log(.profileUpdate(field: .nickname))
-            return .saved
-        case .taken:
-            return .invalid(.taken)
-        case .failed:
-            notice = .saveFailed
-            return .failed
-        }
+        return .invalid(.taken)
     }
 
     func changeAvatar(_ avatarID: String) async -> SaveOutcome {
@@ -344,7 +369,7 @@ final class AccountStore {
 
     private func apply(_ profile: PlayerProfile, uid: String) {
         state = .signedIn(profile)
-        PlayerProfileCache(uid: uid, nickname: profile.nickname, avatarId: profile.avatarID,
+        PlayerProfileCache(uid: uid, nickname: profile.nickname, tag: profile.tag, avatarId: profile.avatarID,
                            nicknameChangedAtMs: profile.nicknameChangedAtMs).save(to: defaults)
     }
 
@@ -362,7 +387,7 @@ final class AccountStore {
         case .revokeFailed: state = previous; notice = .revokeFailed; return
         }
         if case .signedIn(let p) = previous {
-            let writes = profiles.documents.delete(uid: uid, nicknameLower: p.nicknameLower)
+            let writes = profiles.documents.delete(uid: uid, nametagKey: p.nametagKey)
             guard await profiles.commit(writes, uid: uid) == .ok else {
                 state = previous
                 notice = .deleteFailed
@@ -394,4 +419,5 @@ final class UnavailableAccountAuth: AccountAuthenticating {
     func deleteUser() async -> Bool { false }
     func signOut() {}
     func idToken(forceRefresh: Bool) async -> String? { nil }
+    func isOperator(forceRefresh: Bool) async -> Bool { false }
 }

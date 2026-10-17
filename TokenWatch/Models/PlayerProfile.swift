@@ -6,6 +6,9 @@
 //  서버 문서 `players/{uid}`와 1:1이다. 이메일·provider 정보·토큰은 담지 않는다.
 //  닉네임 규칙·에러 코드·금칙어는 Android와 같은 값을 쓴다(서버 규칙 정규식과도 같다).
 //
+//  배틀태그 방식: 닉네임은 겹쳐도 되고 닉네임+4자리 태그 쌍이 고유하다. 화면에는 항상 `닉네임 #1234`로 붙인다.
+//  닉네임을 바꿀 때마다 태그를 새로 뽑고, 네 자리가 모두 같은 태그(0000·1111…)는 운영자만 쓴다.
+//
 
 import Foundation
 
@@ -35,12 +38,19 @@ nonisolated struct PlayerProfile: Equatable, Sendable {
 
     var nickname: String
     var nicknameLower: String
+    /// 배틀태그 4자리("0000"~"9999", 앞자리 0 유지). 닉네임과 함께 고유 키가 된다.
+    var tag: String
     var nicknameChangedAtMs: Int64
     /// `avatar: {kind: "preset", id}`의 id. 프리셋이 아닌 종류(V2 이후)는 디코딩 때 기본값으로 바꾼다.
     var avatarID: String
     var termsAcceptedVersion: Int
     var createdAtMs: Int64
     var updatedAtMs: Int64
+
+    /// 화면 표시용 `닉네임 #1234`(닉네임과 태그 사이 한 칸). 예약 키는 공백 없는 `nametagKey`다.
+    var nametag: String { "\(nickname) #\(tag)" }
+    /// 고유 예약 문서 키(`nametags/{key}`) — 소문자 닉네임 + `#` + 태그.
+    var nametagKey: String { NicknamePolicy.nametagKey(lower: nicknameLower, tag: tag) }
 }
 
 /// 닉네임·프로필 저장 실패 코드(계약 §5). 클라이언트는 이 값으로 문구를 고른다.
@@ -58,8 +68,8 @@ nonisolated enum NicknameError: String, Sendable, CaseIterable {
 nonisolated enum NicknamePolicy {
     static let minLength = 2
     static let maxLength = 12
-    /// 닉네임 변경 간격 — 7일에 1회(생성 시각도 변경 시각으로 친다).
-    static let cooldownMs: Int64 = 7 * 24 * 60 * 60 * 1000
+    /// 닉네임 변경 간격 — 30일에 1회(생성 시각도 변경 시각으로 친다).
+    static let cooldownMs: Int64 = 30 * 24 * 60 * 60 * 1000
 
     /// NFC 정규화 후 앞뒤 공백을 지운다. macOS에서 붙여 넣은 NFD 한글(자모 분리)을 음절로 합친다.
     static func normalize(_ raw: String) -> String {
@@ -92,6 +102,31 @@ nonisolated enum NicknamePolicy {
         })
     }
 
+    // MARK: 배틀태그
+
+    /// 4자리 숫자 태그인지.
+    static func isValidTag(_ tag: String) -> Bool {
+        tag.utf8.count == 4 && tag.utf8.allSatisfy { (0x30...0x39).contains($0) }
+    }
+
+    /// 네 자리가 모두 같은 태그(0000·1111…9999) — 운영자 전용이라 일반 배정에서 뺀다.
+    static func isRepdigit(_ tag: String) -> Bool {
+        isValidTag(tag) && Set(tag).count == 1
+    }
+
+    /// 무작위 태그. 같은 숫자 네 자리는 나오지 않고, `excluding`(이전 태그)과도 다르다.
+    /// `draw`는 0...9999 정수를 뽑는다(테스트에서 고정 값을 넣는다).
+    static func randomTag(excluding old: String? = nil,
+                          draw: () -> Int = { Int.random(in: 0...9999) }) -> String {
+        while true {
+            let tag = String(format: "%04d", draw())
+            if !isRepdigit(tag), tag != old { return tag }
+        }
+    }
+
+    /// 고유 예약 문서 키. `#`은 닉네임 허용 문자가 아니라 경계가 모호하지 않다.
+    static func nametagKey(lower: String, tag: String) -> String { "\(lower)#\(tag)" }
+
     static func containsBannedWord(_ lower: String) -> Bool {
         bannedWords.contains { lower.contains($0) }
     }
@@ -122,6 +157,7 @@ nonisolated struct PlayerProfileCache: Codable, Equatable, Sendable {
 
     let uid: String
     let nickname: String
+    let tag: String
     let avatarId: String
     let nicknameChangedAtMs: Int64
 

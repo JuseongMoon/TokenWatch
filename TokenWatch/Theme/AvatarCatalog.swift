@@ -9,6 +9,9 @@
 //  번들 파일 목록을 순서대로 읽어 합친다. 나중에 아바타를 추가 공개하면 새 파일을 목록 끝에 붙이고,
 //  기존 파일의 바이트(해시)는 바꾸지 않는다. ID가 겹치면 먼저 읽은 쪽을 유지한다.
 //
+//  공개 목록(선택 격자에 보임)과 운영자 전용 목록(그리기만 — 격자에 절대 안 보임)을 나눈다.
+//  운영자 계정(커스텀 클레임)은 고른 아바타와 무관하게 전용 아바타로 그린다(AccountStore.displayAvatarID).
+//
 
 import SwiftUI
 
@@ -82,15 +85,24 @@ struct AvatarPreset: Identifiable {
 }
 
 enum AvatarCatalog {
-    /// 번들에 넣은 정본 파일(확장자 제외). 공개 순서대로 읽는다.
+    /// 번들에 넣은 공개 정본 파일(확장자 제외). 공개 순서대로 읽는다. 선택 격자에 보인다.
     static let bundledFiles = ["avatars-v1"]
+    /// 운영자 전용 파일. 그리기에만 쓰고 선택 격자에는 넣지 않는다(비트맵을 만들면 여기에 이름을 넣는다).
+    static let exclusiveFiles: [String] = []
+    /// 운영자 전용 아바타 ID.
+    static let operatorAvatarID = "operator"
     /// 모르는 ID(다른 버전·V2 사진 등)를 대신 그릴 기본 아바타. 서버 응답 디코딩(nonisolated)에서도 쓴다.
     nonisolated static let fallbackID = "slime"
 
-    /// 공개된 전체 목록(번들 순서 유지).
-    static let all: [AvatarPreset] = load()
+    /// 공개 목록(선택 격자). 번들 순서 유지.
+    static let selectable: [AvatarPreset] = load(bundledFiles)
+    /// 공개 + 운영자 전용(그리기용). 전용 아바타는 여기에만 있다.
+    static let all: [AvatarPreset] = merge(selectable, load(exclusiveFiles))
 
-    static var ids: [String] { all.map(\.id) }
+    static var ids: [String] { selectable.map(\.id) }
+
+    /// 운영자 전용 아바타(번들에 있을 때만).
+    static var operatorAvatar: AvatarPreset? { all.first { $0.id == operatorAvatarID } }
 
     /// ID로 찾되 모르면 기본 아바타.
     static func resolve(_ id: String) -> AvatarPreset {
@@ -99,25 +111,30 @@ enum AvatarCatalog {
 
     /// 가입 화면에서 미리 골라 둘 무작위 1종(저장 전까지는 서버에 쓰지 않는다).
     static func random() -> AvatarPreset {
-        all.randomElement() ?? resolve(fallbackID)
+        selectable.randomElement() ?? resolve(fallbackID)
     }
 
     static func bundledFileURL(_ name: String) -> URL? {
         Bundle.main.url(forResource: name, withExtension: "json")
     }
 
-    private static func load() -> [AvatarPreset] {
+    private static func merge(_ a: [AvatarPreset], _ b: [AvatarPreset]) -> [AvatarPreset] {
+        let ids = Set(a.map(\.id))
+        return a + b.filter { !ids.contains($0.id) }
+    }
+
+    private static func load(_ files: [String]) -> [AvatarPreset] {
         var seen = Set<String>()
         var result: [AvatarPreset] = []
-        for name in bundledFiles {
+        for name in files {
             guard let url = bundledFileURL(name), let data = try? Data(contentsOf: url) else { continue }
             for a in AvatarDecoder.decode(data) where seen.insert(a.id).inserted {
                 result.append(AvatarPreset(id: a.id, nameKo: a.nameKo, nameEn: a.nameEn,
                                            sprite: sprite(from: a)))
             }
         }
-        // 번들 파일이 깨졌을 때도 화면이 비지 않게 앱 내장 슬라임으로 대신한다(테스트가 잡는다).
-        if result.isEmpty {
+        // 공개 번들 파일이 깨졌을 때도 화면이 비지 않게 앱 내장 슬라임으로 대신한다(테스트가 잡는다).
+        if result.isEmpty, files == bundledFiles {
             result = [AvatarPreset(id: fallbackID, nameKo: "슬라임", nameEn: "Slime", sprite: .slime)]
         }
         return result
@@ -144,7 +161,7 @@ struct AvatarView: View {
 
 #Preview("avatars") {
     LazyVGrid(columns: Array(repeating: GridItem(.fixed(64), spacing: 8), count: 4), spacing: 8) {
-        ForEach(AvatarCatalog.all) { a in
+        ForEach(AvatarCatalog.selectable) { a in
             AvatarView(avatarID: a.id, cell: 4)
         }
     }

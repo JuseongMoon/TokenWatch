@@ -261,11 +261,11 @@ private struct AccountView: View {
             TerminalBox(title: "PROFILE") {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 14) {
-                        AvatarView(avatarID: profile.avatarID, cell: 4)
-                            .accessibilityLabel(AvatarCatalog.resolve(profile.avatarID).name(loc.lang))
+                        let shownAvatar = account.displayAvatarID(for: profile)
+                        AvatarView(avatarID: shownAvatar, cell: 4)
+                            .accessibilityLabel(AvatarCatalog.resolve(shownAvatar).name(loc.lang))
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(profile.nickname)
-                                .font(.term(16, weight: .semibold)).foregroundStyle(Term.fg)
+                            NametagText(profile: profile, size: 16)
                             Text(account.methods.map(loc.accountMethodName).joined(separator: " · "))
                                 .font(.term(10)).foregroundStyle(Term.dim)
                         }
@@ -305,7 +305,7 @@ private struct AccountView: View {
         .terminalConfirm(
             isPresented: $confirmSignOut,
             title: loc.accountSignOutTitle,
-            accountLabel: profile.nickname,
+            accountLabel: profile.nametag,
             message: loc.accountSignOutMessage,
             confirmLabel: "[ \(loc.accountSignOut) ]",
             cancelLabel: "[ \(loc.cancel) ]",
@@ -313,7 +313,7 @@ private struct AccountView: View {
         .terminalConfirm(
             isPresented: $confirmDelete,
             title: loc.accountDeleteTitle,
-            accountLabel: profile.nickname,
+            accountLabel: profile.nametag,
             message: loc.accountDeleteMessage,
             confirmLabel: "[ \(loc.accountDelete) ]",
             cancelLabel: "[ \(loc.cancel) ]",
@@ -339,6 +339,8 @@ private struct AccountView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(loc.nicknameRule).font(.term(10)).foregroundStyle(Term.dim)
+                    Text(loc.nicknameTagHint).font(.term(10)).foregroundStyle(Term.dim)
+                        .fixedSize(horizontal: false, vertical: true)
                     if NicknamePolicy.normalize(nickname) != profile.nickname {
                         TerminalButton(title: account.isWorking ? "[ saving… ]" : "[ save nickname ]") {
                             Task {
@@ -359,6 +361,10 @@ private struct AccountView: View {
     private var avatarBox: some View {
         TerminalBox(title: "AVATAR") {
             VStack(alignment: .leading, spacing: 10) {
+                if account.isOperator, AvatarCatalog.operatorAvatar != nil {
+                    Text(loc.operatorAvatarNote).font(.term(10)).foregroundStyle(Term.yellow)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 AvatarPicker(selection: $avatarID, lang: loc.lang)
                 if avatarID != profile.avatarID, !avatarID.isEmpty {
                     TerminalButton(title: account.isWorking ? "[ saving… ]" : "[ save avatar ]") {

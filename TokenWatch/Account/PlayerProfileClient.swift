@@ -2,10 +2,11 @@
 //  PlayerProfileClient.swift
 //  TokenWatch
 //
-//  앱 계정 프로필(`players/{uid}`·`nicknames/{lower}`)을 Firestore REST로 읽고 쓴다.
+//  앱 계정 프로필(`players/{uid}`·`nametags/{닉네임#태그}`)을 Firestore REST로 읽고 쓴다.
 //  인증은 Firebase ID 토큰(`Authorization: Bearer`) — 요청 직전에 받아 헤더에만 싣고, 저장·로깅하지 않는다.
 //  자격증명이 실리는 요청이라 APISession(ephemeral)을 쓴다. 실패는 던지지 않고 결과 열거로 돌려준다.
-//  401이면 토큰을 강제 갱신해 한 번만 다시 보낸다. 응답 본문(원문 에러)은 표시·기록하지 않는다.
+//  401·403이면 토큰을 강제 갱신해 한 번만 다시 보낸다(403: 운영자 클레임이 막 붙어 옛 토큰에 없을 때).
+//  응답 본문(원문 에러)은 표시·기록하지 않는다.
 //
 
 import Foundation
@@ -31,7 +32,7 @@ final class PlayerProfileClient {
 
     enum CommitResult: Equatable {
         case ok
-        /// 닉네임 예약이 다른 계정에 있어 커밋 전체가 거절됐다.
+        /// 배틀태그 예약이 다른 계정에 있어 커밋 전체가 거절됐다(호출측이 태그를 다시 뽑는다).
         case taken
         case failed
     }
@@ -71,13 +72,13 @@ final class PlayerProfileClient {
         }
     }
 
-    /// 닉네임 예약 확인. 404면 비어 있고, 예약자가 본인이면 사용 가능이다.
-    func nicknameAvailability(lower: String, uid: String) async -> Availability {
-        guard let (data, status) = await send(method: "GET", path: "nicknames/\(lower)") else { return .failed }
+    /// 배틀태그 예약 확인. 404면 비어 있고, 예약자가 본인이면 사용 가능이다.
+    func nametagAvailability(key: String, uid: String) async -> Availability {
+        guard let (data, status) = await send(method: "GET", path: "nametags/\(key)") else { return .failed }
         switch status {
         case 404: return .available
         case 200:
-            guard let owner = PlayerDocuments.decodeNicknameOwner(data) else { return .failed }
+            guard let owner = PlayerDocuments.decodeNametagOwner(data) else { return .failed }
             return owner == uid ? .available : .taken
         default: return .failed
         }
@@ -86,14 +87,14 @@ final class PlayerProfileClient {
     // MARK: 쓰기
 
     /// 쓰기 묶음을 원자적으로 커밋한다. 시차를 아직 모르면 먼저 GET으로 구한다(시각 필드 ±60초 규칙).
-    /// `nicknameLower`를 주면 실패 시 예약을 다시 조회해 다른 계정이 가졌는지(`taken`) 가린다 —
-    /// 중복 예약 실패가 어떤 HTTP 코드로 오는지는 서버 실측 전이라 상태 코드에 기대지 않는다.
-    func commit(_ writes: [FirestoreWrite], uid: String, nicknameLower: String? = nil) async -> CommitResult {
+    /// `nametagKey`를 주면 실패 시 예약을 다시 조회해 다른 계정이 가졌는지(`taken`) 가린다.
+    /// 중복 예약은 에뮬레이터 실측으로 409지만, 상태 코드에 기대지 않고 재조회로 판정한다.
+    func commit(_ writes: [FirestoreWrite], uid: String, nametagKey: String? = nil) async -> CommitResult {
         guard let body = PlayerDocuments.commitBody(writes) else { return .failed }
         if let (_, status) = await send(method: "POST", path: ":commit", body: body), (200..<300).contains(status) {
             return .ok
         }
-        if let nicknameLower, await nicknameAvailability(lower: nicknameLower, uid: uid) == .taken {
+        if let nametagKey, await nametagAvailability(key: nametagKey, uid: uid) == .taken {
             return .taken
         }
         return .failed
@@ -108,9 +109,9 @@ final class PlayerProfileClient {
     // MARK: 전송
 
     /// path는 `documents` 뒤에 붙는다(`players/x` → `/documents/players/x`, `:commit` → `/documents:commit`).
-    /// 전송 실패면 nil. 401이면 토큰을 강제 갱신해 한 번 다시 보낸다.
+    /// 전송 실패면 nil. 401·403이면 토큰을 강제 갱신해 한 번 다시 보낸다.
     private func send(method: String, path: String, body: Data? = nil) async -> (Data, Int)? {
-        // 한글 닉네임 문서 ID가 경로에 들어가므로 퍼센트 인코딩한다.
+        // 한글 닉네임·`#`이 든 문서 ID가 경로에 들어가므로 퍼센트 인코딩한다(`#`은 urlPathAllowed 밖 → %23).
         let full = "/v1/\(documents.root)" + (path.hasPrefix(":") ? path : "/\(path)")
         guard let encoded = full.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "https://firestore.googleapis.com" + encoded) else { return nil }
@@ -129,7 +130,7 @@ final class PlayerProfileClient {
             guard let (data, response) = try? await transport(req),
                   let http = response as? HTTPURLResponse else { return nil }
             clock.record(dateHeader: http.value(forHTTPHeaderField: "Date"), receivedAt: Date())
-            if http.statusCode == 401, attempt == 0 { continue }
+            if http.statusCode == 401 || http.statusCode == 403, attempt == 0 { continue }
             return (data, http.statusCode)
         }
         return nil

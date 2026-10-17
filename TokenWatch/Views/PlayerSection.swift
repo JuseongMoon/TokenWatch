@@ -48,13 +48,11 @@ struct PlayerSection: View {
             help(loc.playerDeleting)
         case .signedIn(let profile):
             HStack(spacing: 12) {
-                AvatarView(avatarID: profile.avatarID, cell: 3)
-                    .accessibilityLabel(AvatarCatalog.resolve(profile.avatarID).name(loc.lang))
+                let avatarID = account.displayAvatarID(for: profile)
+                AvatarView(avatarID: avatarID, cell: 3)
+                    .accessibilityLabel(AvatarCatalog.resolve(avatarID).name(loc.lang))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(profile.nickname)
-                        .font(.term(15, weight: .semibold))
-                        .foregroundStyle(Term.fg)
-                        .lineLimit(1)
+                    NametagText(profile: profile)
                     Text(account.methods.map(loc.accountMethodName).joined(separator: " · "))
                         .font(.term(10)).foregroundStyle(Term.dim)
                 }

@@ -67,6 +67,9 @@ protocol AccountAuthenticating: AnyObject {
     func deleteUser() async -> Bool
     func signOut()
     func idToken(forceRefresh: Bool) async -> String?
+    /// 운영자 표시(커스텀 클레임 `tokenwatchOperator`)가 있는지. 관리자가 Admin API로 붙인다.
+    /// 붙인 직후에는 토큰을 강제 갱신해야 반영된다.
+    func isOperator(forceRefresh: Bool) async -> Bool
 }
 
 // MARK: - Firebase 구현
@@ -172,6 +175,15 @@ final class FirebaseAccountAuth: AccountAuthenticating {
         guard isAvailable, let user = Auth.auth().currentUser else { return nil }
         return try? await user.getIDToken(forcingRefresh: forceRefresh)
     }
+
+    func isOperator(forceRefresh: Bool) async -> Bool {
+        guard isAvailable, let user = Auth.auth().currentUser,
+              let result = try? await user.getIDTokenResult(forcingRefresh: forceRefresh) else { return false }
+        return result.claims[Self.operatorClaim] as? Bool == true
+    }
+
+    /// 운영자 커스텀 클레임 이름(서버 규칙·관리 스크립트와 같은 값).
+    static let operatorClaim = "tokenwatchOperator"
 
     // MARK: 자격증명
 

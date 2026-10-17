@@ -112,7 +112,7 @@ struct AvatarPicker: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(AvatarCatalog.all) { avatar in
+            ForEach(AvatarCatalog.selectable) { avatar in   // 운영자 전용 아바타는 절대 넣지 않는다
                 let selected = avatar.id == selection
                 Button {
                     selection = avatar.id
@@ -154,6 +154,20 @@ struct NicknameField: View {
             .tint(Term.green)
             .padding(12)
             .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+    }
+}
+
+/// `닉네임 #1234` 표시(한 칸 띄움). 태그는 흐린 색으로 붙인다(배틀태그 — 항상 함께 보인다).
+struct NametagText: View {
+    let profile: PlayerProfile
+    var size: CGFloat = 15
+
+    var body: some View {
+        (Text(profile.nickname).foregroundStyle(Term.fg)
+         + Text(" #\(profile.tag)").foregroundStyle(Term.dim))
+            .font(.term(size, weight: .semibold))
+            .lineLimit(1)
+            .accessibilityLabel(profile.nametag)
     }
 }
 

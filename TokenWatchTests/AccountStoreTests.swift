@@ -5,7 +5,8 @@
 //  앱 계정 상태 전이 검증(가짜 인증 + 가짜 Firestore).
 //  - 로그인 성공 → 프로필 404면 needsProfile, 200이면 signedIn
 //  - 로그인 취소·충돌은 signedOut으로 돌아오고 충돌은 안내를 남긴다
-//  - 프로필 생성: 입력 오류·약관 미동의는 서버를 부르지 않는다, 예약 중복은 taken
+//  - 프로필 생성: 입력 오류·약관 미동의는 서버를 부르지 않는다, 배틀태그가 겹치면 다시 뽑는다
+//  - 운영자: 전용 아바타가 번들에 없으면 고른 아바타로 그린다
 //  - 데모 중에는 어떤 진입점도 서버를 부르지 않는다
 //  - 삭제: 재인증 취소·폐기 실패면 아무것도 지우지 않는다, Auth 삭제만 실패하면 needsProfile
 //  - 캐시가 같은 계정이면 즉시 signedIn으로 복원한다
@@ -23,6 +24,7 @@ final class FakeAccountAuth: AccountAuthenticating {
     var signInResult: AccountAuthResult = .cancelled
     var reauthResult: AccountReauthResult = .ok
     var deleteSucceeds = true
+    var operatorClaim = false
     private(set) var deleteCalls = 0
     private(set) var signOutCalls = 0
     private var onChange: ((AccountUser?) -> Void)?
@@ -48,13 +50,14 @@ final class FakeAccountAuth: AccountAuthenticating {
 
     func signOut() { signOutCalls += 1; currentUser = nil; onChange?(nil) }
     func idToken(forceRefresh: Bool) async -> String? { currentUser == nil ? nil : "token" }
+    func isOperator(forceRefresh: Bool) async -> Bool { currentUser != nil && operatorClaim }
 }
 
 @MainActor
 struct AccountStoreTests {
     private let user = AccountUser(uid: "u1", methods: [.apple])
     private static let profileJSON = """
-    {"fields":{"nickname":{"stringValue":"모험가"},"nicknameLower":{"stringValue":"모험가"},
+    {"fields":{"nickname":{"stringValue":"모험가"},"nicknameLower":{"stringValue":"모험가"},"tag":{"stringValue":"0042"},
       "nicknameChangedAtMs":{"integerValue":"1"},"createdAtMs":{"integerValue":"1"},
       "avatar":{"mapValue":{"fields":{"kind":{"stringValue":"preset"},"id":{"stringValue":"cat"}}}}}}
     """
@@ -130,24 +133,48 @@ struct AccountStoreTests {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: true)
         let server = FakeFirestore()
-        server.responses = [.init(status: 404), .init(status: 404), .init(status: 200)]   // 프로필 GET, 예약 GET, commit
+        server.responses = [.init(status: 404), .init(status: 404), .init(status: 200)]   // 프로필 GET, 태그 예약 GET, commit
         let (store, _) = makeStore(auth: auth, server: server)
         await store.signIn(with: .apple)
         #expect(await store.createProfile(nickname: " 모험가 ", avatarID: "cat", termsAccepted: true) == .saved)
         #expect(store.profile?.nickname == "모험가")
         #expect(store.profile?.termsAcceptedVersion == PlayerProfile.currentTermsVersion)
+        let tag = store.profile?.tag ?? ""
+        #expect(NicknamePolicy.isValidTag(tag) && !NicknamePolicy.isRepdigit(tag))
+        #expect(server.requests[1].url?.absoluteString.contains("nametags/") == true)
         #expect(server.requests.last?.url?.path.hasSuffix(":commit") == true)
     }
 
-    @Test func takenReservationIsReported() async {
+    /// 뽑은 태그가 다른 계정 것이면 새로 뽑아 저장한다(사용자에게는 taken이 보이지 않는다).
+    @Test func takenTagIsRerolled() async {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: true)
         let server = FakeFirestore()
-        server.responses = [.init(status: 404), .init(status: 200, body: #"{"fields":{"uid":{"stringValue":"other"}}}"#)]
+        server.responses = [.init(status: 404),                                                   // 프로필 GET
+                            .init(status: 200, body: #"{"fields":{"uid":{"stringValue":"other"}}}"#), // 태그 1 — 남의 것
+                            .init(status: 404),                                                   // 태그 2 — 비어 있음
+                            .init(status: 200)]                                                   // commit
         let (store, _) = makeStore(auth: auth, server: server)
         await store.signIn(with: .apple)
-        #expect(await store.createProfile(nickname: "모험가", avatarID: "cat", termsAccepted: true) == .invalid(.taken))
-        #expect(store.state == .needsProfile)
+        #expect(await store.createProfile(nickname: "모험가", avatarID: "cat", termsAccepted: true) == .saved)
+        #expect(server.requests.count == 4)
+    }
+
+    @Test func operatorWithoutArtFallsBackToChosenAvatar() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: false)
+        auth.operatorClaim = true
+        let server = FakeFirestore()
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let (store, _) = makeStore(auth: auth, server: server)
+        await store.signIn(with: .apple)
+        #expect(store.isOperator)
+        let profile = try! #require(store.profile)
+        // 전용 비트맵이 아직 번들에 없으므로 고른 아바타 그대로다.
+        #expect(AvatarCatalog.operatorAvatar == nil)
+        #expect(store.displayAvatarID(for: profile) == "cat")
+        // 운영자 전용 아바타는 선택 격자에 절대 없다.
+        #expect(!AvatarCatalog.ids.contains(AvatarCatalog.operatorAvatarID))
     }
 
     @Test func demoBlocksEveryEntryPoint() async {
@@ -218,11 +245,11 @@ struct AccountStoreTests {
         auth.currentUser = user
         let defaults = UserDefaults(suiteName: "AccountStoreTests.cache")!
         defaults.removePersistentDomain(forName: "AccountStoreTests.cache")
-        PlayerProfileCache(uid: "u1", nickname: "모험가", avatarId: "cat", nicknameChangedAtMs: 1).save(to: defaults)
+        PlayerProfileCache(uid: "u1", nickname: "모험가", tag: "0042", avatarId: "cat", nicknameChangedAtMs: 1).save(to: defaults)
         let store = AccountStore(auth: auth, projectID: "demo-proj", isDemo: { false }, defaults: defaults)
         #expect(store.profile?.nickname == "모험가")
 
-        PlayerProfileCache(uid: "someone-else", nickname: "x", avatarId: "cat", nicknameChangedAtMs: 1).save(to: defaults)
+        PlayerProfileCache(uid: "someone-else", nickname: "x", tag: "0001", avatarId: "cat", nicknameChangedAtMs: 1).save(to: defaults)
         let other = AccountStore(auth: auth, projectID: "demo-proj", isDemo: { false }, defaults: defaults)
         #expect(other.state == .loading)
     }

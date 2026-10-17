@@ -65,15 +65,16 @@ nonisolated enum FirestoreWrite: Equatable, Sendable {
     }
 }
 
-/// 프로필 문서 경로·쓰기 묶음(계약 §4-2). 생성·닉네임 변경은 players와 nicknames를 한 커밋으로 묶는다.
+/// 프로필 문서 경로·쓰기 묶음(계약 §4-2). 생성·닉네임 변경은 players와 nametags를 한 커밋으로 묶는다.
+/// `nametags/{소문자닉네임#태그}`가 배틀태그 고유 예약이다(닉네임 자체는 겹쳐도 된다).
 nonisolated struct PlayerDocuments: Sendable {
     let projectID: String
 
     var root: String { "projects/\(projectID)/databases/(default)/documents" }
     func player(_ uid: String) -> String { "\(root)/players/\(uid)" }
-    func nickname(_ lower: String) -> String { "\(root)/nicknames/\(lower)" }
+    func nametag(_ key: String) -> String { "\(root)/nametags/\(key)" }
 
-    static let nicknameMask = ["nickname", "nicknameLower", "nicknameChangedAtMs", "updatedAtMs"]
+    static let nicknameMask = ["nickname", "nicknameLower", "tag", "nicknameChangedAtMs", "updatedAtMs"]
     static let avatarMask = ["avatar", "updatedAtMs"]
     static let termsMask = ["termsAcceptedVersion", "updatedAtMs"]
 
@@ -81,11 +82,12 @@ nonisolated struct PlayerDocuments: Sendable {
         .map(["kind": .string("preset"), "id": .string(id)])
     }
 
-    /// 프로필 생성: players(새 문서) + nicknames 예약(새 문서).
+    /// 프로필 생성: players(새 문서) + 배틀태그 예약(새 문서).
     func create(uid: String, profile p: PlayerProfile) -> [FirestoreWrite] {
         let fields: [String: FirestoreValue] = [
             "nickname": .string(p.nickname),
             "nicknameLower": .string(p.nicknameLower),
+            "tag": .string(p.tag),
             "nicknameChangedAtMs": .integer(p.nicknameChangedAtMs),
             "avatar": Self.avatarValue(p.avatarID),
             "termsAcceptedVersion": .integer(Int64(p.termsAcceptedVersion)),
@@ -94,26 +96,26 @@ nonisolated struct PlayerDocuments: Sendable {
         ]
         return [
             .update(name: player(uid), fields: fields, mask: nil, exists: false),
-            .update(name: nickname(p.nicknameLower), fields: ["uid": .string(uid)], mask: nil, exists: false),
+            .update(name: nametag(p.nametagKey), fields: ["uid": .string(uid)], mask: nil, exists: false),
         ]
     }
 
-    /// 닉네임 변경: players(마스크) + 새 예약 + 옛 예약 삭제. 대소문자만 바뀌면 예약 키가 같아 players만 쓴다.
-    func changeNickname(uid: String, oldLower: String, nickname newNickname: String,
-                        lower newLower: String, nowMs: Int64) -> [FirestoreWrite] {
-        var writes: [FirestoreWrite] = [
+    /// 닉네임 변경: players(마스크) + 새 배틀태그 예약 + 옛 예약 삭제.
+    /// 바꿀 때마다 태그를 새로 뽑으므로(대소문자만 바꿔도) 예약 키는 항상 바뀐다.
+    func changeNickname(uid: String, oldKey: String, nickname newNickname: String,
+                        lower newLower: String, tag newTag: String, nowMs: Int64) -> [FirestoreWrite] {
+        let newKey = NicknamePolicy.nametagKey(lower: newLower, tag: newTag)
+        return [
             .update(name: player(uid), fields: [
                 "nickname": .string(newNickname),
                 "nicknameLower": .string(newLower),
+                "tag": .string(newTag),
                 "nicknameChangedAtMs": .integer(nowMs),
                 "updatedAtMs": .integer(nowMs),
             ], mask: Self.nicknameMask, exists: true),
+            .update(name: nametag(newKey), fields: ["uid": .string(uid)], mask: nil, exists: false),
+            .delete(name: nametag(oldKey)),
         ]
-        if newLower != oldLower {
-            writes.append(.update(name: nickname(newLower), fields: ["uid": .string(uid)], mask: nil, exists: false))
-            writes.append(.delete(name: nickname(oldLower)))
-        }
-        return writes
     }
 
     func changeAvatar(uid: String, avatarID: String, nowMs: Int64) -> [FirestoreWrite] {
@@ -127,16 +129,16 @@ nonisolated struct PlayerDocuments: Sendable {
                  mask: Self.termsMask, exists: true)]
     }
 
-    /// 계정 삭제: 닉네임 예약과 프로필 문서를 함께 지운다.
-    func delete(uid: String, nicknameLower: String) -> [FirestoreWrite] {
-        [.delete(name: nickname(nicknameLower)), .delete(name: player(uid))]
+    /// 계정 삭제: 배틀태그 예약과 프로필 문서를 함께 지운다.
+    func delete(uid: String, nametagKey: String) -> [FirestoreWrite] {
+        [.delete(name: nametag(nametagKey)), .delete(name: player(uid))]
     }
 
     static func commitBody(_ writes: [FirestoreWrite]) -> Data? {
         try? JSONSerialization.data(withJSONObject: ["writes": writes.map(\.json)], options: [.sortedKeys])
     }
 
-    /// `GET players/{uid}` 응답 → 프로필. 필수 필드가 빠지면 nil.
+    /// `GET players/{uid}` 응답 → 프로필. 필수 필드(태그 포함)가 빠지면 nil.
     /// 아바타가 프리셋이 아니면(V2 이후 종류) 기본 아바타로 읽는다.
     static func decodeProfile(_ data: Data) -> PlayerProfile? {
         guard let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -144,19 +146,20 @@ nonisolated struct PlayerDocuments: Sendable {
         let f = raw.compactMapValues(FirestoreValue.init(json:))
         guard let nickname = f["nickname"]?.stringValue,
               let lower = f["nicknameLower"]?.stringValue,
+              let tag = f["tag"]?.stringValue, NicknamePolicy.isValidTag(tag),
               let changed = f["nicknameChangedAtMs"]?.integerValue,
               let created = f["createdAtMs"]?.integerValue else { return nil }
         let avatar = f["avatar"]?.mapValue
         let avatarID = avatar?["kind"]?.stringValue == "preset" ? avatar?["id"]?.stringValue : nil
         return PlayerProfile(
-            nickname: nickname, nicknameLower: lower, nicknameChangedAtMs: changed,
+            nickname: nickname, nicknameLower: lower, tag: tag, nicknameChangedAtMs: changed,
             avatarID: avatarID ?? AvatarCatalog.fallbackID,
             termsAcceptedVersion: Int(f["termsAcceptedVersion"]?.integerValue ?? 0),
             createdAtMs: created, updatedAtMs: f["updatedAtMs"]?.integerValue ?? created)
     }
 
-    /// `GET nicknames/{lower}` 응답 → 예약한 uid.
-    static func decodeNicknameOwner(_ data: Data) -> String? {
+    /// `GET nametags/{key}` 응답 → 예약한 uid.
+    static func decodeNametagOwner(_ data: Data) -> String? {
         guard let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = doc["fields"] as? [String: Any] else { return nil }
         return raw["uid"].flatMap(FirestoreValue.init(json:))?.stringValue

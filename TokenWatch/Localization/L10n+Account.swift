@@ -91,11 +91,12 @@ extension L10n {
         case .invalidChars:
             return lang == .ko ? "한글·영문·숫자·_·-만 쓸 수 있어요." : "Use only Korean, English letters, numbers, _ and -."
         case .taken:
-            return lang == .ko ? "이미 쓰고 있는 닉네임이에요." : "That nickname is already taken."
+            return lang == .ko ? "이 닉네임은 쓸 수 있는 #번호가 남지 않았어요. 다른 닉네임을 써 주세요."
+                               : "No #numbers are left for this nickname. Please try another one."
         case .bannedWord:
             return lang == .ko ? "쓸 수 없는 단어가 들어 있어요." : "That nickname contains a word that isn't allowed."
         case .cooldown:
-            return lang == .ko ? "닉네임은 7일에 한 번 바꿀 수 있어요." : "You can change your nickname once every 7 days."
+            return lang == .ko ? "닉네임은 30일에 한 번 바꿀 수 있어요." : "You can change your nickname once every 30 days."
         case .termsRequired:
             return lang == .ko ? "이용약관과 개인정보 처리방침에 동의해 주세요." : "Please agree to the Terms and Privacy Policy."
         }
@@ -111,12 +112,20 @@ extension L10n {
 
     // MARK: 프로필 설정 화면
     var profileSetupIntro: String {
-        lang == .ko ? "다른 사용자에게 보일 닉네임과 아바타를 골라 주세요. 아바타는 언제든, 닉네임은 7일에 한 번 바꿀 수 있어요."
-                    : "Pick the nickname and avatar others will see. You can change your avatar anytime and your nickname once every 7 days."
+        lang == .ko ? "다른 사용자에게 보일 닉네임과 아바타를 골라 주세요. 닉네임 뒤에는 구분용 #번호(예: #8571)가 붙어요. 아바타는 언제든, 닉네임은 30일에 한 번 바꿀 수 있어요."
+                    : "Pick the nickname and avatar others will see. A #number (like #8571) is added after your nickname to tell people apart. You can change your avatar anytime and your nickname once every 30 days."
     }
     var nicknamePlaceholder: String { lang == .ko ? "2–12자" : "2–12 chars" }
     var nicknameRule: String {
         lang == .ko ? "한글·영문·숫자·_·- / 2–12자" : "Korean, English, numbers, _ - / 2–12 chars"
+    }
+    var nicknameTagHint: String {
+        lang == .ko ? "닉네임을 바꾸면 #번호도 새로 정해져요. 30일에 한 번 바꿀 수 있어요."
+                    : "Changing your nickname also gives you a new #number. You can change it once every 30 days."
+    }
+    var operatorAvatarNote: String {
+        lang == .ko ? "운영자 계정은 고른 아바타와 상관없이 전용 아바타로 보여요."
+                    : "Operator accounts always appear with the operator avatar, whatever you pick here."
     }
     var termsAgree: String {
         lang == .ko ? "이용약관과 개인정보 처리방침에 동의합니다" : "I agree to the Terms of Service and Privacy Policy"

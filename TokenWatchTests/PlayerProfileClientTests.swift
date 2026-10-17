@@ -3,13 +3,14 @@
 //  TokenWatchTests
 //
 //  앱 계정 Firestore REST 계층 검증(계약 §3·§4).
-//  - commit 묶음: 생성은 exists=false 두 건, 닉네임 변경은 updateMask + exists=true + 옛 예약 삭제,
-//    대소문자만 바뀌면 players만, 아바타·약관 마스크, **기존 문서 쓰기에 마스크가 빠지지 않음**, 삭제 두 건
+//  - commit 묶음: 생성은 exists=false 두 건(players + nametags/{닉네임#태그}), 닉네임 변경은 updateMask(태그 포함)
+//    + exists=true + 새 예약 + 옛 예약 삭제(대소문자만 바꿔도 태그가 바뀌어 항상 교체), 아바타·약관 마스크,
+//    **기존 문서 쓰기에 마스크가 빠지지 않음**, 삭제 두 건
 //  - 값 인코딩: integerValue는 문자열
 //  - 디코딩: 모르는 필드 무시, 프리셋이 아닌 아바타는 기본 아바타
 //  - Date 헤더 시차 보정
 //  - 클라이언트: Bearer 헤더·`?key=` 없음, 404/200 매핑, 401 → 토큰 강제 갱신 1회 재시도,
-//    본인 예약은 사용 가능, commit 실패 → 예약 재조회 → taken, 한글 문서 ID 퍼센트 인코딩
+//    본인 예약은 사용 가능, commit 실패 → 예약 재조회 → taken, 한글·`#` 문서 ID 퍼센트 인코딩
 //
 
 import Testing
@@ -19,7 +20,7 @@ import Foundation
 @MainActor
 struct PlayerProfileClientTests {
     private let docs = PlayerDocuments(projectID: "demo-proj")
-    private let profile = PlayerProfile(nickname: "Slime왕", nicknameLower: "slime왕", nicknameChangedAtMs: 100,
+    private let profile = PlayerProfile(nickname: "Slime왕", nicknameLower: "slime왕", tag: "0042", nicknameChangedAtMs: 100,
                                         avatarID: "mage", termsAcceptedVersion: 1, createdAtMs: 100, updatedAtMs: 100)
 
     // MARK: commit 묶음
@@ -33,29 +34,34 @@ struct PlayerProfileClientTests {
         }
         #expect(pName == "projects/demo-proj/databases/(default)/documents/players/u1")
         #expect(pMask == nil && pExists == false)
-        #expect(Set(fields.keys) == ["nickname", "nicknameLower", "nicknameChangedAtMs", "avatar",
+        #expect(Set(fields.keys) == ["nickname", "nicknameLower", "tag", "nicknameChangedAtMs", "avatar",
                                      "termsAcceptedVersion", "createdAtMs", "updatedAtMs"])
+        #expect(fields["tag"] == .string("0042"))
         #expect(fields["avatar"] == .map(["kind": .string("preset"), "id": .string("mage")]))
-        #expect(nName == "projects/demo-proj/databases/(default)/documents/nicknames/slime왕")
+        #expect(nName == "projects/demo-proj/databases/(default)/documents/nametags/slime왕#0042")
         #expect(nFields == ["uid": .string("u1")])
         #expect(nMask == nil && nExists == false)
     }
 
     @Test func nicknameChangeMasksAndSwapsReservation() {
-        let writes = docs.changeNickname(uid: "u1", oldLower: "slime왕", nickname: "Goblin", lower: "goblin", nowMs: 200)
+        let writes = docs.changeNickname(uid: "u1", oldKey: "slime왕#0042", nickname: "Goblin", lower: "goblin",
+                                         tag: "8571", nowMs: 200)
         #expect(writes.count == 3)
         guard case .update(_, let fields, let mask, let exists) = writes[0] else { Issue.record(); return }
-        #expect(mask == ["nickname", "nicknameLower", "nicknameChangedAtMs", "updatedAtMs"])
+        #expect(mask == ["nickname", "nicknameLower", "tag", "nicknameChangedAtMs", "updatedAtMs"])
         #expect(exists == true)
         #expect(Set(fields.keys) == Set(mask ?? []))
-        #expect(writes[1] == .update(name: docs.nickname("goblin"), fields: ["uid": .string("u1")],
+        #expect(writes[1] == .update(name: docs.nametag("goblin#8571"), fields: ["uid": .string("u1")],
                                      mask: nil, exists: false))
-        #expect(writes[2] == .delete(name: docs.nickname("slime왕")))
+        #expect(writes[2] == .delete(name: docs.nametag("slime왕#0042")))
     }
 
-    @Test func caseOnlyChangeKeepsReservation() {
-        let writes = docs.changeNickname(uid: "u1", oldLower: "slime왕", nickname: "SLIME왕", lower: "slime왕", nowMs: 200)
-        #expect(writes.count == 1)
+    /// 대소문자만 바꿔도 태그를 새로 뽑으므로 예약을 교체한다.
+    @Test func caseOnlyChangeStillSwapsTag() {
+        let writes = docs.changeNickname(uid: "u1", oldKey: "slime왕#0042", nickname: "SLIME왕", lower: "slime왕",
+                                         tag: "1357", nowMs: 200)
+        #expect(writes.count == 3)
+        #expect(writes[2] == .delete(name: docs.nametag("slime왕#0042")))
     }
 
     @Test func avatarAndTermsUseMasks() {
@@ -71,7 +77,7 @@ struct PlayerProfileClientTests {
 
     /// 기존 players 문서를 고치는 쓰기에는 반드시 마스크가 있어야 한다(V2 서버 필드 보존).
     @Test func existingPlayerWritesAlwaysHaveMask() {
-        let all = docs.changeNickname(uid: "u1", oldLower: "a", nickname: "bb", lower: "bb", nowMs: 1)
+        let all = docs.changeNickname(uid: "u1", oldKey: "a#0001", nickname: "bb", lower: "bb", tag: "0002", nowMs: 1)
             + docs.changeAvatar(uid: "u1", avatarID: "cat", nowMs: 1)
             + docs.acceptTerms(uid: "u1", version: 1, nowMs: 1)
         for w in all {
@@ -83,8 +89,8 @@ struct PlayerProfileClientTests {
     }
 
     @Test func deleteRemovesReservationAndProfile() {
-        #expect(docs.delete(uid: "u1", nicknameLower: "slime왕") ==
-                [.delete(name: docs.nickname("slime왕")), .delete(name: docs.player("u1"))])
+        #expect(docs.delete(uid: "u1", nametagKey: "slime왕#0042") ==
+                [.delete(name: docs.nametag("slime왕#0042")), .delete(name: docs.player("u1"))])
     }
 
     @Test func commitBodyEncodesIntegersAsStrings() throws {
@@ -104,7 +110,7 @@ struct PlayerProfileClientTests {
     @Test func decodesProfileIgnoringUnknownFields() throws {
         let data = Data("""
         {"name":"projects/p/databases/(default)/documents/players/u1","fields":{
-          "nickname":{"stringValue":"모험가"},"nicknameLower":{"stringValue":"모험가"},
+          "nickname":{"stringValue":"모험가"},"nicknameLower":{"stringValue":"모험가"},"tag":{"stringValue":"0042"},
           "nicknameChangedAtMs":{"integerValue":"1700000000000"},
           "avatar":{"mapValue":{"fields":{"kind":{"stringValue":"preset"},"id":{"stringValue":"knight"}}}},
           "termsAcceptedVersion":{"integerValue":"1"},"createdAtMs":{"integerValue":"1690000000000"},
@@ -113,14 +119,14 @@ struct PlayerProfileClientTests {
         }}
         """.utf8)
         let p = try #require(PlayerDocuments.decodeProfile(data))
-        #expect(p == PlayerProfile(nickname: "모험가", nicknameLower: "모험가", nicknameChangedAtMs: 1_700_000_000_000,
+        #expect(p == PlayerProfile(nickname: "모험가", nicknameLower: "모험가", tag: "0042", nicknameChangedAtMs: 1_700_000_000_000,
                                    avatarID: "knight", termsAcceptedVersion: 1, createdAtMs: 1_690_000_000_000,
                                    updatedAtMs: 1_700_000_000_001))
     }
 
     @Test func nonPresetAvatarFallsBack() throws {
         let data = Data("""
-        {"fields":{"nickname":{"stringValue":"ab"},"nicknameLower":{"stringValue":"ab"},
+        {"fields":{"nickname":{"stringValue":"ab"},"nicknameLower":{"stringValue":"ab"},"tag":{"stringValue":"9999"},
           "nicknameChangedAtMs":{"integerValue":"1"},"createdAtMs":{"integerValue":"1"},
           "avatar":{"mapValue":{"fields":{"kind":{"stringValue":"photo"},"path":{"stringValue":"x"}}}}}}
         """.utf8)
@@ -129,6 +135,11 @@ struct PlayerProfileClientTests {
 
     @Test func missingRequiredFieldFails() {
         #expect(PlayerDocuments.decodeProfile(Data(#"{"fields":{"nickname":{"stringValue":"ab"}}}"#.utf8)) == nil)
+        // 태그가 없거나 4자리가 아니면 실패한다.
+        let noTag = #"{"fields":{"nickname":{"stringValue":"ab"},"nicknameLower":{"stringValue":"ab"},"nicknameChangedAtMs":{"integerValue":"1"},"createdAtMs":{"integerValue":"1"}}}"#
+        #expect(PlayerDocuments.decodeProfile(Data(noTag.utf8)) == nil)
+        let badTag = noTag.replacingOccurrences(of: #""nicknameLower""#, with: #""tag":{"stringValue":"42"},"nicknameLower""#)
+        #expect(PlayerDocuments.decodeProfile(Data(badTag.utf8)) == nil)
     }
 
     // MARK: 서버 시차
@@ -174,6 +185,16 @@ struct PlayerProfileClientTests {
                 ["Bearer cached-token", "Bearer fresh-token"])
     }
 
+    /// 403(규칙 거절)도 새 토큰으로 한 번 다시 보낸다 — 막 붙은 운영자 클레임을 반영하려고.
+    @Test func retriesOnceWithFreshTokenAfter403() async {
+        let server = FakeFirestore()
+        server.responses = [.init(status: 403), .init(status: 200)]
+        let client = makeClient(server)
+        #expect(await client.commit(client.documents.changeAvatar(uid: "u1", avatarID: "cat", nowMs: 1), uid: "u1") == .ok)
+        #expect(server.requests.map { $0.value(forHTTPHeaderField: "Authorization") } ==
+                ["Bearer cached-token", "Bearer fresh-token"])
+    }
+
     @Test func secondUnauthorizedFails() async {
         let server = FakeFirestore()
         server.responses = [.init(status: 401), .init(status: 401)]
@@ -186,10 +207,10 @@ struct PlayerProfileClientTests {
         server.responses = [.init(status: 200, body: #"{"fields":{"uid":{"stringValue":"u1"}}}"#),
                             .init(status: 200, body: #"{"fields":{"uid":{"stringValue":"other"}}}"#)]
         let client = makeClient(server)
-        #expect(await client.nicknameAvailability(lower: "모험가", uid: "u1") == .available)
-        #expect(await client.nicknameAvailability(lower: "모험가", uid: "u1") == .taken)
-        // 한글 문서 ID는 퍼센트 인코딩해 보낸다.
-        #expect(server.requests[0].url?.absoluteString.contains("nicknames/%EB%AA%A8%ED%97%98%EA%B0%80") == true)
+        #expect(await client.nametagAvailability(key: "모험가#0042", uid: "u1") == .available)
+        #expect(await client.nametagAvailability(key: "모험가#0042", uid: "u1") == .taken)
+        // 한글·`#` 문서 ID는 퍼센트 인코딩해 보낸다(#은 %23 — 안 하면 URL 조각으로 잘린다).
+        #expect(server.requests[0].url?.absoluteString.contains("nametags/%EB%AA%A8%ED%97%98%EA%B0%80%230042") == true)
     }
 
     @Test func failedCommitRechecksReservation() async {
@@ -197,7 +218,7 @@ struct PlayerProfileClientTests {
         server.responses = [.init(status: 400), .init(status: 200, body: #"{"fields":{"uid":{"stringValue":"other"}}}"#)]
         let client = makeClient(server)
         let result = await client.commit(client.documents.create(uid: "u1", profile: profile),
-                                         uid: "u1", nicknameLower: "slime왕")
+                                         uid: "u1", nametagKey: "slime왕#0042")
         #expect(result == .taken)
         #expect(server.requests[0].httpMethod == "POST")
         #expect(server.requests[0].url?.path.hasSuffix("/documents:commit") == true)

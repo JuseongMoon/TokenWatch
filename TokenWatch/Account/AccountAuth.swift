@@ -44,6 +44,15 @@ enum AccountAuthResult: Equatable {
     case alreadyInUse
 }
 
+/// 서버에서 다시 확인한 로그인 상태.
+nonisolated enum AccountSessionStatus: Equatable, Sendable {
+    case valid
+    /// 계정이 삭제·정지됐거나 로그인이 무효가 됐다(웹·다른 기기에서 삭제 등).
+    case revoked
+    /// 오프라인 등으로 확인하지 못했다 — 지금 상태를 유지한다.
+    case unknown
+}
+
 enum AccountReauthResult: Equatable {
     case ok
     case cancelled
@@ -60,6 +69,8 @@ protocol AccountAuthenticating: AnyObject {
     var currentUser: AccountUser? { get }
     /// 로그인 상태 변화(복원·만료·로그아웃) 구독. 앱 수명 동안 한 번 건다.
     func startListening(_ onChange: @escaping (AccountUser?) -> Void)
+    /// 서버에서 로그인 상태를 다시 확인한다. 로컬 세션은 계정이 서버에서 지워져도 그대로 남기 때문이다.
+    func reloadUser() async -> AccountSessionStatus
     func signIn(with method: AccountMethod) async -> AccountAuthResult
     func link(_ method: AccountMethod) async -> AccountAuthResult
     /// 계정 삭제 직전 재인증. Apple이 연결돼 있으면 Apple로 재인증하고 토큰을 폐기한다.
@@ -90,6 +101,20 @@ final class FirebaseAccountAuth: AccountAuthenticating {
         guard isAvailable, listener == nil else { return }
         listener = Auth.auth().addStateDidChangeListener { _, user in
             onChange(user.map(Self.accountUser))
+        }
+    }
+
+    func reloadUser() async -> AccountSessionStatus {
+        guard isAvailable, let user = Auth.auth().currentUser else { return .revoked }
+        do {
+            try await user.reload()
+            return .valid
+        } catch {
+            // SDK도 이 네 코드에서 스스로 로그아웃한다(리스너가 nil로 불린다).
+            switch AuthErrorCode(rawValue: (error as NSError).code) {
+            case .userNotFound, .userDisabled, .invalidUserToken, .userTokenExpired: return .revoked
+            default: return .unknown
+            }
         }
     }
 

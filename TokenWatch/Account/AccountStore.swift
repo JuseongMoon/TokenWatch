@@ -7,6 +7,7 @@
 //
 //  - 데모 모드에서는 모든 진입점이 즉시 반환한다(서버 호출 0건). 데모 진입은 로그아웃이 아니다.
 //  - 프로필 정본은 서버다. 오프라인에서 PLAYER 박스를 그리려고 최소 캐시만 UserDefaults에 둔다.
+//    PLAYER 박스가 보일 때 서버에서 다시 확인해, 웹·다른 기기에서 지운 계정이면 로그아웃 상태로 정리한다.
 //  - 계정 삭제는 재인증 → (Apple) 토큰 폐기 → 프로필 삭제 커밋 → Auth 사용자 삭제 순서이고,
 //    재인증 취소나 폐기 실패면 아무것도 지우지 않고 멈춘다.
 //
@@ -66,6 +67,8 @@ final class AccountStore {
     @ObservationIgnored private let isDemo: () -> Bool
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var currentUID: String?
+    /// 마지막으로 서버에서 다시 읽은 시각(`revalidate()` 간격 판단용).
+    @ObservationIgnored private var lastRefreshAt: Date?
 
     /// 앱에서 쓰는 실제 구성(FirebaseAuth + 번들 plist의 프로젝트).
     static func live(isDemo: @escaping () -> Bool) -> AccountStore {
@@ -177,10 +180,28 @@ final class AccountStore {
         return false
     }
 
+    /// PLAYER 박스가 보일 때 부른다. 웹·다른 기기에서 계정을 지웠거나 프로필을 바꿨으면 반영한다.
+    /// 설정을 여닫을 때마다 서버를 부르지 않게, 마지막 확인 뒤 일정 시간 안에는 건너뛴다.
+    func revalidate() async {
+        guard currentUID != nil, !isWorking, !isSigningIn, state != .deleting else { return }
+        if let last = lastRefreshAt, Date().timeIntervalSince(last) < Self.revalidateInterval { return }
+        await refreshProfile()
+    }
+
+    /// `revalidate()`가 다시 확인하기까지의 최소 간격(초).
+    private static let revalidateInterval: TimeInterval = 30
+
     /// 서버에서 프로필을 다시 읽는다. 이미 보이는 프로필이 있으면 실패해도 그대로 둔다.
+    /// 계정이 서버에서 지워졌으면(웹·다른 기기에서 삭제) 이 기기도 로그아웃 상태로 정리한다.
     func refreshProfile() async {
         guard !isDemo(), let profiles, let user = auth.currentUser else { return }
+        lastRefreshAt = Date()
         if profile == nil { state = .loading }
+        if await auth.reloadUser() == .revoked {
+            auth.signOut()
+            resetLocal()
+            return
+        }
         // 클레임은 새 토큰에만 실린다 — 프로필을 읽을 때(시작·로그인) 토큰을 새로 받아 운영자 여부를 갱신한다.
         isOperator = await auth.isOperator(forceRefresh: true)
         switch await profiles.fetchProfile(uid: user.uid) {
@@ -413,6 +434,7 @@ final class UnavailableAccountAuth: AccountAuthenticating {
     var isGoogleAvailable: Bool { false }
     var currentUser: AccountUser? { nil }
     func startListening(_ onChange: @escaping (AccountUser?) -> Void) {}
+    func reloadUser() async -> AccountSessionStatus { .unknown }
     func signIn(with method: AccountMethod) async -> AccountAuthResult { .unavailable }
     func link(_ method: AccountMethod) async -> AccountAuthResult { .unavailable }
     func reauthenticateForDeletion() async -> AccountReauthResult { .failed }

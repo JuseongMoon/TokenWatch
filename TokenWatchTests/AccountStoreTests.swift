@@ -10,6 +10,7 @@
 //  - 데모 중에는 어떤 진입점도 서버를 부르지 않는다
 //  - 삭제: 재인증 취소·폐기 실패면 아무것도 지우지 않는다, Auth 삭제만 실패하면 needsProfile
 //  - 캐시가 같은 계정이면 즉시 signedIn으로 복원한다
+//  - 서버에서 계정이 지워졌으면 다시 읽을 때 로그아웃 상태로 정리하고, 확인 실패면 프로필을 유지한다
 //
 
 import Testing
@@ -25,11 +26,13 @@ final class FakeAccountAuth: AccountAuthenticating {
     var reauthResult: AccountReauthResult = .ok
     var deleteSucceeds = true
     var operatorClaim = false
+    var sessionStatus: AccountSessionStatus = .valid
     private(set) var deleteCalls = 0
     private(set) var signOutCalls = 0
     private var onChange: ((AccountUser?) -> Void)?
 
     func startListening(_ onChange: @escaping (AccountUser?) -> Void) { self.onChange = onChange }
+    func reloadUser() async -> AccountSessionStatus { currentUser == nil ? .revoked : sessionStatus }
 
     func signIn(with method: AccountMethod) async -> AccountAuthResult {
         if case .success(let user, _) = signInResult {
@@ -238,6 +241,51 @@ struct AccountStoreTests {
         #expect(store.state == .signedOut)
         #expect(PlayerProfileCache.load(from: defaults) == nil)
         #expect(server.requests.last?.httpMethod == "POST")
+    }
+
+    /// 웹·다른 기기에서 계정을 지웠으면 캐시를 지우고 로그아웃 상태가 된다(Firestore는 부르지 않는다).
+    @Test func revokedSessionSignsOutOnRefresh() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: false)
+        let server = FakeFirestore()
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let (store, defaults) = makeStore(auth: auth, server: server)
+        await store.signIn(with: .apple)
+        #expect(store.profile != nil)
+        auth.sessionStatus = .revoked
+        await store.refreshProfile()
+        #expect(store.state == .signedOut)
+        #expect(PlayerProfileCache.load(from: defaults) == nil)
+        #expect(auth.signOutCalls == 1)
+        #expect(server.requests.count == 1)
+    }
+
+    /// 오프라인 등으로 확인하지 못하면 보이던 프로필을 그대로 둔다.
+    @Test func unknownSessionKeepsVisibleProfile() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: false)
+        let server = FakeFirestore()
+        server.responses = [.init(status: 200, body: Self.profileJSON)]   // 두 번째 GET은 500
+        let (store, _) = makeStore(auth: auth, server: server)
+        await store.signIn(with: .apple)
+        auth.sessionStatus = .unknown
+        await store.refreshProfile()
+        #expect(store.profile?.nickname == "모험가")
+        #expect(auth.signOutCalls == 0)
+    }
+
+    /// 방금 읽었으면 PLAYER 박스가 다시 보여도 서버를 또 부르지 않는다.
+    @Test func revalidateSkipsRightAfterRefresh() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: false)
+        let server = FakeFirestore()
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let (store, _) = makeStore(auth: auth, server: server)
+        await store.signIn(with: .apple)
+        auth.sessionStatus = .revoked
+        await store.revalidate()
+        #expect(store.profile != nil)
+        #expect(server.requests.count == 1)
     }
 
     @Test func restoresCachedProfileForSameAccount() {

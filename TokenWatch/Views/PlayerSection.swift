@@ -25,6 +25,8 @@ struct PlayerSection: View {
                 }
             }
         }
+        // 웹·다른 기기에서 계정을 지웠으면 캐시 프로필 대신 로그아웃 상태를 보여준다.
+        .task { await account.revalidate() }
     }
 
     @ViewBuilder private var content: some View {

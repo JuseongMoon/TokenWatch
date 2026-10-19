@@ -87,8 +87,8 @@ struct AvatarPreset: Identifiable {
 enum AvatarCatalog {
     /// 번들에 넣은 공개 정본 파일(확장자 제외). 공개 순서대로 읽는다. 선택 격자에 보인다.
     static let bundledFiles = ["avatars-v1"]
-    /// 운영자 전용 파일. 그리기에만 쓰고 선택 격자에는 넣지 않는다(비트맵을 만들면 여기에 이름을 넣는다).
-    static let exclusiveFiles: [String] = []
+    /// 운영자 전용 파일(왕관 슬라임). 그리기에만 쓰고 선택 격자에는 넣지 않는다.
+    static let exclusiveFiles = ["avatars-operator"]
     /// 운영자 전용 아바타 ID.
     static let operatorAvatarID = "operator"
     /// 모르는 ID(다른 버전·V2 사진 등)를 대신 그릴 기본 아바타. 서버 응답 디코딩(nonisolated)에서도 쓴다.

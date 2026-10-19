@@ -6,7 +6,7 @@
 //  - 로그인 성공 → 프로필 404면 needsProfile, 200이면 signedIn
 //  - 로그인 취소·충돌은 signedOut으로 돌아오고 충돌은 안내를 남긴다
 //  - 프로필 생성: 입력 오류·약관 미동의는 서버를 부르지 않는다, 배틀태그가 겹치면 다시 뽑는다
-//  - 운영자: 전용 아바타가 번들에 없으면 고른 아바타로 그린다
+//  - 운영자: 고른 아바타와 상관없이 전용 아바타(왕관 슬라임)로 그린다
 //  - 데모 중에는 어떤 진입점도 서버를 부르지 않는다
 //  - 삭제: 재인증 취소·폐기 실패면 아무것도 지우지 않는다, Auth 삭제만 실패하면 needsProfile
 //  - 캐시가 같은 계정이면 즉시 signedIn으로 복원한다
@@ -163,7 +163,7 @@ struct AccountStoreTests {
         #expect(server.requests.count == 4)
     }
 
-    @Test func operatorWithoutArtFallsBackToChosenAvatar() async {
+    @Test func operatorDrawsWithOperatorAvatar() async {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: false)
         auth.operatorClaim = true
@@ -173,9 +173,9 @@ struct AccountStoreTests {
         await store.signIn(with: .apple)
         #expect(store.isOperator)
         let profile = try! #require(store.profile)
-        // 전용 비트맵이 아직 번들에 없으므로 고른 아바타 그대로다.
-        #expect(AvatarCatalog.operatorAvatar == nil)
-        #expect(store.displayAvatarID(for: profile) == "cat")
+        // 고른 아바타(cat)와 상관없이 운영자 전용 아바타로 그린다. 저장된 값은 그대로다.
+        #expect(store.displayAvatarID(for: profile) == AvatarCatalog.operatorAvatarID)
+        #expect(profile.avatarID == "cat")
         // 운영자 전용 아바타는 선택 격자에 절대 없다.
         #expect(!AvatarCatalog.ids.contains(AvatarCatalog.operatorAvatarID))
     }

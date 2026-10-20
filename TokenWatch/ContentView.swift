@@ -153,7 +153,7 @@ struct ContentView: View {
 
     // MARK: 상단 고정 바
 
-    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[✉]·[⚙] 모두 스크롤과 무관하게 고정.
+    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·길드 간판·[✉]·[⚙] 모두 스크롤과 무관하게 고정.
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
@@ -162,6 +162,12 @@ struct ContentView: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 10) {
+                // 모험가 길드 간판(V2) — 앱 계정 기능을 쓸 수 있을 때만.
+                if account.isAvailable {
+                    GuildSignButton(loc: loc, onOpenRanks: { showingGuild = true },
+                                    onOpenConsent: { showingConsent = true })
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 8 }
+                }
                 announcementsButton
                 TerminalGlyphButton(systemImage: "gearshape") { showingSettings = true }
                     .accessibilityLabel(loc.a11ySettings)
@@ -294,11 +300,6 @@ struct ContentView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                // 모험가 길드 게시판(V2) — 앱 계정 기능을 쓸 수 있을 때만.
-                if account.isAvailable {
-                    GuildBoardView(loc: loc, onOpenRanks: { showingGuild = true },
-                                   onOpenConsent: { showingConsent = true })
-                }
                 if store.agents.isEmpty {
                     emptyHint
                 }

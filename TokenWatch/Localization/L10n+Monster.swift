@@ -30,19 +30,12 @@ extension L10n {
         lang == .ko ? "\(name) 처치됨" : "\(name) defeated"
     }
 
-    // MARK: 길드 게시판(메인 상단)
+    // MARK: 길드 간판(상단 바)
     var guildBoardTitle: String { lang == .ko ? "모험가 길드 순위" : "Adventurers' Guild" }
-    func guildBoardRank(_ rank: Int?, score: Int) -> String {
-        let r = rank.map { "#\($0)" } ?? "—"
-        return lang == .ko ? "\(r) · \(score)점" : "\(r) · \(score) pts"
-    }
-    var guildBoardUnranked: String { lang == .ko ? "첫 몬스터를 잡으면 순위에 올라요" : "Defeat a monster to get ranked" }
-    var guildBoardGuest: String { lang == .ko ? "로그인하면 길드에 등록돼요" : "Sign in to join the guild" }
     func guildBoardGuestKills(_ n: Int) -> String {
         lang == .ko ? "이 기기에서 \(n)마리 처치" : "\(n) defeated on this device"
     }
     var guildBoardConsent: String { lang == .ko ? "몬스터 사냥을 시작하려면 동의가 필요해요" : "Agree to start the monster hunt" }
-    var guildBoardDemo: String { lang == .ko ? "데모에서는 길드를 쓸 수 없어요" : "The guild isn't available in demo mode" }
 
     // MARK: 리더보드
     var leaderboardIntro: String {

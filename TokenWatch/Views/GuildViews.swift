@@ -2,8 +2,8 @@
 //  GuildViews.swift
 //  TokenWatch
 //
-//  모험가 길드(V2) 화면: 메인 상단 게시판, 리더보드 시트(상위 100·내 순위·신고·차단), 몬스터 사냥 동의 시트.
-//  - 게시판: 동의한 계정이면 내 순위·점수, 동의 전이면 시작 안내, 게스트면 로그인 안내와 기기 처치 수.
+//  모험가 길드(V2) 화면: 상단 바 간판 버튼(공지 버튼 왼쪽), 리더보드 시트(상위 100·내 순위·신고·차단), 몬스터 사냥 동의 시트.
+//  - 간판: 누르면 순위, 동의 전이면 동의 화면(청록 점 표시).
 //  - 리더보드: 공개 목록(로그인 전에도 볼 수 있음). 신고는 로그인한 계정만, 차단은 기기 로컬 숨김.
 //  - 동의: 무엇을 서버로 보내는지(사용률·계정 정보는 안 보냄)와 공개 범위를 보여 주고 약관 v2 동의를 받는다.
 //
@@ -40,58 +40,38 @@ extension PixelSprite {
     }()
 }
 
-/// 길드 판 테두리 색(나무).
-private let guildWood = Color(red: 0.66, green: 0.42, blue: 0.20)
+// MARK: - 상단 바 간판 버튼
 
-// MARK: - 메인 게시판
-
-struct GuildBoardView: View {
+/// 상단 바(공지 버튼 왼쪽)의 길드 간판. 누르면 순위, 몬스터 동의 전이면 동의 화면을 연다.
+/// 동의가 필요하면 우상단에 청록 점을 얹는다. 데모 중에는 흐리게 막는다.
+struct GuildSignButton: View {
     @Environment(MonsterStore.self) private var monsters
-    @Environment(AccountStore.self) private var account
     @Environment(AgentStore.self) private var store
     let loc: L10n
     let onOpenRanks: () -> Void
     let onOpenConsent: () -> Void
 
+    /// 픽셀 한 칸 — 3배 화면에서 정수 픽셀(4px)이 되는 4/3pt(간판 21×16pt).
+    static let cell: CGFloat = 4.0 / 3.0
+
     var body: some View {
-        Button(action: tap) {
-            HStack(spacing: 12) {
-                PixelSpriteView(sprite: .guildSign, frameIndex: 0, cell: 2)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(loc.guildBoardTitle)
-                        .font(.term(12, weight: .semibold)).foregroundStyle(Term.yellow)
-                    Text(subtitle.text)
-                        .font(.term(11)).foregroundStyle(subtitle.color)
-                        .fixedSize(horizontal: false, vertical: true)
+        Button {
+            if monsters.needsConsent { onOpenConsent() } else { onOpenRanks() }
+        } label: {
+            PixelSpriteView(sprite: .guildSign, frameIndex: 0, cell: Self.cell,
+                            flatColor: store.isDemo ? Term.dim : nil)
+                .overlay(alignment: .topTrailing) {
+                    if monsters.needsConsent, !store.isDemo {
+                        Circle().fill(Term.cyan).frame(width: 6, height: 6).offset(x: 3, y: -3)
+                    }
                 }
-                Spacer(minLength: 8)
-                if !store.isDemo {
-                    Text("[ ranks ]").font(.term(11, weight: .semibold)).foregroundStyle(Term.green)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .overlay(Rectangle().stroke(guildWood.opacity(0.8), lineWidth: 1))
-            .contentShape(Rectangle())
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(store.isDemo)
-        .task(id: monsters.activeOwner) { await monsters.refreshGuild() }
-    }
-
-    private func tap() {
-        if monsters.needsConsent { onOpenConsent() } else { onOpenRanks() }
-    }
-
-    private var subtitle: (text: String, color: Color) {
-        if store.isDemo { return (loc.guildBoardDemo, Term.dim) }
-        if monsters.needsConsent { return (loc.guildBoardConsent, Term.cyan) }
-        if monsters.activeOwner != nil {
-            guard let rank = monsters.rank, rank.listed else { return (loc.guildBoardUnranked, Term.dim) }
-            return (loc.guildBoardRank(rank.rank, score: rank.stats.totalScore), Term.green)
-        }
-        let kills = monsters.guestKillCount
-        return (kills > 0 ? "\(loc.guildBoardGuest) · \(loc.guildBoardGuestKills(kills))" : loc.guildBoardGuest, Term.dim)
+        .accessibilityLabel(loc.guildBoardTitle)
+        .accessibilityHint(monsters.needsConsent ? loc.guildBoardConsent : "")
     }
 }
 
@@ -187,6 +167,10 @@ struct LeaderboardSheet: View {
                 Text(loc.leaderboardGuestHint)
                     .font(.term(11)).foregroundStyle(Term.dim)
                     .fixedSize(horizontal: false, vertical: true)
+                if monsters.guestKillCount > 0 {
+                    Text(loc.guildBoardGuestKills(monsters.guestKillCount))
+                        .font(.term(11)).foregroundStyle(Term.green)
+                }
                 if account.isAvailable, account.uid == nil {
                     TerminalButton(title: "[ sign in ]") { onSignIn() }
                 }

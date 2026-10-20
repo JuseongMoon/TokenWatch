@@ -99,7 +99,11 @@ enum MonsterSprites {
             return defeated ? grayscale(slime) : slime
         }
         let data = entry?.inlineSprite ?? bundled[entry?.bundledSprite ?? monsterID] ?? bundled[monsterID]
-        guard let data else { return defeated ? grayscale(.slime) : .slime }
+        guard let data else {
+            // 카탈로그에는 있는데 그림이 없는 몬스터 — 세션 창이면 하늘색 슬라임(Android와 같은 규칙).
+            let slime: PixelSprite = sessionWindow ? .slimeSky : .slime
+            return defeated ? grayscale(slime) : slime
+        }
         return pixelSprite(data, defeated: defeated)
     }
 

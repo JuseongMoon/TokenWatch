@@ -74,8 +74,9 @@ final class MonsterStore {
     @ObservationIgnored private var settledRandomKeys: Set<String> = []
     @ObservationIgnored private var lastHitMs: [String: Int64] = [:]
     @ObservationIgnored private var rankLoadedAt: Date?
-    /// 데모 표본 몬스터의 남은 HP(메모리 전용).
+    /// 데모 표본 몬스터의 남은 HP와 처치 시각(메모리 전용 — 처치 시각이 있어야 사망 애니메이션이 나온다).
     @ObservationIgnored private var demoHP: [String: Int] = [:]
+    @ObservationIgnored private var demoDefeatedAt: [String: Int64] = [:]
     private var demoTick = 0
 
     private static let configCacheKey = "tokenwatch.monster.config.v1"
@@ -476,8 +477,8 @@ final class MonsterStore {
         return [MonsterEncounter(
             key: key, ownerUID: "demo", source: .completion, provider: "", windowLabel: window.label,
             resetBucketMs: nil, slotStartMs: nil, monsterID: entry.id, maxHP: entry.hp, hp: max(0, hp),
-            state: hp > 0 ? .alive : .defeated, spawnedAtMs: 0, expiresAtMs: .max, agentID: agentID,
-            displayLabel: window.label, position: 0.5)]
+            state: hp > 0 ? .alive : .defeated, spawnedAtMs: 0, expiresAtMs: .max,
+            defeatedAtMs: demoDefeatedAt[key], agentID: agentID, displayLabel: window.label, position: 0.5)]
     }
 
     private func hitDemo(key: String) -> HitResult {
@@ -491,6 +492,7 @@ final class MonsterStore {
         lastHitMs[key] = now
         lastHitAt[key] = Date()
         demoHP[key] = current - 1
+        if current - 1 <= 0 { demoDefeatedAt[key] = now }
         demoTick += 1
         return current - 1 > 0 ? .damaged(remaining: current - 1) : .defeated
     }

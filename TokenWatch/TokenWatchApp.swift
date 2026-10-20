@@ -14,6 +14,8 @@ struct TokenWatchApp: App {
     @State private var announcements = AnnouncementStore()
     /// 앱 계정(TokenWatch 자체 계정). provider 계정(AgentStore)과 별개다.
     @State private var account: AccountStore
+    /// 몬스터 사냥·길드(V2). 계정·사용량 스토어를 읽기만 한다.
+    @State private var monsters: MonsterStore
 
     init() {
         // Firebase는 스토어 생성보다 먼저 구성한다(시작 시 유저 속성 동기화가 곧바로 반영되도록).
@@ -29,6 +31,11 @@ struct TokenWatchApp: App {
         let account = AccountStore.live(isDemo: { [weak store] in store?.isDemo ?? false })
         account.start()
         _account = State(initialValue: account)
+        // 몬스터 — 새로고침 훅으로 출현을 판정하고, 계정을 지우면 그 기록을 지운다.
+        let monsters = MonsterStore.live(account: account, agents: store)
+        store.onRefreshed = { [weak monsters] agent, windows in await monsters?.observe(agent: agent, windows: windows) }
+        account.onAccountDeleted = { [weak monsters] uid in monsters?.forgetAccount(uid: uid) }
+        _monsters = State(initialValue: monsters)
         // 리뷰 프롬프트 판정용 콜드 스타트 기록.
         ReviewPromptState().recordLaunch()
     }
@@ -39,6 +46,7 @@ struct TokenWatchApp: App {
                 .environment(store)
                 .environment(announcements)
                 .environment(account)
+                .environment(monsters)
                 // Google 로그인 시트의 URL 콜백(다른 URL은 무시된다).
                 .onOpenURL { _ = GoogleSignInFlow.handle($0) }
                 .preferredColorScheme(.dark)   // 블랙 단일 테마 고정

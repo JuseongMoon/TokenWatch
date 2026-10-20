@@ -47,6 +47,9 @@ enum ScreenName: String, Sendable {
     case accountLogin = "account_login"
     case profileSetup = "profile_setup"
     case account
+    // 몬스터·길드(V2)
+    case leaderboard
+    case monsterConsent = "monster_consent"
 
     /// screen_class로 함께 보낼 뷰 이름. 생략하면 SDK가 UIHostingController의 제네릭
     /// 타입명(274자)을 채워 넣는데, 이는 100자 제한을 넘겨 이벤트에 오류 파라미터가 붙고
@@ -63,6 +66,8 @@ enum ScreenName: String, Sendable {
         case .accountLogin: return "AccountLoginSheet"
         case .profileSetup: return "ProfileSetupSheet"
         case .account: return "AccountSheet"
+        case .leaderboard: return "LeaderboardSheet"
+        case .monsterConsent: return "MonsterConsentSheet"
         }
     }
 }
@@ -110,6 +115,11 @@ enum AnalyticsEvent {
     case accountLogout
     case accountDelete
     case profileUpdate(field: ProfileField)
+    // 몬스터·길드(V2) — 카탈로그 ID(개발자가 정한 열거 문자열)·출현 경로·HP·점수 정수만.
+    // encounter 키·창 이름·provider·닉네임·uid는 보내지 않는다. 데모 중에는 차단된다(isProviderScoped).
+    case monsterSpawn(monsterID: String, source: MonsterEncounter.Source)
+    case monsterKill(monsterID: String, hp: Int, score: Int, source: MonsterEncounter.Source)
+    case guildReport(reason: MonsterAPIClient.ReportReason)
 
     enum ProfileField: String, Sendable {
         case nickname
@@ -165,6 +175,9 @@ enum AnalyticsEvent {
         case .accountLogout: return "account_logout"
         case .accountDelete: return "account_delete"
         case .profileUpdate: return "profile_update"
+        case .monsterSpawn: return "monster_spawn"
+        case .monsterKill: return "monster_kill"
+        case .guildReport: return "guild_report"
         }
     }
 
@@ -222,6 +235,12 @@ enum AnalyticsEvent {
             return ["surface": "app"]
         case .profileUpdate(let field):
             return ["field": field.rawValue]
+        case .monsterSpawn(let id, let source):
+            return ["monster_id": String(id.prefix(40)), "source": source.rawValue]
+        case .monsterKill(let id, let hp, let score, let source):
+            return ["monster_id": String(id.prefix(40)), "hp": hp, "score": score, "source": source.rawValue]
+        case .guildReport(let reason):
+            return ["reason": reason.rawValue]
         }
     }
 

@@ -67,6 +67,8 @@ final class AccountStore {
     @ObservationIgnored private let isDemo: () -> Bool
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var currentUID: String?
+    /// 계정 삭제가 끝나면 그 uid로 부른다(몬스터 기록 정리 — 앱이 연결한다).
+    @ObservationIgnored var onAccountDeleted: ((String) -> Void)?
     /// 마지막으로 서버에서 다시 읽은 시각(`revalidate()` 간격 판단용).
     @ObservationIgnored private var lastRefreshAt: Date?
 
@@ -108,6 +110,22 @@ final class AccountStore {
     var profile: PlayerProfile? {
         if case .signedIn(let p) = state { return p }
         return nil
+    }
+
+    /// 로그인한 계정 uid(프로필 유무와 무관). 몬스터 서버 판정·기기 세션 장부가 쓴다.
+    var uid: String? { currentUID }
+
+    /// 몬스터 서버 호출용 ID 토큰(요청 직전에 받아 헤더에만 싣는다). 데모 중이면 nil.
+    func idToken(forceRefresh: Bool) async -> String? {
+        guard !isDemo() else { return nil }
+        return await auth.idToken(forceRefresh: forceRefresh)
+    }
+
+    /// 몬스터 기능 동의(약관 v2)를 서버에 기록한 뒤 화면 상태에 반영한다.
+    func markTermsAccepted(version: Int) {
+        guard case .signedIn(var p) = state, p.termsAcceptedVersion < version else { return }
+        p.termsAcceptedVersion = version
+        state = .signedIn(p)
     }
 
     /// 화면에 그릴 아바타. 운영자면 전용 아바타(번들에 있을 때), 아니면 고른 아바타.
@@ -423,6 +441,7 @@ final class AccountStore {
             return
         }
         resetLocal()
+        onAccountDeleted?(uid)
         AnalyticsService.shared.log(.accountDelete)
     }
 }

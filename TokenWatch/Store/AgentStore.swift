@@ -60,6 +60,10 @@ final class AgentStore {
     @ObservationIgnored private var rescheduleInFlight = false
     @ObservationIgnored private var autoRefreshTask: Task<Void, Never>?
 
+    /// 에이전트 하나의 새로고침이 끝날 때마다 부른다(몬스터 출현 판정 — 앱이 MonsterStore를 연결한다).
+    /// 백그라운드 갱신에서도 불리며, 서버 요청 여부는 받는 쪽이 포그라운드인지 보고 정한다.
+    @ObservationIgnored var onRefreshed: ((Agent, [UsageWindow]) async -> Void)?
+
     /// 리뷰 프롬프트를 띄울 조건이 이번 실행에서 충족됐다 — ContentView가 시트·공지가 없을 때 띄운다.
     private(set) var reviewPromptPending = false
 
@@ -393,6 +397,9 @@ final class AgentStore {
         // 리셋 감지(서프라이즈 즉시 알림 + baseline 갱신) 후 예약형 알림을 재조정한다.
         await detectAndNotifyResets(agentID: agent.id)
         await rescheduleResetNotifications()
+
+        // 몬스터 출현 판정(last-good 병합 뒤의 창 — 리셋 감지와 같은 자리).
+        if let windows = snapshots[agent.id]?.windows { await onRefreshed?(agent, windows) }
 
         // 서비스 운영 상태도 함께 최신화(스로틀 — 실제 조회는 최소 간격마다 한 번).
         await refreshStatus(for: agent.provider)

@@ -96,8 +96,8 @@ extension L10n {
                        "Monsters spawned and defeated, the app version and platform"]
     }
     var consentNotSent: String {
-        lang == .ko ? "사용률 수치, AI 서비스 계정·이메일·토큰은 보내지 않아요. 닉네임 #번호와 아바타, 점수는 길드 순위에서 다른 사람에게 보여요."
-                    : "Usage percentages and your AI service accounts, emails, and tokens are never sent. Your nickname #number, avatar, and score are shown to others in the guild ranks."
+        lang == .ko ? "사용률 수치, AI 서비스 계정·이메일·토큰은 보내지 않아요. 닉네임 #번호, 아바타, 점수와 처치 수는 길드 순위에서 다른 사람에게 보여요."
+                    : "Usage percentages and your AI service accounts, emails, and tokens are never sent. Your nickname #number, avatar, score, and defeat counts are shown to others in the guild ranks."
     }
     var consentAgree: String {
         lang == .ko ? "변경된 이용약관과 개인정보 처리방침에 동의합니다."

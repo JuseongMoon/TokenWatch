@@ -323,7 +323,7 @@ struct SettingsSheet: View {
                         HStack(spacing: 8) {
                             Text(gaugeCritter ? "[x]" : "[ ]")
                                 .foregroundStyle(gaugeCritter ? Term.green : Term.dim)
-                            Text("gauge slime").foregroundStyle(Term.fg)
+                            Text("gauge monsters").foregroundStyle(Term.fg)
                             AnimatedPixelSpriteView(sprite: .slime, cell: 2,
                                                     flatColor: gaugeCritter ? nil : Term.dim)
                             Spacer()

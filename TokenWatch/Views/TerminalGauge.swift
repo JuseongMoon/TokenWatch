@@ -29,6 +29,10 @@ struct TerminalGauge: View {
     var bracketSize: CGFloat = 13
     /// 소진 게이지 위 슬라임 변종 — 창 종류에 따라 색·속도가 다르다. 기본은 weekly(기존 초록).
     var critterVariant: GaugeCritterVariant = .weekly
+    /// 이 창의 몬스터(V2). 완료 출현 몬스터가 있으면 슬라임 행진 대신 몬스터를 그린다.
+    var monsters: [MonsterEncounter] = []
+    var monsterHits: [String: Date] = [:]
+    var monsterConfig: MonsterConfig = .bundledDefault
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     /// 소진 게이지 위 픽셀 슬라임 표시 여부(설정 DISPLAY). 기본 켜짐.
@@ -40,7 +44,9 @@ struct TerminalGauge: View {
     /// 실제 채움 폭 비율 — 구독형은 사용량, 충전형은 남은 잔액.
     private var fill: Double { Self.fillFraction(used: used, fillsRemaining: fillsRemaining) }
     /// 슬라임 표시 조건 — 설정 on & 소진(≈100%). 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
-    private var showCritter: Bool { gaugeCritter && used >= GaugeCritter.threshold }
+    private var showCritter: Bool {
+        gaugeCritter && used >= GaugeCritter.threshold && !monsters.contains { $0.source == .completion }
+    }
 
     /// 채움 비율(0...1). 구독형은 사용량(used), 충전형(fillsRemaining)은 남은 잔액(1−used)을 그린다.
     /// (뷰 밖 순수 함수 — 방향 반전 로직을 단위 테스트로 고정한다.)
@@ -88,6 +94,11 @@ struct TerminalGauge: View {
                 }
                 // 스코프를 슬라임에만 한정 → 리셋 시 채움 바가 함께 애니메이션되지 않는다.
                 .animation(GaugeCritter.fadeAnimation, value: showCritter)
+                if gaugeCritter, !monsters.isEmpty {                 // 몬스터(V2)
+                    GaugeMonsterLayer(barSize: geo.size, encounters: monsters,
+                                      sessionWindow: critterVariant == .session,
+                                      config: monsterConfig, lastHitAt: monsterHits)
+                }
             }
         }
         .frame(height: height)

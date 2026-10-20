@@ -105,6 +105,13 @@ final class MonsterLedgerFile: MonsterLedgerStorage {
     }
 }
 
+/// 메모리 저장소(미리보기용 — 파일을 쓰지 않는다).
+final class MonsterLedgerMemory: MonsterLedgerStorage {
+    private var state: MonsterLedgerState?
+    func load() -> MonsterLedgerState? { state }
+    func save(_ state: MonsterLedgerState) { self.state = state }
+}
+
 // MARK: - 기기 세션 장부
 
 /// 키 → (받은 uid, 기록 시각). 40일이 지나면 지운다.
@@ -135,6 +142,13 @@ nonisolated struct DeviceSessionLedgerState: Codable, Equatable, Sendable {
 protocol DeviceSessionLedgerStorage: AnyObject {
     func load() -> DeviceSessionLedgerState
     func save(_ state: DeviceSessionLedgerState)
+}
+
+/// 메모리 저장소(미리보기용 — Keychain을 쓰지 않는다).
+final class DeviceSessionLedgerMemory: DeviceSessionLedgerStorage {
+    private var state = DeviceSessionLedgerState()
+    func load() -> DeviceSessionLedgerState { state }
+    func save(_ state: DeviceSessionLedgerState) { self.state = state }
 }
 
 /// Keychain 저장(ThisDeviceOnly — 백업·기기 이전으로 옮겨 가지 않는다). 재설치해도 남는다.

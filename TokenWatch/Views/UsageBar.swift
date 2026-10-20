@@ -10,6 +10,11 @@ import SwiftUI
 
 struct UsageBar: View {
     let window: UsageWindow
+    /// 이 창의 에이전트(몬스터를 찾는 데 쓴다). 미리보기처럼 없으면 몬스터 없이 그린다.
+    var agent: Agent? = nil
+
+    /// 몬스터(V2). 미리보기 등 주입이 없으면 nil.
+    @Environment(MonsterStore.self) private var monsterStore: MonsterStore?
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     /// 업무시간 스케줄(주간 마커용).
@@ -38,11 +43,25 @@ struct UsageBar: View {
         return !WorkHours.isWorkingTime(at: now, schedule: schedule)
     }
 
+    /// 이 창에 붙은 몬스터.
+    private var monsters: [MonsterEncounter] {
+        guard let agent, let monsterStore, window.style == .gauge else { return [] }
+        return monsterStore.encounters(agentID: agent.id, provider: agent.provider, window: window)
+    }
+
     var body: some View {
+        let monsters = monsters
+        let target = monsters.first { $0.isAlive }
         VStack(alignment: .leading, spacing: 4) {
-            Text(window.label.uppercased())
-                .font(.term(11, weight: .semibold))
-                .foregroundStyle(Term.cyan)
+            HStack(spacing: 6) {
+                Text(window.label.uppercased())
+                    .font(.term(11, weight: .semibold))
+                    .foregroundStyle(Term.cyan)
+                Spacer(minLength: 0)
+                if let target, target.maxHP > 1, target.hp < target.maxHP {
+                    MonsterHPHearts(hp: target.hp, maxHP: target.maxHP)
+                }
+            }
 
             switch window.style {
             case .gauge:       gauge
@@ -56,6 +75,7 @@ struct UsageBar: View {
                     .foregroundStyle(Term.dim)
             }
         }
+        .modifier(MonsterHitTarget(encounter: target, loc: loc) { monsterStore?.attack($0) })
     }
 
     // 게이지 스타일(한도 있는 사용률).
@@ -69,7 +89,10 @@ struct UsageBar: View {
                               elapsedFraction: markerFraction(at: context.date),
                               markerPaused: markerPaused(at: context.date),
                               height: 14, bracketSize: 13,
-                              critterVariant: GaugeCritterVariant(kind: window.kind))
+                              critterVariant: GaugeCritterVariant(kind: window.kind),
+                              monsters: monsters,
+                              monsterHits: monsterStore?.lastHitAt ?? [:],
+                              monsterConfig: monsterStore?.config ?? .bundledDefault)
                 // 퍼센트는 오른쪽 고정 — 3자리(100%)까지 자리를 확보해 바 길이가 흔들리지 않게.
                 Text("\(String(format: "%3d", Int(window.usedPercent.rounded())))% used")
                     .font(.term(12))

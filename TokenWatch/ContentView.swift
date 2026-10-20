@@ -12,6 +12,8 @@ import StoreKit
 struct ContentView: View {
     @Environment(AgentStore.self) private var store
     @Environment(AnnouncementStore.self) private var announcements
+    @Environment(AccountStore.self) private var account
+    @Environment(MonsterStore.self) private var monsters
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.requestReview) private var requestReview
 
@@ -27,9 +29,16 @@ struct ContentView: View {
     @State private var showingAdd = false
     @State private var showingSettings = false
     @State private var showingAnnouncements = false
+    @State private var showingGuild = false
+    @State private var showingConsent = false
+    /// 리더보드에서 로그인을 고르면 리더보드를 닫은 뒤 PLAYER 로그인 시트를 연다.
+    @State private var signInAfterGuild = false
+    @State private var playerEntry: PlayerSheet.Entry?
 
     /// 시트가 하나라도 떠 있는지 — 공지 팝업 보류 판단에 쓴다(아래 overlay 주석 참고).
-    private var sheetShowing: Bool { showingAdd || showingSettings || showingAnnouncements }
+    private var sheetShowing: Bool {
+        showingAdd || showingSettings || showingAnnouncements || showingGuild || showingConsent || playerEntry != nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -50,6 +59,24 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingAnnouncements) {
                 AnnouncementListSheet().environment(announcements)
+            }
+            .sheet(isPresented: $showingGuild, onDismiss: {
+                if signInAfterGuild {
+                    signInAfterGuild = false
+                    playerEntry = .login
+                }
+            }) {
+                LeaderboardSheet {
+                    signInAfterGuild = true
+                    showingGuild = false
+                }
+                .environment(monsters).environment(account)
+            }
+            .sheet(isPresented: $showingConsent) {
+                MonsterConsentSheet().environment(monsters)
+            }
+            .sheet(item: $playerEntry) { entry in
+                PlayerSheet(entry: entry).environment(account)
             }
         }
         .tint(Term.green)
@@ -267,6 +294,11 @@ struct ContentView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
+                // 모험가 길드 게시판(V2) — 앱 계정 기능을 쓸 수 있을 때만.
+                if account.isAvailable {
+                    GuildBoardView(loc: loc, onOpenRanks: { showingGuild = true },
+                                   onOpenConsent: { showingConsent = true })
+                }
                 if store.agents.isEmpty {
                     emptyHint
                 }
@@ -396,11 +428,22 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView().environment(AgentStore())
+    let store = AgentStore()
+    let account = AccountStore.disabled()
+    return ContentView()
+        .environment(store)
+        .environment(AnnouncementStore())
+        .environment(account)
+        .environment(MonsterStore.preview(account: account, agents: store))
 }
 
 #Preview("demo mode") {
     let store = AgentStore()
     store.enterDemo()
-    return ContentView().environment(store)
+    let account = AccountStore.disabled()
+    return ContentView()
+        .environment(store)
+        .environment(AnnouncementStore())
+        .environment(account)
+        .environment(MonsterStore.preview(account: account, agents: store))
 }

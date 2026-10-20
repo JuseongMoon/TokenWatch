@@ -119,6 +119,16 @@ final class MonsterStore {
         return MonsterStore(account: account, api: api, environment: env)
     }
 
+    /// 미리보기용 — 서버·파일·Keychain을 쓰지 않는다.
+    static func preview(account: AccountStore, agents: AgentStore) -> MonsterStore {
+        let env = Environment(
+            isDemo: { [weak agents] in agents?.isDemo ?? false }, crittersEnabled: { true }, isForeground: { false },
+            nowMs: { MonsterSessionKey.epochMs(Date()) }, appVersion: "0", snapshots: { [] })
+        return MonsterStore(account: account, api: nil, environment: env, storage: MonsterLedgerMemory(),
+                            sessionStorage: DeviceSessionLedgerMemory(),
+                            defaults: UserDefaults(suiteName: "MonsterStore.preview") ?? .standard)
+    }
+
     // MARK: 주인·동의
 
     /// 지금 몬스터를 쌓는 계정(동의한 로그인 계정). nil이면 게스트.

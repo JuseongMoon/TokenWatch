@@ -26,6 +26,8 @@ final class MonsterStore {
     static let configRefreshInterval: TimeInterval = 3600
     /// 리더보드·내 순위 캐시.
     static let guildCacheInterval: TimeInterval = 300
+    /// 확률 출현 몬스터를 처치한 뒤 엔젤링 유령을 목록에 남겨 두는 최대 시간(바를 다 건너기에 넉넉한 3분).
+    static let randomGhostMs: Int64 = 180_000
 
     /// 의존성. 테스트는 시계·포그라운드·저장소를 바꿔 끼운다.
     struct Environment {
@@ -450,6 +452,9 @@ final class MonsterStore {
         let keyLabel = MonsterSessionKey.keyLabel(provider: provider, label: window.label)
         return ledger.encounters.filter { e in
             guard e.ownerUID == owner, e.state != .expired, e.expiresAtMs > now else { return false }
+            // 확률 출현 유령은 오른쪽 끝으로 걸어 나가면 끝난다(화면이 알아서 숨기지만, 오래된 것은 목록에서도 뺀다).
+            if e.source == .random, e.state == .defeated, let at = e.defeatedAtMs,
+               now - at > Self.randomGhostMs { return false }
             if let anchored = e.agentID { return anchored == agentID && e.displayLabel == window.label }
             return e.provider == provider.rawValue && e.windowLabel == keyLabel
         }

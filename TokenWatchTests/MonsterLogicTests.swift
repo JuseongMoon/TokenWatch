@@ -117,18 +117,26 @@ struct MonsterLogicTests {
     // MARK: 스프라이트
 
     /// 번들 `monsters-v1.json`의 SHA-256 — Android 테스트 상수와 같다.
-    static let spritesSHA256 = "65d33f8cd2e1aafc8ec095972afa8ff880d958328dff54b786778ad69bda503c"
+    static let spritesSHA256 = "6c33cfb59dbcec67a0282d942a60d26eb2d5fde1adb1e05f12fd585b81ebbd06"
 
     @Test func bundledSpritesMatchParityHash() throws {
         let url = try #require(Bundle.main.url(forResource: MonsterSprites.bundledFile, withExtension: "json"))
         let hex = SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
         #expect(hex == Self.spritesSHA256)
         let sprites = MonsterSprites.bundled
-        #expect(Set(sprites.keys) == ["goblin", "skeleton", "orc", "mimic", "fx-sword", "fx-halo"])
+        #expect(Set(sprites.keys) == ["goblin", "skeleton", "orc", "mimic", "fx-sword", "fx-halo",
+                                      "slime-death", "slime-sky-death", "goblin-death", "skeleton-death",
+                                      "orc-death", "mimic-death"])
         for id in ["goblin", "skeleton", "orc", "mimic"] {
             let s = try #require(sprites[id])
+            let death = try #require(sprites["\(id)-death"])
             #expect(s.frames.count == 2 && s.rows == 8)
+            // 사망 애니메이션은 몬스터와 같은 크기(같은 자리에서 이어지게) 4프레임.
+            #expect(death.frames.count == 4 && death.rows == s.rows && death.cols == s.cols)
         }
+        #expect(sprites["slime-death"]?.rows == PixelSprite.slime.rows && sprites["slime-death"]?.cols == PixelSprite.slime.cols)
+        #expect(MonsterSprites.deathSprite(for: "slime", sessionWindow: true) != nil)
+        #expect(MonsterSprites.deathSprite(for: "pumpkin", sessionWindow: false) == nil)
     }
 
     @Test func inlineSpriteLimits() {

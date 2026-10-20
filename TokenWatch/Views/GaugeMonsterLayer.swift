@@ -20,15 +20,20 @@ struct GaugeMonsterLayer: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// 검이 꽂혀 보이는 시간(초). 마지막 타격은 조금 더 오래 보인 뒤 흑백으로 바뀐다.
-    static let swordSeconds = 0.25
-    static let finalBlowSeconds = 0.45
+    /// 타격 뒤 검이 보이는 시간(초). 마지막 타격은 이 시간 동안 원래 색으로 멈춘 뒤 사망 애니메이션이 이어진다.
+    static let swordSeconds = 0.3
+    /// 사망 애니메이션 한 프레임(초).
+    static let deathFrameSeconds = 0.15
+    /// 처치 뒤 엔젤링 몬스터는 살아 있을 때의 절반 속도로 걷는다.
+    static let ghostSpeedFactor = 0.5
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.08, paused: reduceMotion && lastHitAt.isEmpty)) { context in
+        TimelineView(.animation(minimumInterval: 0.05)) { context in
             ZStack(alignment: .topLeading) {
                 ForEach(encounters) { encounter in
-                    monster(encounter, now: context.date)
+                    if let pose = pose(encounter, now: context.date) {
+                        draw(pose, now: context.date)
+                    }
                 }
             }
             .frame(width: barSize.width, height: barSize.height, alignment: .topLeading)
@@ -37,41 +42,92 @@ struct GaugeMonsterLayer: View {
         .accessibilityHidden(true)
     }
 
-    @ViewBuilder
-    private func monster(_ e: MonsterEncounter, now: Date) -> some View {
-        let sinceHit = lastHitAt[e.key].map { now.timeIntervalSince($0) }
-        // 마지막 타격 직후에는 아직 원래 색으로, 검과 함께 잠깐 보여 준다.
-        let dying = e.state == .defeated && (sinceHit.map { $0 < Self.finalBlowSeconds } ?? false)
-        let gray = e.state == .defeated && !dying
-        let sprite = MonsterSprites.sprite(for: e.monsterID, entry: config.entry(e.monsterID),
-                                           sessionWindow: sessionWindow, defeated: gray)
-        let cell = max(0, barSize.height - 2) / CGFloat(sprite.rows)
-        let width = cell * CGFloat(sprite.cols)
-        let top = barSize.height - 1 - cell * CGFloat(sprite.rows)
-        let period = sessionWindow ? GaugeCritterVariant.session.baseTick : GaugeCritterVariant.weekly.baseTick
-        let tick = Int(now.timeIntervalSinceReferenceDate / period)
-        let marching = e.source == .completion && e.isAlive && !reduceMotion
-        let x: CGFloat = marching
-            ? GaugeCritter.offsetX(tick: tick, hop: cell * CGFloat(GaugeCritter.hopCells), spriteWidth: width,
-                                   barWidth: barSize.width)
-            : CGFloat(e.source == .completion ? 0.72 : e.position) * max(0, barSize.width - width)
-        let frame = (e.isAlive && !reduceMotion) ? GaugeCritter.frameIndex(tick: tick) : 0
+    /// 한 순간에 그릴 모습.
+    struct Pose {
+        let sprite: PixelSprite
+        let frame: Int
+        let x: CGFloat
+        let sword: Bool
+        let halo: Bool
+    }
 
-        // 몸은 바 가로 범위로 자르고(행진 중 양끝 출입), 검·엔젤링은 바 위로 조금 넘쳐도 그린다.
-        PixelSpriteView(sprite: sprite, frameIndex: frame, cell: cell)
-            .offset(x: x, y: top)
+    private var tickPeriod: Double {
+        sessionWindow ? GaugeCritterVariant.session.baseTick : GaugeCritterVariant.weekly.baseTick
+    }
+
+    private func cell(for sprite: PixelSprite) -> CGFloat { max(0, barSize.height - 2) / CGFloat(sprite.rows) }
+
+    /// 살아 있음 → 행진(완료)·제자리(확률). 처치 → 멈춘 채 검 → 몬스터별 사망 애니메이션 → 엔젤링 몬스터:
+    /// 완료 출현은 바 왼쪽 끝에서 나와 절반 속도로 계속 행진하고, 확률 출현은 사망 자리에서 오른쪽으로 걸어가
+    /// 끝을 지나면 다시 나오지 않는다(사용자 확정 2026-10-20).
+    func pose(_ e: MonsterEncounter, now: Date) -> Pose? {
+        let entry = config.entry(e.monsterID)
+        let living = MonsterSprites.sprite(for: e.monsterID, entry: entry, sessionWindow: sessionWindow)
+        let c = cell(for: living)
+        let width = c * CGFloat(living.cols)
+        let hop = c * CGFloat(GaugeCritter.hopCells)
+        let period = tickPeriod
+        let restX = CGFloat(e.source == .completion ? 0.72 : e.position) * max(0, barSize.width - width)
+
+        if e.isAlive {
+            let tick = Int(now.timeIntervalSinceReferenceDate / period)
+            let marching = e.source == .completion && !reduceMotion
+            let x = marching ? GaugeCritter.offsetX(tick: tick, hop: hop, spriteWidth: width, barWidth: barSize.width)
+                             : restX
+            let sinceHit = lastHitAt[e.key].map { now.timeIntervalSince($0) }
+            return Pose(sprite: living, frame: reduceMotion ? 0 : GaugeCritter.frameIndex(tick: tick), x: x,
+                        sword: sinceHit.map { $0 < Self.swordSeconds } ?? false, halo: false)
+        }
+        guard e.state == .defeated else { return nil }
+        let ghost = MonsterSprites.sprite(for: e.monsterID, entry: entry, sessionWindow: sessionWindow, defeated: true)
+        let deathDate = e.defeatedAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? .distantPast
+        // 처치 순간의 자리 — 행진은 시각만으로 정해지므로 그 순간의 위치를 그대로 다시 구한다.
+        let deathX = (e.source == .completion && !reduceMotion)
+            ? GaugeCritter.offsetX(tick: Int(deathDate.timeIntervalSinceReferenceDate / period), hop: hop,
+                                   spriteWidth: width, barWidth: barSize.width)
+            : restX
+        if reduceMotion { return Pose(sprite: ghost, frame: 0, x: restX, sword: false, halo: true) }
+
+        let t = now.timeIntervalSince(deathDate)
+        if t < Self.swordSeconds {
+            return Pose(sprite: living, frame: 0, x: deathX, sword: true, halo: false)
+        }
+        let death = MonsterSprites.deathSprite(for: e.monsterID, sessionWindow: sessionWindow)
+        let deathDuration = Double(death?.frames.count ?? 0) * Self.deathFrameSeconds
+        if let death, t < Self.swordSeconds + deathDuration {
+            let frame = min(death.frames.count - 1, Int((t - Self.swordSeconds) / Self.deathFrameSeconds))
+            return Pose(sprite: death, frame: frame, x: deathX, sword: false, halo: false)
+        }
+        let ghostPeriod = period / Self.ghostSpeedFactor
+        let tick = Int((t - Self.swordSeconds - deathDuration) / ghostPeriod)
+        let x: CGFloat
+        if e.source == .completion {
+            x = GaugeCritter.offsetX(tick: tick, hop: hop, spriteWidth: width, barWidth: barSize.width)
+        } else {
+            x = deathX + CGFloat((tick + 1) / 2) * hop
+            guard x < barSize.width else { return nil }   // 오른쪽 끝을 지나면 끝
+        }
+        return Pose(sprite: ghost, frame: GaugeCritter.frameIndex(tick: tick), x: x, sword: false, halo: true)
+    }
+
+    @ViewBuilder
+    private func draw(_ pose: Pose, now: Date) -> some View {
+        let c = cell(for: pose.sprite)
+        let width = c * CGFloat(pose.sprite.cols)
+        let top = barSize.height - 1 - c * CGFloat(pose.sprite.rows)
+        // 몸은 바 가로 범위로 자르고(양끝 출입), 검·엔젤링은 바 위로 조금 넘쳐도 그린다.
+        PixelSpriteView(sprite: pose.sprite, frameIndex: pose.frame, cell: c)
+            .offset(x: pose.x, y: top)
             .frame(width: barSize.width, height: barSize.height, alignment: .topLeading)
             .clipped()
-        if gray, let halo = MonsterSprites.halo {
-            let bob: CGFloat = reduceMotion ? 0 : CGFloat(Int(now.timeIntervalSinceReferenceDate / 0.5) % 2) * cell
-            PixelSpriteView(sprite: halo, frameIndex: 0, cell: cell)
-                .offset(x: x + (width - cell * CGFloat(halo.cols)) / 2,
-                        y: top - cell * CGFloat(halo.rows) + cell - bob)
+        if pose.halo, let halo = MonsterSprites.halo {
+            let bob: CGFloat = reduceMotion ? 0 : CGFloat(Int(now.timeIntervalSinceReferenceDate / 0.5) % 2) * c
+            PixelSpriteView(sprite: halo, frameIndex: 0, cell: c)
+                .offset(x: pose.x + (width - c * CGFloat(halo.cols)) / 2, y: top - c * CGFloat(halo.rows) + c - bob)
         }
-        if let sinceHit, sinceHit < (dying ? Self.finalBlowSeconds : Self.swordSeconds), let sword = MonsterSprites.sword {
-            PixelSpriteView(sprite: sword, frameIndex: 0, cell: cell)
-                .offset(x: x + (width - cell * CGFloat(sword.cols)) / 2,
-                        y: top - cell * CGFloat(sword.rows) * 0.55)
+        if pose.sword, let sword = MonsterSprites.sword {
+            PixelSpriteView(sprite: sword, frameIndex: 0, cell: c)
+                .offset(x: pose.x + (width - c * CGFloat(sword.cols)) / 2, y: top - c * CGFloat(sword.rows) * 0.55)
         }
     }
 }

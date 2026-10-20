@@ -7,6 +7,7 @@
 //  슬라임은 기존 앱 스프라이트(PixelSprite.slime·slimeSky)를 그대로 쓴다.
 //
 //  처치 상태는 원래 색을 흑백톤으로(밝기 Y = 0.299R + 0.587G + 0.114B, ×0.8 — Android와 같은 공식).
+//  처치 직후에는 몬스터별 사망 애니메이션(`{id}-death`, 4프레임)을 먼저 보여 준다.
 //
 
 import SwiftUI
@@ -100,6 +101,12 @@ enum MonsterSprites {
         let data = entry?.inlineSprite ?? bundled[entry?.bundledSprite ?? monsterID] ?? bundled[monsterID]
         guard let data else { return defeated ? grayscale(.slime) : .slime }
         return pixelSprite(data, defeated: defeated)
+    }
+
+    /// 몬스터별 사망 애니메이션(`{id}-death`, 세션 창 슬라임은 하늘색 판). 없으면 nil — 바로 엔젤링으로 넘어간다.
+    static func deathSprite(for monsterID: String, sessionWindow: Bool) -> PixelSprite? {
+        let id = monsterID == "slime" && sessionWindow ? "slime-sky-death" : "\(monsterID)-death"
+        return bundled[id].map { pixelSprite($0, defeated: false) }
     }
 
     static var sword: PixelSprite? { bundled[swordID].map { pixelSprite($0, defeated: false) } }

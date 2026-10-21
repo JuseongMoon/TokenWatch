@@ -170,9 +170,13 @@ final class MonsterStore {
             save()
             return
         }
-        if case .success = await api.mergeGuestHistory(ledger.guest) {
+        switch await api.mergeGuestHistory(ledger.guest) {
+        case .success, .failure(.server):
+            // 합쳤거나(이미 합친 계정은 merged=false), 서버가 받지 않는 이력이면 다시 보내지 않는다.
             ledger.mergedUIDs.append(owner)
             save()
+        case .failure:
+            break   // 오프라인 등 — 다음 관측 때 다시
         }
     }
 
@@ -425,7 +429,7 @@ final class MonsterStore {
                     ledger.encounters[i].awardedScore = dto.awardedScore
                 }
             }
-            stats = newStats
+            if let newStats { stats = newStats }
         case .failure(.server):
             // 서버가 받지 않은 처치(만료·없는 키 등)는 다시 보내지 않는다.
             ledger.encounters[i].pendingDefeat = false

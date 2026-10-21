@@ -165,11 +165,12 @@ final class MonsterAPIClient {
         }
     }
 
-    func defeat(key: String, defeatedAtMs: Int64) async -> Result<(MonsterEncounterDTO?, MonsterStatsDTO), CallError> {
+    /// 처치 확정. 시간 범위를 벗어나 만료로 처리되면 서버는 `stats`를 돌려주지 않는다(nil — 지금 통계를 유지한다).
+    func defeat(key: String, defeatedAtMs: Int64) async -> Result<(MonsterEncounterDTO?, MonsterStatsDTO?), CallError> {
         await call("defeatEncounter", ["key": key, "defeatedAtMs": defeatedAtMs,
                                        "platform": Self.platform, "appVersion": appVersion]).map { result in
             ((result["encounter"] as? [String: Any]).flatMap(MonsterEncounterDTO.init(json:)),
-             MonsterStatsDTO(json: result["stats"] as? [String: Any]))
+             (result["stats"] as? [String: Any]).map { MonsterStatsDTO(json: $0) })
         }
     }
 
@@ -188,8 +189,23 @@ final class MonsterAPIClient {
         }
     }
 
+    /// 서버가 받는 게스트 이력 상한(종별 합계, §15-7). 넘으면 많이 잡은 종부터 상한까지만 보낸다.
+    static let guestHistoryCap = 500
+
+    static func cappedKills(_ kills: [String: Int], cap: Int = guestHistoryCap) -> [String: Int] {
+        var remaining = cap
+        var out: [String: Int] = [:]
+        for (id, count) in kills.sorted(by: { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key })
+        where remaining > 0 && count > 0 {
+            let take = min(count, remaining)
+            out[id] = take
+            remaining -= take
+        }
+        return out
+    }
+
     func mergeGuestHistory(_ progress: MonsterGuestProgress) async -> Result<Bool, CallError> {
-        var data: [String: Any] = ["kills": progress.kills]
+        var data: [String: Any] = ["kills": Self.cappedKills(progress.kills)]
         if let first = progress.firstAtMs { data["firstAtMs"] = first }
         if let last = progress.lastAtMs { data["lastAtMs"] = last }
         return await call("mergeGuestHistory", data).map { ($0["merged"] as? Bool) ?? false }

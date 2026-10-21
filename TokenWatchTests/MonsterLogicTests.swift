@@ -253,6 +253,14 @@ struct MonsterLogicTests {
                                             totalScore: 420, scoreReachedAtMs: 5, commonKills: 7, specialKills: 2))
     }
 
+    /// 게스트 이력은 종별 합계 500까지만 보낸다(많이 잡은 종부터).
+    @Test func guestHistoryIsCapped() {
+        let capped = MonsterAPIClient.cappedKills(["slime": 480, "goblin": 30, "orc": 2])
+        #expect(capped.values.reduce(0, +) == 500)
+        #expect(capped == ["slime": 480, "goblin": 20])
+        #expect(MonsterAPIClient.cappedKills(["slime": 3]) == ["slime": 3])
+    }
+
     @Test func encounterDTODecoding() {
         let dto = MonsterEncounterDTO(json: ["key": "k", "source": "completion", "provider": "claude",
                                              "windowLabel": "Current week", "resetBucketMs": "1800000000000",

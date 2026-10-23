@@ -8,7 +8,8 @@
 //  - 설정 디코딩: 봉투, 빠진 필드는 기본값, 범위 보정, 잘못된 카탈로그 항목 버림
 //  - 스프라이트: 번들 파일 SHA-256 parity, 6종 크기, inline 상한, 흑백톤 공식
 //  - 추첨: 가중치 경계, common 보장, 최소 버전, 게스트 하루 상한·확률·동시 생존
-//  - 서버 응답: result/error.details.code, 리더보드 runQuery 디코딩, setProfile 공개 프로필 디코딩
+//  - 서버 응답: result/error.details.code, 리더보드 runQuery 디코딩(이번 주·전체), 내 순위(주간 포함), setProfile 공개 프로필 디코딩
+//  - 주간 순위의 주 경계(한국 시간 월요일 0시)
 //
 
 import CryptoKit
@@ -218,6 +219,14 @@ struct MonsterLogicTests {
         #expect(MonsterDraw.kstDay(nowMs: 1_792_422_000_000) == "2026-10-20")
     }
 
+    /// 주간 순위의 주는 한국 시간 월요일 0시에 바뀌고, 그 주 월요일 KST 날짜로 부른다(서버와 같은 식).
+    @Test func kstWeekBoundary() {
+        #expect(MonsterDraw.kstWeekId(nowMs: 1_792_335_600_000) == "2026-10-19")   // 월 00:00 KST
+        #expect(MonsterDraw.kstWeekId(nowMs: 1_792_940_399_000) == "2026-10-19")   // 일 23:59:59 KST
+        #expect(MonsterDraw.kstWeekId(nowMs: 1_792_940_400_000) == "2026-10-26")   // 다음 월 00:00 KST
+        #expect(MonsterDraw.kstWeekId(nowMs: 1_792_335_599_000) == "2026-10-12")   // 그 직전(일요일 밤)
+    }
+
     @Test func positionStaysInsideTheBar() {
         for i in 0..<200 {
             let p = MonsterDraw.position(key: "k\(i)")
@@ -247,10 +256,49 @@ struct MonsterLogicTests {
           "commonKills":{"integerValue":"7"},"specialKills":{"integerValue":"2"}}}},
          {"readTime":"2026-10-20T00:00:00Z"}]
         """
-        let rows = try #require(MonsterAPIClient.decodeLeaderboard(Data(json.utf8)))
+        let rows = try #require(MonsterAPIClient.decodeLeaderboard(Data(json.utf8), scope: .allTime))
         #expect(rows.count == 1)
         #expect(rows[0] == LeaderboardEntry(uid: "uid1", nickname: "David", tag: "0000", avatarID: "operator",
-                                            totalScore: 420, scoreReachedAtMs: 5, commonKills: 7, specialKills: 2))
+                                            score: 420, reachedAtMs: 5, commonKills: 7, specialKills: 2))
+        // 주간 필드가 없는 문서는 이번 주 탭에서 버린다.
+        #expect(MonsterAPIClient.decodeLeaderboard(Data(json.utf8), scope: .week)?.isEmpty == true)
+    }
+
+    @Test func weeklyLeaderboardUsesWeekFields() throws {
+        let json = """
+        [{"document":{"name":"projects/p/databases/(default)/documents/leaderboard/uid2","fields":{
+          "nickname":{"stringValue":"Rick"},"tag":{"stringValue":"7122"},"avatar":{"stringValue":"cat"},
+          "totalScore":{"integerValue":"900"},"scoreReachedAtMs":{"integerValue":"5"},
+          "commonKills":{"integerValue":"70"},"specialKills":{"integerValue":"9"},
+          "weekId":{"stringValue":"2026-10-19"},"weekScore":{"integerValue":"60"},"weekReachedAtMs":{"integerValue":"8"},
+          "weekCommonKills":{"integerValue":"10"},"weekSpecialKills":{"integerValue":"1"}}}}]
+        """
+        let rows = try #require(MonsterAPIClient.decodeLeaderboard(Data(json.utf8), scope: .week))
+        #expect(rows == [LeaderboardEntry(uid: "uid2", nickname: "Rick", tag: "7122", avatarID: "cat",
+                                          score: 60, reachedAtMs: 8, commonKills: 10, specialKills: 1)])
+
+        let query = try #require(MonsterAPIClient.leaderboardQuery(.week, weekID: "2026-10-19", limit: 500)["structuredQuery"]
+                                 as? [String: Any])
+        #expect(query["limit"] as? Int == 100)
+        let filter = try #require((query["where"] as? [String: Any])?["fieldFilter"] as? [String: Any])
+        #expect((filter["field"] as? [String: Any])?["fieldPath"] as? String == "weekId")
+        #expect((filter["value"] as? [String: Any])?["stringValue"] as? String == "2026-10-19")
+        let order = try #require(query["orderBy"] as? [[String: Any]])
+        #expect(order.compactMap { ($0["field"] as? [String: Any])?["fieldPath"] as? String } == ["weekScore", "weekReachedAtMs"])
+        let all = try #require(MonsterAPIClient.leaderboardQuery(.allTime, weekID: "2026-10-19", limit: 100)["structuredQuery"]
+                               as? [String: Any])
+        #expect(all["where"] == nil)
+    }
+
+    @Test func myRankDecodesWeek() {
+        let r = MonsterAPIClient.decodeMyRank([
+            "listed": true, "rank": 3, "totalScore": 900, "commonKills": 70, "specialKills": 9,
+            "week": ["weekId": "2026-10-19", "listed": true, "rank": 1, "score": 60, "commonKills": 10, "specialKills": 1],
+        ])
+        #expect(r.rank == 3 && r.stats.totalScore == 900)
+        #expect(r.week == MyRankDTO.Week(weekID: "2026-10-19", listed: true, rank: 1, score: 60, commonKills: 10, specialKills: 1))
+        // 주간 값을 아직 주지 않는 서버 — 이번 주는 순위 없음.
+        #expect(MonsterAPIClient.decodeMyRank(["listed": false, "totalScore": 0]).week == MyRankDTO.Week())
     }
 
     /// 게스트 이력은 종별 합계 500까지만 보낸다(많이 잡은 종부터).

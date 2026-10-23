@@ -52,6 +52,17 @@ enum MonsterDraw {
         let c = cal.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: Double(nowMs) / 1000))
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
+
+    /// 주간 순위의 주 — 한국 시간 월요일 0시에 시작하고, 그 주 월요일의 KST 날짜로 부른다(서버와 같은 식).
+    static func kstWeekId(nowMs: Int64) -> String {
+        let dayMs: Int64 = 86_400_000
+        let day = (nowMs + 9 * 3_600_000) / dayMs
+        let monday = day - (day + 3) % 7   // 1970-01-01은 목요일
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let c = cal.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: Double(monday * dayMs) / 1000))
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
 }
 
 /// 게스트 출현 판정 — 서버 판정(§15-4)과 같은 규칙을 기기에서 적용한다.

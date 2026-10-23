@@ -2,9 +2,11 @@
 //  GuildViews.swift
 //  TokenWatch
 //
-//  모험가 길드(V2) 화면: 상단 바 간판 버튼(공지 버튼 왼쪽), 리더보드 시트(상위 100·내 순위·신고·차단), 몬스터 사냥 동의 시트.
+//  모험가 순위(V2) 화면: 상단 바 간판 버튼(공지 버튼 왼쪽), 리더보드 시트(이번 주·전체 탭, 상위 100·내 순위·신고·차단),
+//  몬스터 사냥 동의 시트. 사용자에게 보이는 이름은 "모험가 순위"다(코드 이름 `Guild…`는 그대로).
 //  - 간판: 누르면 순위, 동의 전이면 동의 화면(청록 점 표시).
-//  - 리더보드: 공개 목록(로그인 전에도 볼 수 있음). 신고는 로그인한 계정만, 차단은 기기 로컬 숨김.
+//  - 리더보드: 공개 목록(로그인 전에도 볼 수 있음). 이번 주 탭은 한국 시간 월요일 0시에 새로 시작한다.
+//    신고는 로그인한 계정만, 차단은 기기 로컬 숨김.
 //  - 동의: 무엇을 서버로 보내는지(사용률·계정 정보는 안 보냄)와 공개 범위를 보여 주고 약관 v2 동의를 받는다.
 //
 
@@ -87,6 +89,7 @@ struct LeaderboardSheet: View {
     /// 로그인 화면으로 — 호출측이 이 시트를 닫은 뒤 PLAYER 로그인 시트를 연다.
     let onSignIn: () -> Void
 
+    @State private var scope: LeaderboardScope = .week
     @State private var showingConsent = false
     @State private var menuTarget: LeaderboardEntry?
     @State private var reportTarget: LeaderboardEntry?
@@ -98,7 +101,8 @@ struct LeaderboardSheet: View {
                 Term.bg.ignoresSafeArea()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text(loc.leaderboardIntro)
+                        tabs
+                        Text(loc.leaderboardIntro(scope))
                             .font(.term(11)).foregroundStyle(Term.dim)
                             .fixedSize(horizontal: false, vertical: true)
                         mine
@@ -113,9 +117,9 @@ struct LeaderboardSheet: View {
                     .padding(16)
                     .containerRelativeFrame(.horizontal)
                 }
-                .refreshable { await monsters.refreshGuild(force: true) }
+                .refreshable { await monsters.refreshGuild(scope, force: true) }
             }
-            .navigationTitle("GUILD")
+            .navigationTitle("RANKS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Term.bg, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -131,8 +135,48 @@ struct LeaderboardSheet: View {
             .sheet(isPresented: $showingConsent) { MonsterConsentSheet().environment(monsters) }
         }
         .tint(Term.green)
-        .task { await monsters.refreshGuild() }
+        .task(id: scope) { await monsters.refreshGuild(scope) }
         .onAppear { AnalyticsService.shared.log(.screenView(.leaderboard)) }
+    }
+
+    // 이번 주 / 전체 탭(설정의 세그먼트와 같은 모양)
+    private var tabs: some View {
+        HStack(spacing: 0) {
+            ForEach(LeaderboardScope.allCases, id: \.self) { option in
+                let selected = scope == option
+                Button { scope = option } label: {
+                    Text(loc.leaderboardTab(option))
+                        .font(.term(13, weight: selected ? .bold : .regular))
+                        .foregroundStyle(selected ? Term.green : Term.dim)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(selected ? Term.green.opacity(0.14) : Color.clear)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+    }
+
+    /// 지금 탭의 내 순위·점수·처치 수. 순위에 없으면 nil.
+    private var myLine: (rank: Int?, score: Int, common: Int, special: Int)? {
+        switch scope {
+        case .week:
+            guard let week = monsters.rank?.week, week.listed else { return nil }
+            return (week.rank, week.score, week.commonKills, week.specialKills)
+        case .allTime:
+            guard let rank = monsters.rank, rank.listed else { return nil }
+            return (rank.rank, rank.stats.totalScore, rank.stats.commonKills, rank.stats.specialKills)
+        }
+    }
+
+    /// 순위에 없을 때 보여 줄 처치 수(전체 탭은 서버 통계, 이번 주 탭은 0).
+    private var myKills: (common: Int, special: Int) {
+        if let line = myLine { return (line.common, line.special) }
+        guard scope == .allTime else { return (0, 0) }
+        let stats = monsters.rank?.stats ?? monsters.stats ?? MonsterStatsDTO()
+        return (stats.commonKills, stats.specialKills)
     }
 
     // 내 영역
@@ -143,16 +187,15 @@ struct LeaderboardSheet: View {
                     AvatarView(avatarID: account.displayAvatarID(for: profile), cell: 2)
                     VStack(alignment: .leading, spacing: 3) {
                         NametagText(profile: profile, size: 13)
-                        let stats = monsters.rank?.stats ?? monsters.stats ?? MonsterStatsDTO()
-                        Text(loc.leaderboardMine(common: stats.commonKills, special: stats.specialKills))
+                        Text(loc.leaderboardMine(common: myKills.common, special: myKills.special))
                             .font(.term(10)).foregroundStyle(Term.dim)
                     }
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 3) {
-                        if let rank = monsters.rank, rank.listed {
-                            Text(rank.rank.map { "#\($0)" } ?? "—")
+                        if let line = myLine {
+                            Text(line.rank.map { "#\($0)" } ?? "—")
                                 .font(.term(15, weight: .bold)).foregroundStyle(Term.yellow)
-                            Text("\(rank.stats.totalScore) pts").font(.term(11)).foregroundStyle(Term.green)
+                            Text("\(line.score) pts").font(.term(11)).foregroundStyle(Term.green)
                         } else {
                             Text(loc.leaderboardNotListed).font(.term(10)).foregroundStyle(Term.dim)
                         }
@@ -181,10 +224,10 @@ struct LeaderboardSheet: View {
     // 순위 목록
     @ViewBuilder private var ranks: some View {
         TerminalBox(title: "TOP 100") {
-            let list = monsters.visibleLeaderboard
+            let list = monsters.visibleLeaderboard(scope)
             if list.isEmpty {
-                Text(monsters.leaderboardFailed ? loc.leaderboardFailed
-                     : (monsters.leaderboardLoadedAt == nil ? loc.leaderboardLoading : loc.leaderboardEmpty))
+                Text(monsters.leaderboardFailed.contains(scope) ? loc.leaderboardFailed
+                     : (monsters.leaderboardLoadedAt[scope] == nil ? loc.leaderboardLoading : loc.leaderboardEmpty))
                     .font(.term(11)).foregroundStyle(Term.dim)
             } else {
                 VStack(spacing: 8) {
@@ -207,7 +250,7 @@ struct LeaderboardSheet: View {
              + Text(" #\(entry.tag)").foregroundStyle(Term.dim))
                 .font(.term(12, weight: .semibold)).lineLimit(1)
             Spacer(minLength: 6)
-            Text("\(entry.totalScore)").font(.term(12)).monospacedDigit().foregroundStyle(Term.green)
+            Text("\(entry.score)").font(.term(12)).monospacedDigit().foregroundStyle(Term.green)
             if !isMe {
                 Button { menuTarget = entry } label: {
                     Text("[⋯]").font(.term(12)).foregroundStyle(Term.dim)

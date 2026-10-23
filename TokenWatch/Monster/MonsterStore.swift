@@ -51,9 +51,11 @@ final class MonsterStore {
     /// 서버가 돌려준 내 통계(계정일 때).
     private(set) var stats: MonsterStatsDTO?
     private(set) var rank: MyRankDTO?
-    private(set) var leaderboard: [LeaderboardEntry] = []
-    private(set) var leaderboardLoadedAt: Date?
-    private(set) var leaderboardFailed = false
+    /// 탭별 상위 100. 이번 주 목록은 `leaderboardWeekID` 주의 것이다.
+    private(set) var leaderboards: [LeaderboardScope: [LeaderboardEntry]] = [:]
+    private(set) var leaderboardLoadedAt: [LeaderboardScope: Date] = [:]
+    private(set) var leaderboardFailed: Set<LeaderboardScope> = []
+    @ObservationIgnored private var leaderboardWeekID: String?
     /// 기기 로컬 차단 목록(리더보드에서 숨김).
     private(set) var blockedUIDs: Set<String>
     /// 마지막 타격 시각(검 효과 표시용).
@@ -503,20 +505,25 @@ final class MonsterStore {
 
     // MARK: 길드
 
-    /// 리더보드(상위 100)와 내 순위를 읽는다. 5분 안에 읽었으면 건너뛴다(force면 바로).
-    func refreshGuild(force: Bool = false) async {
+    /// 그 탭의 상위 100과 내 순위를 읽는다. 5분 안에 읽었으면 건너뛴다(force면 바로).
+    /// 이번 주 탭은 주가 바뀌었으면(월요일 0시 KST) 시간과 상관없이 새로 읽는다.
+    func refreshGuild(_ scope: LeaderboardScope, force: Bool = false) async {
         guard let api, !env.isDemo() else { return }
-        if force || leaderboardLoadedAt.map({ Date().timeIntervalSince($0) > Self.guildCacheInterval }) ?? true {
-            if let list = await api.leaderboardTop() {
-                leaderboard = list
-                leaderboardLoadedAt = Date()
-                leaderboardFailed = false
+        let weekID = MonsterDraw.kstWeekId(nowMs: env.nowMs())
+        let stale = scope == .week && leaderboardWeekID != weekID
+        if force || stale || leaderboardLoadedAt[scope].map({ Date().timeIntervalSince($0) > Self.guildCacheInterval }) ?? true {
+            if let list = await api.leaderboardTop(scope, weekID: weekID) {
+                leaderboards[scope] = list
+                leaderboardLoadedAt[scope] = Date()
+                leaderboardFailed.remove(scope)
+                if scope == .week { leaderboardWeekID = weekID }
             } else {
-                leaderboardFailed = true
+                leaderboardFailed.insert(scope)
             }
         }
         guard activeOwner != nil,
-              force || rankLoadedAt.map({ Date().timeIntervalSince($0) > Self.guildCacheInterval }) ?? true else { return }
+              force || stale || rankLoadedAt.map({ Date().timeIntervalSince($0) > Self.guildCacheInterval }) ?? true
+        else { return }
         if case .success(let r) = await api.myRank() {
             rank = r
             stats = r.stats
@@ -524,8 +531,10 @@ final class MonsterStore {
         }
     }
 
-    /// 차단한 사람을 뺀 리더보드.
-    var visibleLeaderboard: [LeaderboardEntry] { leaderboard.filter { !blockedUIDs.contains($0.uid) } }
+    /// 차단한 사람을 뺀 그 탭의 리더보드.
+    func visibleLeaderboard(_ scope: LeaderboardScope) -> [LeaderboardEntry] {
+        (leaderboards[scope] ?? []).filter { !blockedUIDs.contains($0.uid) }
+    }
 
     func block(uid: String) {
         blockedUIDs.insert(uid)

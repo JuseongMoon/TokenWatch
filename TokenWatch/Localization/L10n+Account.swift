@@ -132,8 +132,8 @@ extension L10n {
     }
     /// 새 가입은 몬스터 사냥 약관(v2)까지 한 번에 동의한다 — 서버로 가는 것과 공개되는 것을 체크 아래에 밝힌다.
     var termsMonsterNote: String {
-        lang == .ko ? "몬스터 사냥을 위해 AI 서비스 종류·사용량 창 이름·리셋 시각과 처치 기록을 서버로 보내요. 사용률 수치와 AI 서비스 계정 정보는 보내지 않아요. 닉네임 #번호, 아바타, 점수와 처치 수는 길드 순위에 공개돼요."
-                    : "For the monster hunt, the app sends the AI service type, usage window name, reset time, and defeat records to the server. Usage percentages and AI service account details are never sent. Your nickname #number, avatar, score, and defeat counts appear in the guild ranks."
+        lang == .ko ? "몬스터 사냥을 위해 AI 서비스 종류·사용량 창 이름·리셋 시각과 처치 기록을 서버로 보내요. 사용률 수치와 AI 서비스 계정 정보는 보내지 않아요. 닉네임 #번호, 아바타, 점수와 처치 수는 모험가 순위에 공개돼요."
+                    : "For the monster hunt, the app sends the AI service type, usage window name, reset time, and defeat records to the server. Usage percentages and AI service account details are never sent. Your nickname #number, avatar, score, and defeat counts appear in the adventurer ranks."
     }
     var termsLink: String { lang == .ko ? "이용약관 ↗" : "terms ↗" }
     var privacyLink: String { lang == .ko ? "개인정보 처리방침 ↗" : "privacy ↗" }
@@ -161,8 +161,8 @@ extension L10n {
         lang == .ko ? "TokenWatch 계정을 삭제할까요?" : "Delete your TokenWatch account?"
     }
     var accountDeleteMessage: String {
-        lang == .ko ? "닉네임·아바타·몬스터 기록과 길드 순위·로그인 연결이 서버에서 지워지고 되돌릴 수 없어요. 확인을 위해 한 번 더 로그인해요. 위 ACCOUNTS의 AI 서비스 계정은 영향을 받지 않아요."
-                    : "Your nickname, avatar, monster records, guild rank, and sign-in links will be erased from the server. This can't be undone. You'll sign in once more to confirm. Your AI service accounts under ACCOUNTS are not affected."
+        lang == .ko ? "닉네임·아바타·몬스터 기록과 모험가 순위·로그인 연결이 서버에서 지워지고 되돌릴 수 없어요. 확인을 위해 한 번 더 로그인해요. 위 ACCOUNTS의 AI 서비스 계정은 영향을 받지 않아요."
+                    : "Your nickname, avatar, monster records, adventurer rank, and sign-in links will be erased from the server. This can't be undone. You'll sign in once more to confirm. Your AI service accounts under ACCOUNTS are not affected."
     }
     var accountSignOut: String { lang == .ko ? "로그아웃" : "Sign out" }
     var accountDelete: String { lang == .ko ? "삭제" : "Delete" }

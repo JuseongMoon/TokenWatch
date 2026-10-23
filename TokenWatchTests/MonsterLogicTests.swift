@@ -8,7 +8,7 @@
 //  - 설정 디코딩: 봉투, 빠진 필드는 기본값, 범위 보정, 잘못된 카탈로그 항목 버림
 //  - 스프라이트: 번들 파일 SHA-256 parity, 6종 크기, inline 상한, 흑백톤 공식
 //  - 추첨: 가중치 경계, common 보장, 최소 버전, 게스트 하루 상한·확률·동시 생존
-//  - 서버 응답: result/error.details.code, 리더보드 runQuery 디코딩
+//  - 서버 응답: result/error.details.code, 리더보드 runQuery 디코딩, setProfile 공개 프로필 디코딩
 //
 
 import CryptoKit
@@ -268,6 +268,25 @@ struct MonsterLogicTests {
                                              "spawnedAtMs": 1, "expiresAtMs": 2])
         #expect(dto?.resetBucketMs == 1_800_000_000_000 && dto?.maxHP == 3)
         #expect(MonsterEncounterDTO(json: ["key": "k"]) == nil)
+    }
+
+    /// `setProfile` 응답의 공개 프로필(일반 JSON) 디코딩.
+    @Test func callableProfileDecoding() throws {
+        let json: [String: Any] = ["nickname": "Slime왕", "nicknameLower": "slime왕", "tag": "0042",
+                                   "nicknameChangedAtMs": 1_700_000_000_000, "avatar": ["kind": "preset", "id": "mage"],
+                                   "termsAcceptedVersion": 2, "createdAtMs": 1_690_000_000_000,
+                                   "updatedAtMs": 1_700_000_000_001]
+        #expect(MonsterAPIClient.decodeProfile(json) == PlayerProfile(
+            nickname: "Slime왕", nicknameLower: "slime왕", tag: "0042", nicknameChangedAtMs: 1_700_000_000_000,
+            avatarID: "mage", termsAcceptedVersion: 2, createdAtMs: 1_690_000_000_000, updatedAtMs: 1_700_000_000_001))
+        // V1 계정: 약관 버전이 없으면 0, 프리셋이 아닌 아바타는 기본 아바타.
+        var legacy = json
+        legacy["termsAcceptedVersion"] = nil
+        legacy["avatar"] = ["kind": "photo"]
+        let p = try #require(MonsterAPIClient.decodeProfile(legacy))
+        #expect(p.termsAcceptedVersion == 0 && p.avatarID == AvatarCatalog.fallbackID)
+        legacy["tag"] = "42"
+        #expect(MonsterAPIClient.decodeProfile(legacy) == nil)
     }
 }
 

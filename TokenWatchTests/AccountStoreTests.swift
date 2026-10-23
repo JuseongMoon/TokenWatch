@@ -2,14 +2,16 @@
 //  AccountStoreTests.swift
 //  TokenWatchTests
 //
-//  앱 계정 상태 전이 검증(가짜 인증 + 가짜 Firestore).
+//  앱 계정 상태 전이 검증(가짜 인증 + 가짜 Firestore + 가짜 callable).
 //  - 로그인 성공 → 프로필 404면 needsProfile, 200이면 signedIn
 //  - 로그인 취소·충돌은 signedOut으로 돌아오고 충돌은 안내를 남긴다
-//  - 프로필 생성: 입력 오류·약관 미동의는 서버를 부르지 않는다, 배틀태그가 겹치면 다시 뽑는다
+//  - 프로필 생성: 입력 오류·약관 미동의는 서버를 부르지 않는다, `setProfile create`에 지금 약관 버전을 싣는다,
+//    서버의 닉네임 오류 코드는 입력 오류로 보여 준다, 응답을 잃어도 이미 만들어졌으면 저장된 것으로 본다
 //  - 운영자: 고른 아바타와 상관없이 전용 아바타(왕관 슬라임)로 그린다
 //  - 데모 중에는 어떤 진입점도 서버를 부르지 않는다
-//  - 삭제: 재인증 취소·폐기 실패면 아무것도 지우지 않는다, Auth 삭제만 실패하면 needsProfile
-//  - 캐시가 같은 계정이면 즉시 signedIn으로 복원한다
+//  - 삭제: 재인증 취소·폐기 실패면 서버를 부르지 않는다, 서버 삭제가 실패하면 계정을 그대로 둔다,
+//    성공하면 새 토큰으로 `deleteAccount`를 부르고 로그아웃 상태가 된다
+//  - 캐시가 같은 계정이면 즉시 signedIn으로 복원한다(약관 버전이 없는 이전 캐시는 동의 전으로)
 //  - 서버에서 계정이 지워졌으면 다시 읽을 때 로그아웃 상태로 정리하고, 확인 실패면 프로필을 유지한다
 //
 
@@ -24,11 +26,10 @@ final class FakeAccountAuth: AccountAuthenticating {
     var currentUser: AccountUser?
     var signInResult: AccountAuthResult = .cancelled
     var reauthResult: AccountReauthResult = .ok
-    var deleteSucceeds = true
     var operatorClaim = false
     var sessionStatus: AccountSessionStatus = .valid
-    private(set) var deleteCalls = 0
     private(set) var signOutCalls = 0
+    private(set) var forcedTokenRefreshes = 0
     private var onChange: ((AccountUser?) -> Void)?
 
     func startListening(_ onChange: @escaping (AccountUser?) -> Void) { self.onChange = onChange }
@@ -45,14 +46,12 @@ final class FakeAccountAuth: AccountAuthenticating {
     func link(_ method: AccountMethod) async -> AccountAuthResult { .alreadyInUse }
     func reauthenticateForDeletion() async -> AccountReauthResult { reauthResult }
 
-    func deleteUser() async -> Bool {
-        deleteCalls += 1
-        if deleteSucceeds { currentUser = nil; onChange?(nil) }
-        return deleteSucceeds
-    }
-
     func signOut() { signOutCalls += 1; currentUser = nil; onChange?(nil) }
-    func idToken(forceRefresh: Bool) async -> String? { currentUser == nil ? nil : "token" }
+
+    func idToken(forceRefresh: Bool) async -> String? {
+        if forceRefresh { forcedTokenRefreshes += 1 }
+        return currentUser == nil ? nil : "token"
+    }
     func isOperator(forceRefresh: Bool) async -> Bool { currentUser != nil && operatorClaim }
 }
 
@@ -65,11 +64,20 @@ struct AccountStoreTests {
       "avatar":{"mapValue":{"fields":{"kind":{"stringValue":"preset"},"id":{"stringValue":"cat"}}}}}}
     """
 
-    private func makeStore(auth: FakeAccountAuth, server: FakeFirestore, demo: Bool = false,
-                           suite: String = #function) -> (AccountStore, UserDefaults) {
+    /// `setProfile` 응답 본문(서버 공개 프로필).
+    private static func profileResult(nickname: String = "모험가", tag: String = "8571", terms: Int = 2) -> String {
+        #"{"result":{"profile":{"nickname":"\#(nickname)","nicknameLower":"\#(nickname.lowercased())","tag":"\#(tag)","#
+            + #""nicknameChangedAtMs":5,"avatar":{"kind":"preset","id":"cat"},"termsAcceptedVersion":\#(terms),"#
+            + #""createdAtMs":5,"updatedAtMs":5}}}"#
+    }
+
+    private func makeStore(auth: FakeAccountAuth, server: FakeFirestore, functions: FakeFunctions? = nil,
+                           demo: Bool = false, suite: String = #function) -> (AccountStore, UserDefaults) {
+        let functions = functions ?? FakeFunctions()
         let defaults = UserDefaults(suiteName: "AccountStoreTests.\(suite)")!
         defaults.removePersistentDomain(forName: "AccountStoreTests.\(suite)")
         let store = AccountStore(auth: auth, projectID: "demo-proj", transport: { try await server.handle($0) },
+                                 callTransport: { try await functions.handle($0) },
                                  isDemo: { demo }, defaults: defaults)
         store.start()
         return (store, defaults)
@@ -124,43 +132,81 @@ struct AccountStoreTests {
         auth.signInResult = .success(user, isNew: true)
         let server = FakeFirestore()
         server.responses = [.init(status: 404)]
-        let (store, _) = makeStore(auth: auth, server: server)
+        let functions = FakeFunctions()
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
         await store.signIn(with: .apple)
         let before = server.requests.count
         #expect(await store.createProfile(nickname: "a", avatarID: "cat", termsAccepted: true) == .invalid(.tooShort))
         #expect(await store.createProfile(nickname: "모험가", avatarID: "cat", termsAccepted: false) == .invalid(.termsRequired))
         #expect(server.requests.count == before)
+        #expect(functions.calls.isEmpty)
     }
 
-    @Test func createProfileCommitsAndSignsIn() async {
+    @Test func createProfileCallsServerAndSignsIn() async {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: true)
         let server = FakeFirestore()
-        server.responses = [.init(status: 404), .init(status: 404), .init(status: 200)]   // 프로필 GET, 태그 예약 GET, commit
-        let (store, _) = makeStore(auth: auth, server: server)
+        server.responses = [.init(status: 404)]
+        let functions = FakeFunctions()
+        functions.responses["setProfile"] = [(200, Self.profileResult())]
+        let (store, defaults) = makeStore(auth: auth, server: server, functions: functions)
         await store.signIn(with: .apple)
         #expect(await store.createProfile(nickname: " 모험가 ", avatarID: "cat", termsAccepted: true) == .saved)
-        #expect(store.profile?.nickname == "모험가")
-        #expect(store.profile?.termsAcceptedVersion == PlayerProfile.currentTermsVersion)
-        let tag = store.profile?.tag ?? ""
-        #expect(NicknamePolicy.isValidTag(tag) && !NicknamePolicy.isRepdigit(tag))
-        #expect(server.requests[1].url?.absoluteString.contains("nametags/") == true)
-        #expect(server.requests.last?.url?.path.hasSuffix(":commit") == true)
+        let sent = try! #require(functions.calls.first?.data)
+        #expect(sent["op"] as? String == "create")
+        #expect(sent["nickname"] as? String == "모험가")   // 정규화한 값을 보낸다
+        #expect(sent["avatarId"] as? String == "cat")
+        #expect(sent["termsAcceptedVersion"] as? Int == PlayerProfile.currentTermsVersion)
+        #expect(sent["tag"] == nil)   // 태그는 서버가 뽑는다
+        #expect(store.profile?.tag == "8571")
+        #expect(store.profile?.termsAcceptedVersion == 2)
+        #expect(PlayerProfileCache.load(from: defaults)?.termsAcceptedVersion == 2)
+        #expect(server.requests.count == 1)   // Firestore에는 쓰지 않는다
     }
 
-    /// 뽑은 태그가 다른 계정 것이면 새로 뽑아 저장한다(사용자에게는 taken이 보이지 않는다).
-    @Test func takenTagIsRerolled() async {
+    /// 서버 금칙어·태그 소진 같은 닉네임 오류는 입력 오류로 보여 주고, 저장 실패 안내는 띄우지 않는다.
+    @Test func serverNicknameErrorIsShownAsInputError() async {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: true)
         let server = FakeFirestore()
-        server.responses = [.init(status: 404),                                                   // 프로필 GET
-                            .init(status: 200, body: #"{"fields":{"uid":{"stringValue":"other"}}}"#), // 태그 1 — 남의 것
-                            .init(status: 404),                                                   // 태그 2 — 비어 있음
-                            .init(status: 200)]                                                   // commit
-        let (store, _) = makeStore(auth: auth, server: server)
+        server.responses = [.init(status: 404)]
+        let functions = FakeFunctions()
+        functions.responses["setProfile"] = [(400, #"{"error":{"status":"INVALID_ARGUMENT","details":{"code":"banned_word"}}}"#)]
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
+        await store.signIn(with: .apple)
+        #expect(await store.createProfile(nickname: "모험가", avatarID: "cat", termsAccepted: true) == .invalid(.bannedWord))
+        #expect(store.notice == nil)
+        #expect(store.state == .needsProfile)
+    }
+
+    /// 응답만 잃었고 서버에는 이미 만들어졌으면 다시 읽어 저장된 것으로 본다.
+    @Test func lostCreateResponseRecoversByReading() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: true)
+        let server = FakeFirestore()
+        server.responses = [.init(status: 404), .init(status: 200, body: Self.profileJSON)]
+        let functions = FakeFunctions()
+        functions.failTransport = true
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
         await store.signIn(with: .apple)
         #expect(await store.createProfile(nickname: "모험가", avatarID: "cat", termsAccepted: true) == .saved)
-        #expect(server.requests.count == 4)
+        #expect(store.profile?.tag == "0042")
+        #expect(store.notice == nil)
+    }
+
+    @Test func changeAvatarUsesServerProfile() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: false)
+        let server = FakeFirestore()
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let functions = FakeFunctions()
+        functions.responses["setProfile"] = [(200, Self.profileResult(tag: "0042"))]
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
+        await store.signIn(with: .apple)
+        #expect(await store.changeAvatar("mage") == .saved)
+        #expect(functions.calls.first?.data["op"] as? String == "avatar")
+        #expect(functions.calls.first?.data["avatarId"] as? String == "mage")
+        #expect(store.profile?.updatedAtMs == 5)
     }
 
     @Test func operatorDrawsWithOperatorAvatar() async {
@@ -185,7 +231,8 @@ struct AccountStoreTests {
         auth.currentUser = user
         auth.signInResult = .success(user, isNew: false)
         let server = FakeFirestore()
-        let (store, _) = makeStore(auth: auth, server: server, demo: true)
+        let functions = FakeFunctions()
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions, demo: true)
         await store.refreshProfile()
         await store.signIn(with: .apple)
         _ = await store.changeAvatar("cat")
@@ -194,7 +241,8 @@ struct AccountStoreTests {
         // start()가 띄운 새로고침 Task도 데모 게이트에서 멈춘다.
         await Task.yield()
         #expect(server.requests.isEmpty)
-        #expect(auth.signOutCalls == 0 && auth.deleteCalls == 0)
+        #expect(functions.calls.isEmpty)
+        #expect(auth.signOutCalls == 0)
     }
 
     @Test func deletionStopsWhenRevokeFails() async {
@@ -202,45 +250,74 @@ struct AccountStoreTests {
         auth.signInResult = .success(user, isNew: false)
         let server = FakeFirestore()
         server.responses = [.init(status: 200, body: Self.profileJSON)]
-        let (store, _) = makeStore(auth: auth, server: server)
+        let functions = FakeFunctions()
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
         await store.signIn(with: .apple)
         auth.reauthResult = .revokeFailed
         await store.deleteAccount()
         #expect(store.profile != nil)
         #expect(store.notice == .revokeFailed)
-        #expect(server.requests.count == 1)   // 삭제 커밋을 보내지 않았다
-        #expect(auth.deleteCalls == 0)
+        #expect(functions.count("deleteAccount") == 0)
 
         auth.reauthResult = .cancelled
         store.notice = nil
         await store.deleteAccount()
-        #expect(store.profile != nil && store.notice == nil && auth.deleteCalls == 0)
+        #expect(store.profile != nil && store.notice == nil && functions.count("deleteAccount") == 0)
+        #expect(auth.signOutCalls == 0)
     }
 
-    @Test func authDeleteFailureLeavesNeedsProfile() async {
+    /// 서버가 거절하면(예: 최근 로그인 아님) 계정을 그대로 두고 실패를 알린다.
+    @Test func serverDeleteFailureKeepsAccount() async {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: false)
-        auth.deleteSucceeds = false
         let server = FakeFirestore()
-        server.responses = [.init(status: 200, body: Self.profileJSON), .init(status: 200)]   // 프로필 GET, 삭제 commit
-        let (store, _) = makeStore(auth: auth, server: server)
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let functions = FakeFunctions()
+        functions.responses["deleteAccount"] = [(400, #"{"error":{"status":"FAILED_PRECONDITION","details":{"code":"requires_recent_login"}}}"#)]
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
         await store.signIn(with: .apple)
         await store.deleteAccount()
-        #expect(store.state == .needsProfile)
+        #expect(store.profile?.nickname == "모험가")
         #expect(store.notice == .deleteFailed)
+        #expect(auth.signOutCalls == 0)
     }
 
     @Test func successfulDeletionSignsOut() async {
         let auth = FakeAccountAuth()
         auth.signInResult = .success(user, isNew: false)
         let server = FakeFirestore()
-        server.responses = [.init(status: 200, body: Self.profileJSON), .init(status: 200)]
-        let (store, defaults) = makeStore(auth: auth, server: server)
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let functions = FakeFunctions()
+        functions.responses["deleteAccount"] = [(200, #"{"result":{"deleted":true}}"#)]
+        let (store, defaults) = makeStore(auth: auth, server: server, functions: functions)
+        var deletedUID: String?
+        store.onAccountDeleted = { deletedUID = $0 }
         await store.signIn(with: .apple)
+        let refreshesBefore = auth.forcedTokenRefreshes
+        await store.deleteAccount()
+        #expect(auth.forcedTokenRefreshes > refreshesBefore)   // 재인증 시각이 실린 새 토큰
+        #expect(functions.count("deleteAccount") == 1)
+        #expect(functions.calls.last?.data.isEmpty == true)
+        #expect(store.state == .signedOut)
+        #expect(auth.signOutCalls == 1)
+        #expect(deletedUID == "u1")
+        #expect(PlayerProfileCache.load(from: defaults) == nil)
+    }
+
+    /// 응답을 잃었어도 로그인 기록이 이미 없으면 삭제가 끝난 것으로 본다.
+    @Test func lostDeleteResponseCountsWhenUserIsGone() async {
+        let auth = FakeAccountAuth()
+        auth.signInResult = .success(user, isNew: false)
+        let server = FakeFirestore()
+        server.responses = [.init(status: 200, body: Self.profileJSON)]
+        let functions = FakeFunctions()
+        functions.failTransport = true
+        let (store, _) = makeStore(auth: auth, server: server, functions: functions)
+        await store.signIn(with: .apple)
+        auth.sessionStatus = .revoked
         await store.deleteAccount()
         #expect(store.state == .signedOut)
-        #expect(PlayerProfileCache.load(from: defaults) == nil)
-        #expect(server.requests.last?.httpMethod == "POST")
+        #expect(store.notice == nil)
     }
 
     /// 웹·다른 기기에서 계정을 지웠으면 캐시를 지우고 로그아웃 상태가 된다(Firestore는 부르지 않는다).
@@ -296,6 +373,12 @@ struct AccountStoreTests {
         PlayerProfileCache(uid: "u1", nickname: "모험가", tag: "0042", avatarId: "cat", nicknameChangedAtMs: 1).save(to: defaults)
         let store = AccountStore(auth: auth, projectID: "demo-proj", isDemo: { false }, defaults: defaults)
         #expect(store.profile?.nickname == "모험가")
+        #expect(store.profile?.termsAcceptedVersion == 1)   // 약관 버전이 없는 이전 캐시 — 동의 전으로 본다
+
+        PlayerProfileCache(uid: "u1", nickname: "모험가", tag: "0042", avatarId: "cat", nicknameChangedAtMs: 1,
+                           termsAcceptedVersion: 2).save(to: defaults)
+        let consented = AccountStore(auth: auth, projectID: "demo-proj", isDemo: { false }, defaults: defaults)
+        #expect(consented.profile?.termsAcceptedVersion == 2)
 
         PlayerProfileCache(uid: "someone-else", nickname: "x", tag: "0001", avatarId: "cat", nicknameChangedAtMs: 1).save(to: defaults)
         let other = AccountStore(auth: auth, projectID: "demo-proj", isDemo: { false }, defaults: defaults)

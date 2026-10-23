@@ -8,7 +8,9 @@
 //  - 데모 모드에서는 모든 진입점이 즉시 반환한다(서버 호출 0건). 데모 진입은 로그아웃이 아니다.
 //  - 프로필 정본은 서버다. 오프라인에서 PLAYER 박스를 그리려고 최소 캐시만 UserDefaults에 둔다.
 //    PLAYER 박스가 보일 때 서버에서 다시 확인해, 웹·다른 기기에서 지운 계정이면 로그아웃 상태로 정리한다.
-//  - 계정 삭제는 재인증 → (Apple) 토큰 폐기 → 프로필 삭제 커밋 → Auth 사용자 삭제 순서이고,
+//  - 프로필 쓰기와 계정 삭제는 V2 서버 callable(`setProfile`·`deleteAccount`)로 한다. 닉네임 금칙어·배틀태그 추첨·
+//    30일 간격은 서버가 판정하고, 앱은 입력 오류만 먼저 걸러 호출을 줄인다. 프로필 읽기는 Firestore REST 그대로다.
+//  - 계정 삭제는 재인증 → (Apple) 토큰 폐기 → 서버 삭제(기록 전체 + Auth 사용자) 순서이고,
 //    재인증 취소나 폐기 실패면 아무것도 지우지 않고 멈춘다.
 //
 
@@ -64,6 +66,8 @@ final class AccountStore {
 
     @ObservationIgnored private let auth: AccountAuthenticating
     @ObservationIgnored private let profiles: PlayerProfileClient?
+    /// 프로필 쓰기·계정 삭제 callable.
+    @ObservationIgnored private let server: MonsterAPIClient?
     @ObservationIgnored private let isDemo: () -> Bool
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var currentUID: String?
@@ -82,9 +86,11 @@ final class AccountStore {
         AccountStore(auth: UnavailableAccountAuth(), projectID: nil)
     }
 
+    /// `transport`·`callTransport`는 테스트용 가짜 전송(Firestore REST·callable). `callTransport`가 없으면 `transport`를 쓴다.
     init(auth: AccountAuthenticating,
          projectID: String?,
          transport: PlayerProfileClient.Transport? = nil,
+         callTransport: MonsterAPIClient.Transport? = nil,
          isDemo: @escaping () -> Bool = { false },
          defaults: UserDefaults = .standard) {
         self.auth = auth
@@ -96,10 +102,14 @@ final class AccountStore {
             }
             profiles = transport.map { PlayerProfileClient(projectID: projectID, token: token, transport: $0) }
                 ?? PlayerProfileClient(projectID: projectID, token: token)
+            server = (callTransport ?? transport).map {
+                MonsterAPIClient(projectID: projectID, apiKey: nil, token: token, transport: $0)
+            } ?? MonsterAPIClient(projectID: projectID, apiKey: nil, token: token)
             state = .signedOut
             restoreFromCache()
         } else {
             profiles = nil
+            server = nil
             state = .unavailable
         }
     }
@@ -121,11 +131,11 @@ final class AccountStore {
         return await auth.idToken(forceRefresh: forceRefresh)
     }
 
-    /// 몬스터 기능 동의(약관 v2)를 서버에 기록한 뒤 화면 상태에 반영한다.
+    /// 몬스터 기능 동의(약관 v2)를 서버에 기록한 뒤 화면 상태와 캐시에 반영한다.
     func markTermsAccepted(version: Int) {
-        guard case .signedIn(var p) = state, p.termsAcceptedVersion < version else { return }
+        guard case .signedIn(var p) = state, let uid = currentUID, p.termsAcceptedVersion < version else { return }
         p.termsAcceptedVersion = version
-        state = .signedIn(p)
+        apply(p, uid: uid)
     }
 
     /// 화면에 그릴 아바타. 운영자면 전용 아바타(번들에 있을 때), 아니면 고른 아바타.
@@ -168,7 +178,8 @@ final class AccountStore {
             state = .signedIn(PlayerProfile(
                 nickname: cache.nickname, nicknameLower: NicknamePolicy.lower(cache.nickname), tag: cache.tag,
                 nicknameChangedAtMs: cache.nicknameChangedAtMs, avatarID: cache.avatarId,
-                termsAcceptedVersion: PlayerProfile.currentTermsVersion,
+                // 이전 캐시에는 약관 버전이 없다 — 동의 전(1)으로 두고 서버 응답으로 바로잡는다.
+                termsAcceptedVersion: cache.termsAcceptedVersion ?? 1,
                 createdAtMs: cache.nicknameChangedAtMs, updatedAtMs: cache.nicknameChangedAtMs))
         } else {
             state = .loading
@@ -301,49 +312,39 @@ final class AccountStore {
 
     // MARK: 프로필
 
-    /// 첫 프로필 저장. 배틀태그를 무작위로 뽑아 예약과 프로필 생성을 한 커밋으로 보낸다.
+    /// 첫 프로필 저장. 서버가 배틀태그를 뽑아 예약과 프로필을 함께 만든다.
+    /// 새 가입은 지금 약관(`currentTermsVersion` — 몬스터 사냥 포함)에 동의하므로 동의 화면을 다시 띄우지 않는다.
     func createProfile(nickname raw: String, avatarID: String, termsAccepted: Bool) async -> SaveOutcome {
-        guard !isDemo(), state == .needsProfile, let profiles, let uid = currentUID, !isWorking else { return .failed }
+        guard !isDemo(), state == .needsProfile, let profiles, let server, let uid = currentUID, !isWorking else {
+            return .failed
+        }
         let nickname = NicknamePolicy.normalize(raw)
         if let error = NicknamePolicy.validate(nickname) { return .invalid(error) }
         guard termsAccepted else { return .invalid(.termsRequired) }
-        let lower = NicknamePolicy.lower(nickname)
         isWorking = true
         defer { isWorking = false }
-        await profiles.ensureServerTime(uid: uid)
-        for _ in 0..<Self.tagAttempts {
-            let tag = NicknamePolicy.randomTag()
-            let key = NicknamePolicy.nametagKey(lower: lower, tag: tag)
-            switch await profiles.nametagAvailability(key: key, uid: uid) {
-            case .taken: continue
-            case .failed: notice = .saveFailed; return .failed
-            case .available: break
-            }
-            let now = profiles.nowMs
-            let profile = PlayerProfile(nickname: nickname, nicknameLower: lower, tag: tag, nicknameChangedAtMs: now,
-                                        avatarID: avatarID, termsAcceptedVersion: PlayerProfile.currentTermsVersion,
-                                        createdAtMs: now, updatedAtMs: now)
-            switch await profiles.commit(profiles.documents.create(uid: uid, profile: profile),
-                                         uid: uid, nametagKey: key) {
-            case .ok:
+        switch await server.setProfile(.create(nickname: nickname, avatarID: avatarID,
+                                               termsVersion: PlayerProfile.currentTermsVersion)) {
+        case .success(let profile):
+            apply(profile, uid: uid)
+            return .saved
+        case .failure(let error):
+            if let invalid = Self.nicknameError(error) { return .invalid(invalid) }
+            // 응답만 잃었을 수 있다(이미 있으면 서버는 다시 만들지 않는다) — 읽어서 확인한다.
+            if case .found(let profile) = await profiles.fetchProfile(uid: uid) {
                 apply(profile, uid: uid)
                 return .saved
-            case .taken:
-                continue   // 그 사이 다른 계정이 같은 태그를 잡았다 — 다시 뽑는다
-            case .failed:
-                notice = .saveFailed
-                return .failed
             }
+            notice = .saveFailed
+            return .failed
         }
-        return .invalid(.taken)   // 같은 닉네임의 태그가 거의 다 찼다(사실상 일어나지 않음)
     }
 
-    /// 태그를 다시 뽑는 최대 횟수.
-    private static let tagAttempts = 6
-
-    /// 닉네임 변경(30일에 1회). 바꿀 때마다 배틀태그를 새로 뽑는다(이전 태그와 다르게).
+    /// 닉네임 변경(30일에 1회). 서버가 이전과 다른 배틀태그를 새로 뽑는다.
     func changeNickname(_ raw: String) async -> SaveOutcome {
-        guard !isDemo(), let current = profile, let profiles, let uid = currentUID, !isWorking else { return .failed }
+        guard !isDemo(), let current = profile, let profiles, let server, let uid = currentUID, !isWorking else {
+            return .failed
+        }
         let nickname = NicknamePolicy.normalize(raw)
         if nickname == current.nickname { return .saved }
         if let error = NicknamePolicy.validate(nickname) { return .invalid(error) }
@@ -351,72 +352,52 @@ final class AccountStore {
         defer { isWorking = false }
         await profiles.ensureServerTime(uid: uid)
         if nicknameCooldownRemainingMs > 0 { return .invalid(.cooldown) }
-        let lower = NicknamePolicy.lower(nickname)
-        for _ in 0..<Self.tagAttempts {
-            let tag = NicknamePolicy.randomTag(excluding: current.tag)
-            let key = NicknamePolicy.nametagKey(lower: lower, tag: tag)
-            switch await profiles.nametagAvailability(key: key, uid: uid) {
-            case .taken: continue
-            case .failed: notice = .saveFailed; return .failed
-            case .available: break
-            }
-            let now = profiles.nowMs
-            let writes = profiles.documents.changeNickname(uid: uid, oldKey: current.nametagKey, nickname: nickname,
-                                                           lower: lower, tag: tag, nowMs: now)
-            switch await profiles.commit(writes, uid: uid, nametagKey: key) {
-            case .ok:
-                var updated = current
-                updated.nickname = nickname
-                updated.nicknameLower = lower
-                updated.tag = tag
-                updated.nicknameChangedAtMs = now
-                updated.updatedAtMs = now
-                apply(updated, uid: uid)
-                AnalyticsService.shared.log(.profileUpdate(field: .nickname))
-                return .saved
-            case .taken:
-                continue
-            case .failed:
-                notice = .saveFailed
-                return .failed
-            }
-        }
-        return .invalid(.taken)
-    }
-
-    func changeAvatar(_ avatarID: String) async -> SaveOutcome {
-        guard !isDemo(), let current = profile, let profiles, let uid = currentUID, !isWorking else { return .failed }
-        if avatarID == current.avatarID { return .saved }
-        isWorking = true
-        defer { isWorking = false }
-        await profiles.ensureServerTime(uid: uid)
-        let now = profiles.nowMs
-        switch await profiles.commit(profiles.documents.changeAvatar(uid: uid, avatarID: avatarID, nowMs: now),
-                                     uid: uid) {
-        case .ok:
-            var updated = current
-            updated.avatarID = avatarID
-            updated.updatedAtMs = now
+        switch await server.setProfile(.nickname(nickname)) {
+        case .success(let updated):
             apply(updated, uid: uid)
-            AnalyticsService.shared.log(.profileUpdate(field: .avatar))
+            AnalyticsService.shared.log(.profileUpdate(field: .nickname))
             return .saved
-        case .taken, .failed:
+        case .failure(let error):
+            if let invalid = Self.nicknameError(error) { return .invalid(invalid) }
             notice = .saveFailed
             return .failed
         }
     }
 
+    func changeAvatar(_ avatarID: String) async -> SaveOutcome {
+        guard !isDemo(), let current = profile, let server, let uid = currentUID, !isWorking else { return .failed }
+        if avatarID == current.avatarID { return .saved }
+        isWorking = true
+        defer { isWorking = false }
+        switch await server.setProfile(.avatar(avatarID)) {
+        case .success(let updated):
+            apply(updated, uid: uid)
+            AnalyticsService.shared.log(.profileUpdate(field: .avatar))
+            return .saved
+        case .failure:
+            notice = .saveFailed
+            return .failed
+        }
+    }
+
+    /// 서버 오류 중 닉네임 입력 오류(§5 코드)만 골라낸다. 나머지는 저장 실패다.
+    private static func nicknameError(_ error: MonsterAPIClient.CallError) -> NicknameError? {
+        if case .server(let code) = error { return NicknameError(rawValue: code) }
+        return nil
+    }
+
     private func apply(_ profile: PlayerProfile, uid: String) {
         state = .signedIn(profile)
         PlayerProfileCache(uid: uid, nickname: profile.nickname, tag: profile.tag, avatarId: profile.avatarID,
-                           nicknameChangedAtMs: profile.nicknameChangedAtMs).save(to: defaults)
+                           nicknameChangedAtMs: profile.nicknameChangedAtMs,
+                           termsAcceptedVersion: profile.termsAcceptedVersion).save(to: defaults)
     }
 
     // MARK: 삭제
 
-    /// 계정 삭제(앱 안). 프로필이 없으면(needsProfile) 커밋 없이 Auth 사용자만 지운다.
+    /// 계정 삭제(앱 안). 프로필이 없어도(needsProfile) 같은 서버 호출로 로그인 기록까지 지운다.
     func deleteAccount() async {
-        guard !isDemo(), let profiles, let uid = currentUID, state != .deleting, !isWorking else { return }
+        guard !isDemo(), let server, let uid = currentUID, state != .deleting, !isWorking else { return }
         let previous = state
         state = .deleting
         switch await auth.reauthenticateForDeletion() {
@@ -425,21 +406,17 @@ final class AccountStore {
         case .failed: state = previous; notice = .deleteFailed; return
         case .revokeFailed: state = previous; notice = .revokeFailed; return
         }
-        if case .signedIn(let p) = previous {
-            let writes = profiles.documents.delete(uid: uid, nametagKey: p.nametagKey)
-            guard await profiles.commit(writes, uid: uid) == .ok else {
+        // 서버는 5분 안에 로그인한 토큰만 받는다 — 재인증 시각이 실린 토큰을 새로 받아 둔다.
+        _ = await auth.idToken(forceRefresh: true)
+        if case .failure = await server.deleteAccount() {
+            // 응답만 잃었을 수 있다 — 로그인 기록이 이미 없으면 삭제가 끝난 것이다.
+            guard await auth.reloadUser() == .revoked else {
                 state = previous
                 notice = .deleteFailed
                 return
             }
         }
-        guard await auth.deleteUser() else {
-            // 프로필은 지워졌고 Auth 사용자만 남았다 — 다음에는 프로필 설정부터 시작한다. 재시도를 안내한다.
-            PlayerProfileCache.clear(in: defaults)
-            state = .needsProfile
-            notice = .deleteFailed
-            return
-        }
+        auth.signOut()
         resetLocal()
         onAccountDeleted?(uid)
         AnalyticsService.shared.log(.accountDelete)
@@ -457,7 +434,6 @@ final class UnavailableAccountAuth: AccountAuthenticating {
     func signIn(with method: AccountMethod) async -> AccountAuthResult { .unavailable }
     func link(_ method: AccountMethod) async -> AccountAuthResult { .unavailable }
     func reauthenticateForDeletion() async -> AccountReauthResult { .failed }
-    func deleteUser() async -> Bool { false }
     func signOut() {}
     func idToken(forceRefresh: Bool) async -> String? { nil }
     func isOperator(forceRefresh: Bool) async -> Bool { false }

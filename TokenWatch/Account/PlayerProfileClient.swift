@@ -2,7 +2,7 @@
 //  PlayerProfileClient.swift
 //  TokenWatch
 //
-//  앱 계정 프로필(`players/{uid}`·`nametags/{닉네임#태그}`)을 Firestore REST로 읽고 쓴다.
+//  앱 계정 프로필(`players/{uid}`)을 Firestore REST로 읽는다. 쓰기는 V2 서버 callable(`setProfile`)이 한다.
 //  인증은 Firebase ID 토큰(`Authorization: Bearer`) — 요청 직전에 받아 헤더에만 싣고, 저장·로깅하지 않는다.
 //  자격증명이 실리는 요청이라 APISession(ephemeral)을 쓴다. 실패는 던지지 않고 결과 열거로 돌려준다.
 //  401·403이면 토큰을 강제 갱신해 한 번만 다시 보낸다(403: 운영자 클레임이 막 붙어 옛 토큰에 없을 때).
@@ -21,19 +21,6 @@ final class PlayerProfileClient {
         case found(PlayerProfile)
         /// 404 — 프로필이 아직 없다(첫 로그인 또는 삭제 후).
         case notFound
-        case failed
-    }
-
-    enum Availability: Equatable {
-        case available
-        case taken
-        case failed
-    }
-
-    enum CommitResult: Equatable {
-        case ok
-        /// 배틀태그 예약이 다른 계정에 있어 커밋 전체가 거절됐다(호출측이 태그를 다시 뽑는다).
-        case taken
         case failed
     }
 
@@ -64,7 +51,7 @@ final class PlayerProfileClient {
     // MARK: 읽기
 
     func fetchProfile(uid: String) async -> FetchResult {
-        guard let (data, status) = await send(method: "GET", path: "players/\(uid)") else { return .failed }
+        guard let (data, status) = await get("players/\(uid)") else { return .failed }
         switch status {
         case 200: return PlayerDocuments.decodeProfile(data).map(FetchResult.found) ?? .failed
         case 404: return .notFound
@@ -72,59 +59,25 @@ final class PlayerProfileClient {
         }
     }
 
-    /// 배틀태그 예약 확인. 404면 비어 있고, 예약자가 본인이면 사용 가능이다.
-    func nametagAvailability(key: String, uid: String) async -> Availability {
-        guard let (data, status) = await send(method: "GET", path: "nametags/\(key)") else { return .failed }
-        switch status {
-        case 404: return .available
-        case 200:
-            guard let owner = PlayerDocuments.decodeNametagOwner(data) else { return .failed }
-            return owner == uid ? .available : .taken
-        default: return .failed
-        }
-    }
+    // MARK: 서버 시각
 
-    // MARK: 쓰기
-
-    /// 쓰기 묶음을 원자적으로 커밋한다. 시차를 아직 모르면 먼저 GET으로 구한다(시각 필드 ±60초 규칙).
-    /// `nametagKey`를 주면 실패 시 예약을 다시 조회해 다른 계정이 가졌는지(`taken`) 가린다.
-    /// 중복 예약은 에뮬레이터 실측으로 409지만, 상태 코드에 기대지 않고 재조회로 판정한다.
-    func commit(_ writes: [FirestoreWrite], uid: String, nametagKey: String? = nil) async -> CommitResult {
-        guard let body = PlayerDocuments.commitBody(writes) else { return .failed }
-        if let (_, status) = await send(method: "POST", path: ":commit", body: body), (200..<300).contains(status) {
-            return .ok
-        }
-        if let nametagKey, await nametagAvailability(key: nametagKey, uid: uid) == .taken {
-            return .taken
-        }
-        return .failed
-    }
-
-    /// 시각 필드를 쓰기 전에 서버 시차를 확보한다(로그인 직후 프로필 GET이 보통 먼저 채운다).
+    /// 닉네임 30일 간격을 서버 시각으로 미리 따지려고 시차를 확보한다(로그인 직후 프로필 GET이 보통 먼저 채운다).
     func ensureServerTime(uid: String) async {
         guard !knowsServerTime else { return }
-        _ = await send(method: "GET", path: "players/\(uid)")
+        _ = await get("players/\(uid)")
     }
 
     // MARK: 전송
 
-    /// path는 `documents` 뒤에 붙는다(`players/x` → `/documents/players/x`, `:commit` → `/documents:commit`).
-    /// 전송 실패면 nil. 401·403이면 토큰을 강제 갱신해 한 번 다시 보낸다.
-    private func send(method: String, path: String, body: Data? = nil) async -> (Data, Int)? {
-        // 한글 닉네임·`#`이 든 문서 ID가 경로에 들어가므로 퍼센트 인코딩한다(`#`은 urlPathAllowed 밖 → %23).
-        let full = "/v1/\(documents.root)" + (path.hasPrefix(":") ? path : "/\(path)")
-        guard let encoded = full.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+    /// `documents/{path}` GET. 전송 실패면 nil. 401·403이면 토큰을 강제 갱신해 한 번 다시 보낸다.
+    private func get(_ path: String) async -> (Data, Int)? {
+        guard let encoded = "/v1/\(documents.root)/\(path)".addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "https://firestore.googleapis.com" + encoded) else { return nil }
         for attempt in 0..<2 {
             guard let idToken = await token(attempt > 0) else { return nil }
             var req = URLRequest(url: url)
-            req.httpMethod = method
             req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
             req.setValue("application/json", forHTTPHeaderField: "Accept")
-            if let body {
-                req.httpBody = body
-                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            }
             req.timeoutInterval = 15
             req.cachePolicy = .reloadIgnoringLocalCacheData
             guard let (data, response) = try? await transport(req),

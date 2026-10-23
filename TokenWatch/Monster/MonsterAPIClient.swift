@@ -7,6 +7,7 @@
 //  오류는 `error.details.code` 열거 문자열만 쓴다 — `message`는 표시·로깅하지 않는다.
 //  ID 토큰은 요청 직전에 받아 헤더에만 싣는다. 401이면 토큰을 강제 갱신해 한 번 다시 보낸다.
 //  리더보드 상위 100은 Firestore REST runQuery로 직접 읽는다(공개 읽기 규칙, §15-6).
+//  앱 계정의 프로필 쓰기(`setProfile`)·계정 삭제(`deleteAccount`)도 이 클라이언트로 부른다(AccountStore).
 //
 //  보내는 것: provider·창 label·주기·리셋 버킷·슬롯·플랫폼·앱 버전. 사용률 수치, AI 서비스 계정 정보,
 //  기기 식별자는 보내지 않는다.
@@ -182,6 +183,52 @@ final class MonsterAPIClient {
         }
     }
 
+    /// 프로필 쓰기(§15-3). 닉네임 규칙·금칙어·배틀태그 추첨·30일 간격은 서버가 판정한다.
+    enum ProfileChange: Equatable {
+        case create(nickname: String, avatarID: String, termsVersion: Int)
+        case nickname(String)
+        case avatar(String)
+    }
+
+    func setProfile(_ change: ProfileChange) async -> Result<PlayerProfile, CallError> {
+        let data: [String: Any]
+        switch change {
+        case .create(let nickname, let avatarID, let termsVersion):
+            data = ["op": "create", "nickname": nickname, "avatarId": avatarID, "termsAcceptedVersion": termsVersion]
+        case .nickname(let nickname):
+            data = ["op": "nickname", "nickname": nickname]
+        case .avatar(let avatarID):
+            data = ["op": "avatar", "avatarId": avatarID]
+        }
+        return await call("setProfile", data).flatMap { result in
+            guard let json = result["profile"] as? [String: Any], let profile = Self.decodeProfile(json) else {
+                return .failure(.transport)
+            }
+            return .success(profile)
+        }
+    }
+
+    /// 계정 삭제(§15-7). 서버가 프로필·몬스터 기록·순위·신고와 Auth 사용자까지 지운다.
+    /// 5분 안에 다시 로그인한 토큰이어야 한다(아니면 `requires_recent_login`).
+    func deleteAccount() async -> Result<Void, CallError> {
+        await call("deleteAccount", [:]).map { _ in () }
+    }
+
+    /// `setProfile` 응답의 `profile`(일반 JSON) → 프로필. 프리셋이 아닌 아바타는 기본 아바타로 읽는다.
+    nonisolated static func decodeProfile(_ json: [String: Any]) -> PlayerProfile? {
+        guard let nickname = json["nickname"] as? String, let lower = json["nicknameLower"] as? String,
+              let tag = json["tag"] as? String, NicknamePolicy.isValidTag(tag),
+              let changed = MonsterEncounterDTO.int64(json["nicknameChangedAtMs"]),
+              let created = MonsterEncounterDTO.int64(json["createdAtMs"]) else { return nil }
+        let avatar = json["avatar"] as? [String: Any]
+        let avatarID = avatar?["kind"] as? String == "preset" ? avatar?["id"] as? String : nil
+        return PlayerProfile(
+            nickname: nickname, nicknameLower: lower, tag: tag, nicknameChangedAtMs: changed,
+            avatarID: avatarID ?? AvatarCatalog.fallbackID,
+            termsAcceptedVersion: MonsterEncounterDTO.int(json["termsAcceptedVersion"]) ?? 0,
+            createdAtMs: created, updatedAtMs: MonsterEncounterDTO.int64(json["updatedAtMs"]) ?? created)
+    }
+
     func myRank() async -> Result<MyRankDTO, CallError> {
         await call("myRank", [:]).map { r in
             MyRankDTO(listed: (r["listed"] as? Bool) ?? false, rank: MonsterEncounterDTO.int(r["rank"]),
@@ -190,9 +237,9 @@ final class MonsterAPIClient {
     }
 
     /// 서버가 받는 게스트 이력 상한(종별 합계, §15-7). 넘으면 많이 잡은 종부터 상한까지만 보낸다.
-    static let guestHistoryCap = 500
+    nonisolated static let guestHistoryCap = 500
 
-    static func cappedKills(_ kills: [String: Int], cap: Int = guestHistoryCap) -> [String: Int] {
+    nonisolated static func cappedKills(_ kills: [String: Int], cap: Int = guestHistoryCap) -> [String: Int] {
         var remaining = cap
         var out: [String: Int] = [:]
         for (id, count) in kills.sorted(by: { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key })

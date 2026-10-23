@@ -7,7 +7,7 @@
 //  닉네임 규칙·에러 코드·금칙어는 Android와 같은 값을 쓴다(서버 규칙 정규식과도 같다).
 //
 //  배틀태그 방식: 닉네임은 겹쳐도 되고 닉네임+4자리 태그 쌍이 고유하다. 화면에는 항상 `닉네임 #1234`로 붙인다.
-//  닉네임을 바꿀 때마다 태그를 새로 뽑고, 네 자리가 모두 같은 태그(0000·1111…)는 운영자만 쓴다.
+//  태그는 서버(`setProfile`)가 뽑는다 — 닉네임을 바꿀 때마다 새로 뽑고, 네 자리가 모두 같은 태그(0000·1111…)는 운영자만 쓴다.
 //
 
 import Foundation
@@ -34,7 +34,8 @@ nonisolated enum AccountMethod: String, Sendable, CaseIterable {
 /// `players/{uid}` 문서. 시각은 전부 epoch 밀리초 정수(서버 시차 보정값).
 nonisolated struct PlayerProfile: Equatable, Sendable {
     /// 이용약관·개인정보 동의 버전. 약관을 개정하면 올리고 재동의를 받는다.
-    static let currentTermsVersion = 1
+    /// 2 = 몬스터 사냥·길드 순위 개정. 새 가입은 2로 만들고, 1에 동의한 계정은 몬스터 동의 화면에서 2를 받는다.
+    static let currentTermsVersion = 2
 
     var nickname: String
     var nicknameLower: String
@@ -47,10 +48,8 @@ nonisolated struct PlayerProfile: Equatable, Sendable {
     var createdAtMs: Int64
     var updatedAtMs: Int64
 
-    /// 화면 표시용 `닉네임 #1234`(닉네임과 태그 사이 한 칸). 예약 키는 공백 없는 `nametagKey`다.
+    /// 화면 표시용 `닉네임 #1234`(닉네임과 태그 사이 한 칸).
     var nametag: String { "\(nickname) #\(tag)" }
-    /// 고유 예약 문서 키(`nametags/{key}`) — 소문자 닉네임 + `#` + 태그.
-    var nametagKey: String { NicknamePolicy.nametagKey(lower: nicknameLower, tag: tag) }
 }
 
 /// 닉네임·프로필 저장 실패 코드(계약 §5). 클라이언트는 이 값으로 문구를 고른다.
@@ -109,35 +108,17 @@ nonisolated enum NicknamePolicy {
         tag.utf8.count == 4 && tag.utf8.allSatisfy { (0x30...0x39).contains($0) }
     }
 
-    /// 네 자리가 모두 같은 태그(0000·1111…9999) — 운영자 전용이라 일반 배정에서 뺀다.
-    static func isRepdigit(_ tag: String) -> Bool {
-        isValidTag(tag) && Set(tag).count == 1
-    }
-
-    /// 무작위 태그. 같은 숫자 네 자리는 나오지 않고, `excluding`(이전 태그)과도 다르다.
-    /// `draw`는 0...9999 정수를 뽑는다(테스트에서 고정 값을 넣는다).
-    static func randomTag(excluding old: String? = nil,
-                          draw: () -> Int = { Int.random(in: 0...9999) }) -> String {
-        while true {
-            let tag = String(format: "%04d", draw())
-            if !isRepdigit(tag), tag != old { return tag }
-        }
-    }
-
-    /// 고유 예약 문서 키. `#`은 닉네임 허용 문자가 아니라 경계가 모호하지 않다.
-    static func nametagKey(lower: String, tag: String) -> String { "\(lower)#\(tag)" }
-
     static func containsBannedWord(_ lower: String) -> Bool {
         bannedWords.contains { lower.contains($0) }
     }
 
-    /// 다음 변경까지 남은 밀리초. 0이면 지금 바꿀 수 있다(정확히 7일이 지난 순간부터 허용).
+    /// 다음 변경까지 남은 밀리초. 0이면 지금 바꿀 수 있다(정확히 30일이 지난 순간부터 허용).
     static func cooldownRemainingMs(lastChangedAtMs: Int64, nowMs: Int64) -> Int64 {
         max(0, lastChangedAtMs + cooldownMs - nowMs)
     }
 
-    /// 금칙어(소문자, 부분 일치). V1은 닉네임이 본인에게만 보여 클라이언트 사전 검사만 한다 —
-    /// V2 리더보드부터는 서버 판정이 정본이다. Android와 같은 목록을 쓴다.
+    /// 금칙어(소문자, 부분 일치). 저장 전 사전 검사용이고, 정본은 더 넓은 목록으로 판정하는 서버(`setProfile`)다.
+    /// Android와 같은 목록을 쓴다.
     static let bannedWords: [String] = [
         // 운영자 사칭
         "admin", "moderator", "official", "tokenwatch",
@@ -160,6 +141,8 @@ nonisolated struct PlayerProfileCache: Codable, Equatable, Sendable {
     let tag: String
     let avatarId: String
     let nicknameChangedAtMs: Int64
+    /// 동의한 약관 버전. 이 필드가 생기기 전 캐시에는 없다(nil).
+    var termsAcceptedVersion: Int? = nil
 
     static func load(from defaults: UserDefaults = .standard) -> PlayerProfileCache? {
         guard let data = defaults.data(forKey: storageKey) else { return nil }

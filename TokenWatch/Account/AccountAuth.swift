@@ -75,7 +75,7 @@ protocol AccountAuthenticating: AnyObject {
     func link(_ method: AccountMethod) async -> AccountAuthResult
     /// 계정 삭제 직전 재인증. Apple이 연결돼 있으면 Apple로 재인증하고 토큰을 폐기한다.
     func reauthenticateForDeletion() async -> AccountReauthResult
-    func deleteUser() async -> Bool
+    /// 이 기기의 로그인을 끊는다(Google 세션 포함). 계정 삭제 뒤에도 부른다 — 서버가 Auth 사용자를 지운다.
     func signOut()
     func idToken(forceRefresh: Bool) async -> String?
     /// 운영자 표시(커스텀 클레임 `tokenwatchOperator`)가 있는지. 관리자가 Admin API로 붙인다.
@@ -177,17 +177,6 @@ final class FirebaseAccountAuth: AccountAuthenticating {
             return .ok
         } catch {
             return .revokeFailed
-        }
-    }
-
-    func deleteUser() async -> Bool {
-        guard let user = Auth.auth().currentUser else { return false }
-        do {
-            try await user.delete()
-            GIDSignIn.sharedInstance.signOut()
-            return true
-        } catch {
-            return false
         }
     }
 

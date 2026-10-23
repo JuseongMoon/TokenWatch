@@ -221,6 +221,10 @@ private struct ProfileSetupView: View {
                 linkButton(loc.privacyLink, AccountLinks.privacy)
             }
             .padding(.leading, 30)
+            Text(loc.termsMonsterNote)
+                .font(.term(10)).foregroundStyle(Term.dim)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 30)
             if error == .termsRequired {
                 AccountNoticeLine(text: loc.nicknameError(.termsRequired))
             }

@@ -8,8 +8,9 @@
 //  - 허용 문자 밖(이모지·공백·`.`·자모) → invalid_chars
 //  - 소문자 키는 ASCII만 바꾼다, 금칙어는 대소문자 무시
 //  - 쿨다운 경계: 30일 −1ms는 남음, 정확히 30일이면 가능
-//  - 배틀태그: 4자리, 같은 숫자 네 자리(0000·1111…)는 배정하지 않음, 이전 태그와 다름, 예약 키 형식
+//  - 배틀태그 형식(4자리 숫자). 추첨은 서버(`setProfile`)가 한다
 //  - 에러 코드 문자열이 계약과 같다
+//  - 프로필 캐시: Android와 같은 JSON 키, 약관 버전이 없는 이전 캐시도 읽는다
 //
 
 import Testing
@@ -74,31 +75,10 @@ struct NicknamePolicyTests {
         #expect(!NicknamePolicy.isValidTag("42"))
         #expect(!NicknamePolicy.isValidTag("12a4"))
         #expect(!NicknamePolicy.isValidTag("12345"))
-        for d in 0...9 { #expect(NicknamePolicy.isRepdigit(String(repeating: String(d), count: 4))) }
-        #expect(!NicknamePolicy.isRepdigit("1112"))
-        #expect(NicknamePolicy.nametagKey(lower: "모험가", tag: "0042") == "모험가#0042")
-        // 화면 표시는 한 칸 띄우고, 예약 키는 붙인다.
+        // 화면 표시는 닉네임과 태그 사이를 한 칸 띄운다.
         let p = PlayerProfile(nickname: "David", nicknameLower: "david", tag: "0000", nicknameChangedAtMs: 0,
                               avatarID: "mage", termsAcceptedVersion: 1, createdAtMs: 0, updatedAtMs: 0)
         #expect(p.nametag == "David #0000")
-        #expect(p.nametagKey == "david#0000")
-    }
-
-    @Test func randomTagNeverRepdigitAndDiffersFromOld() {
-        for _ in 0..<2000 {
-            let tag = NicknamePolicy.randomTag(excluding: "1234")
-            #expect(NicknamePolicy.isValidTag(tag))
-            #expect(!NicknamePolicy.isRepdigit(tag))
-            #expect(tag != "1234")
-        }
-    }
-
-    /// 0000·1111이 나오는 고정 난수열이어도 건너뛴다.
-    @Test func randomTagSkipsRepdigitFromGenerator() {
-        var seq = [0, 1111, 7, 8571]
-        #expect(NicknamePolicy.randomTag(draw: { seq.removeFirst() }) == "0007")
-        var seq2 = [8571, 8571, 42]
-        #expect(NicknamePolicy.randomTag(excluding: "8571", draw: { seq2.removeFirst() }) == "0042")
     }
 
     @Test func errorCodesMatchContract() {
@@ -109,13 +89,19 @@ struct NicknamePolicyTests {
     @Test func profileCacheRoundTrips() throws {
         let defaults = try #require(UserDefaults(suiteName: "NicknamePolicyTests.cache"))
         defer { defaults.removePersistentDomain(forName: "NicknamePolicyTests.cache") }
-        let cache = PlayerProfileCache(uid: "u1", nickname: "모험가", tag: "0042", avatarId: "mage", nicknameChangedAtMs: 42)
+        let cache = PlayerProfileCache(uid: "u1", nickname: "모험가", tag: "0042", avatarId: "mage", nicknameChangedAtMs: 42,
+                                       termsAcceptedVersion: 2)
         cache.save(to: defaults)
         #expect(PlayerProfileCache.load(from: defaults) == cache)
         // 저장 형식은 Android와 같은 JSON 키다.
         let raw = try #require(defaults.data(forKey: PlayerProfileCache.storageKey))
         let keys = try #require(JSONSerialization.jsonObject(with: raw) as? [String: Any]).keys.sorted()
-        #expect(keys == ["avatarId", "nickname", "nicknameChangedAtMs", "tag", "uid"])
+        #expect(keys == ["avatarId", "nickname", "nicknameChangedAtMs", "tag", "termsAcceptedVersion", "uid"])
+        // 약관 버전이 생기기 전 캐시도 읽는다(nil).
+        let legacy = #"{"uid":"u1","nickname":"모험가","tag":"0042","avatarId":"mage","nicknameChangedAtMs":42}"#
+        defaults.set(Data(legacy.utf8), forKey: PlayerProfileCache.storageKey)
+        #expect(PlayerProfileCache.load(from: defaults)?.termsAcceptedVersion == nil)
+        #expect(PlayerProfileCache.load(from: defaults)?.tag == "0042")
         PlayerProfileCache.clear(in: defaults)
         #expect(PlayerProfileCache.load(from: defaults) == nil)
     }

@@ -21,6 +21,21 @@ extension L10n {
         }
     }
 
+    // MARK: 프로필 도감
+    func bestiarySummary(found: Int, total: Int, kills: Int) -> String {
+        lang == .ko ? "발견 \(found)/\(total) · 총 처치 \(kills)" : "Found \(found)/\(total) · \(kills) defeated"
+    }
+    var bestiaryHint: String {
+        lang == .ko ? "몬스터를 처음 잡으면 모습과 이름이 드러나요. 이 계정의 처치 기록이에요."
+                    : "Defeat a monster once to reveal it. These are this account's defeats."
+    }
+    var bestiaryLoading: String { lang == .ko ? "처치 기록을 불러오는 중…" : "Loading your defeats…" }
+    var bestiaryFailed: String { lang == .ko ? "처치 기록을 불러오지 못했어요." : "Couldn't load your defeats." }
+    var bestiaryUnknown: String { lang == .ko ? "아직 잡지 않은 몬스터" : "Not defeated yet" }
+    func bestiaryA11y(name: String, kills: Int) -> String {
+        lang == .ko ? "\(name), \(kills)마리 처치" : "\(name), \(kills) defeated"
+    }
+
     // MARK: 게이지 전투(접근성)
     var monsterAttack: String { lang == .ko ? "공격" : "Attack" }
     func monsterA11yValue(name: String, hp: Int, maxHP: Int) -> String {

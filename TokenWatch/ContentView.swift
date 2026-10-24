@@ -76,7 +76,7 @@ struct ContentView: View {
                 MonsterConsentSheet().environment(monsters)
             }
             .sheet(item: $playerEntry) { entry in
-                PlayerSheet(entry: entry).environment(account)
+                PlayerSheet(entry: entry).environment(account).environment(monsters)
             }
         }
         .tint(Term.green)

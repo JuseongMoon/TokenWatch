@@ -282,6 +282,7 @@ private struct AccountView: View {
                 }
             }
 
+            BestiaryBox(loc: loc)
             nicknameBox
             avatarBox
             linkBox

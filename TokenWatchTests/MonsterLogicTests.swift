@@ -10,6 +10,7 @@
 //  - 추첨: 가중치 경계, common 보장, 최소 버전, 게스트 하루 상한·확률·동시 생존
 //  - 서버 응답: result/error.details.code, 리더보드 runQuery 디코딩(이번 주·전체), 내 순위(주간 포함), setProfile 공개 프로필 디코딩
 //  - 주간 순위의 주 경계(한국 시간 월요일 0시)
+//  - 도감: 계정 처치 수 + 합친 게스트 이력 합산, 줄 세우기(공개된 종·이미 잡은 종)
 //
 
 import CryptoKit
@@ -359,6 +360,37 @@ struct MonsterLogicTests {
         #expect(p.termsAcceptedVersion == 0 && p.avatarID == AvatarCatalog.fallbackID)
         legacy["tag"] = "42"
         #expect(MonsterAPIClient.decodeProfile(legacy) == nil)
+    }
+
+    // MARK: 도감
+
+    @Test func bestiaryKillsSumAccountAndMergedGuestHistory() throws {
+        let json = """
+        {"name":"projects/p/databases/(default)/documents/players/u1","fields":{
+          "stats":{"mapValue":{"fields":{"kills":{"mapValue":{"fields":{
+            "slime":{"integerValue":"12"},"goblin":{"integerValue":"2"},"orc":{"integerValue":"0"}}}}}}},
+          "guestHistory":{"mapValue":{"fields":{"kills":{"mapValue":{"fields":{
+            "slime":{"integerValue":"3"},"mimic":{"integerValue":"1"}}}}}}}}}
+        """
+        #expect(MonsterAPIClient.decodeKills(Data(json.utf8)) == ["slime": 15, "goblin": 2, "mimic": 1])
+        // 아직 아무것도 잡지 않은 계정: 마스크 필드가 없으면 `fields` 자체가 빠진다.
+        #expect(MonsterAPIClient.decodeKills(Data(#"{"name":"projects/p/databases/(default)/documents/players/u1"}"#.utf8)) == [:])
+        #expect(MonsterAPIClient.decodeKills(Data("[]".utf8)) == nil)
+    }
+
+    @Test func bestiaryListsReleasedAndAlreadyDefeatedSpecies() {
+        var config = MonsterConfig.bundledDefault
+        config.catalog.append(MonsterCatalogEntry(id: "dragon", tier: "event", hp: 20, score: 900, weight: 0,
+                                                  released: false))
+        config.catalog.append(MonsterCatalogEntry(id: "wyvern", tier: "special", hp: 9, score: 300, weight: 1,
+                                                  minAppVersion: "9.0"))
+        let rows = MonsterBestiary.rows(config: config, kills: ["slime": 4, "orc": 1], appVersion: "1.4.0")
+        #expect(rows.map(\.id) == ["slime", "goblin", "skeleton", "orc", "mimic"])
+        #expect(rows.filter(\.discovered).map(\.id) == ["slime", "orc"])
+        #expect(rows.first { $0.id == "goblin" }?.kills == 0)
+        // 공개 전 종·이 앱이 못 그리는 종도 이미 잡았으면 보인다.
+        let caught = MonsterBestiary.rows(config: config, kills: ["dragon": 1, "wyvern": 2], appVersion: "1.4.0")
+        #expect(caught.suffix(2).map(\.id) == ["dragon", "wyvern"])
     }
 }
 

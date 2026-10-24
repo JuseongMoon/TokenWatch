@@ -62,6 +62,10 @@ final class MonsterStore {
     private(set) var lastHitAt: [String: Date] = [:]
     /// 서버가 동의를 요구했다(`consent_required`).
     private(set) var consentRequested = false
+    /// 프로필 도감: 지금 계정의 종별 처치 수(서버 기록 + 합친 게스트 이력). nil이면 아직 못 읽었다.
+    private(set) var bestiaryKills: [String: Int]?
+    private(set) var bestiaryFailed = false
+    @ObservationIgnored private var bestiaryOwner: String?
 
     @ObservationIgnored private let account: AccountStore
     @ObservationIgnored private let api: MonsterAPIClient?
@@ -569,6 +573,26 @@ final class MonsterStore {
         return false
     }
 
+    // MARK: 도감
+
+    /// 프로필 도감을 열 때 계정의 종별 처치 수를 읽는다(문서 GET 한 번). 읽는 동안은 지난 값을 보여 준다.
+    func refreshBestiary() async {
+        guard let api, !env.isDemo(), let uid = account.uid else { return }
+        if bestiaryOwner != uid {
+            bestiaryOwner = uid
+            bestiaryKills = nil
+        }
+        bestiaryFailed = false
+        let kills = await api.myKills(uid: uid)
+        guard account.uid == uid else { return }
+        if let kills { bestiaryKills = kills } else if bestiaryKills == nil { bestiaryFailed = true }
+    }
+
+    /// 도감 줄(지금 설정 기준). 처치 수를 아직 못 읽었으면 nil.
+    var bestiaryRows: [BestiaryRow]? {
+        bestiaryKills.map { MonsterBestiary.rows(config: config, kills: $0, appVersion: env.appVersion) }
+    }
+
     // MARK: 계정 삭제·설정·저장
 
     /// 계정을 지웠으면 그 계정 몬스터 기록을 이 기기에서도 지운다(기기 세션 장부는 남긴다 — 서버로 가지 않는다).
@@ -577,6 +601,10 @@ final class MonsterStore {
         ledger.mergedUIDs.removeAll { $0 == uid }
         stats = nil
         rank = nil
+        if bestiaryOwner == uid {
+            bestiaryOwner = nil
+            bestiaryKills = nil
+        }
         save()
     }
 

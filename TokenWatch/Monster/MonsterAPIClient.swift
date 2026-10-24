@@ -338,6 +338,46 @@ final class MonsterAPIClient {
         return Self.decodeLeaderboard(data, scope: scope)
     }
 
+    // MARK: 도감
+
+    /// 내 계정의 종별 처치 수 — `players/{uid}`의 `stats.kills`와 합친 게스트 이력 `guestHistory.kills`의 합.
+    /// 본인만 읽을 수 있는 문서라 ID 토큰을 싣고, 필드 마스크로 두 맵만 받는다. 실패면 nil.
+    func myKills(uid: String) async -> [String: Int]? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "firestore.googleapis.com"
+        components.path = "/v1/projects/\(projectID)/databases/(default)/documents/players/\(uid)"
+        components.queryItems = ["stats.kills", "guestHistory.kills"].map { URLQueryItem(name: "mask.fieldPaths", value: $0) }
+        guard let url = components.url else { return nil }
+        for attempt in 0..<2 {
+            guard let idToken = await token(attempt > 0) else { return nil }
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.timeoutInterval = 15
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            guard let (data, response) = try? await transport(req),
+                  let http = response as? HTTPURLResponse else { return nil }
+            if http.statusCode == 401 || http.statusCode == 403, attempt == 0 { continue }
+            return http.statusCode == 200 ? Self.decodeKills(data) : nil
+        }
+        return nil
+    }
+
+    /// 마스크 응답 → 종별 합계. 순수 함수. 문서는 있는데 기록이 없으면 빈 맵.
+    nonisolated static func decodeKills(_ data: Data) -> [String: Int]? {
+        guard let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any], doc["name"] is String
+        else { return nil }
+        let fields = (doc["fields"] as? [String: Any] ?? [:]).compactMapValues(FirestoreValue.init(json:))
+        var total: [String: Int] = [:]
+        for parent in ["stats", "guestHistory"] {
+            for (id, value) in fields[parent]?.mapValue?["kills"]?.mapValue ?? [:] {
+                if let n = value.integerValue, n > 0 { total[id, default: 0] += Int(n) }
+            }
+        }
+        return total
+    }
+
     /// 탭별 필드 이름(점수·도달 시각·처치 수).
     private nonisolated static func fieldNames(_ scope: LeaderboardScope)
         -> (score: String, reachedAt: String, common: String, special: String) {

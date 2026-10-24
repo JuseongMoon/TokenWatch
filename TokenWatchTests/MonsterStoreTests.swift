@@ -8,6 +8,7 @@
 //  - 계정(동의 완료): 서버 출현 요청(보내는 키 목록 — 사용률 수치 없음), 같은 세션 재요청 없음,
 //    기기 세션 장부가 다른 uid 것이면 요청하지 않음, consent_required면 동의 요청 상태
 //  - 처치 확정: 오프라인이면 미확정으로 남고 다음에 다시 보낸다
+//  - 확률 출현(§15-11): 에이전트마다 따로, 처음 보이면 일정만, 20~40분 뒤 추첨, 서버가 정한 다음 시각을 따른다
 //  - 계정 삭제 뒤 그 계정 기록을 지운다
 //
 
@@ -72,6 +73,9 @@ struct MonsterStoreTests {
                     resetsAt: Date(timeIntervalSince1970: Double(clock.ms) / 1000 + 86_400), kind: .weekly)
     }
 
+    /// 확률 출현 후보를 모으는 전 에이전트 스냅숏(테스트가 바꿔 끼운다).
+    private final class Snapshots { var list: [(agent: Agent, windows: [UsageWindow])] = [] }
+
     private struct Setup {
         let store: MonsterStore
         let account: AccountStore
@@ -79,13 +83,20 @@ struct MonsterStoreTests {
         let ledger: MemoryLedger
         let session: MemorySessionLedger
         let clock: Clock
+        let snapshots: Snapshots
     }
 
     /// signedIn: nil이면 게스트, 값이 있으면 그 약관 버전으로 로그인.
+    /// configPayload: 캐시된 서버 설정(JSON 문자열)로 시작한다.
     private func makeSetup(signedInTerms: Int? = nil, foreground: Bool = true, critters: Bool = true,
-                           demo: Bool = false, suite: String = #function) async -> Setup {
+                           demo: Bool = false, configPayload: String? = nil, suite: String = #function) async -> Setup {
         let defaults = UserDefaults(suiteName: "MonsterStoreTests.\(suite)")!
         defaults.removePersistentDomain(forName: "MonsterStoreTests.\(suite)")
+        if let configPayload {
+            // 방금 받은 것으로 둬서 운영 설정을 내려받아 덮어쓰지 않게 한다.
+            defaults.set(Data(configPayload.utf8), forKey: "tokenwatch.monster.config.v1")
+            defaults.set(Date(), forKey: "tokenwatch.monster.configFetchedAt")
+        }
         let auth = FakeAccountAuth()
         let firestore = FakeFirestore()
         let account = AccountStore(auth: auth, projectID: "demo-proj", transport: { try await firestore.handle($0) },
@@ -103,13 +114,20 @@ struct MonsterStoreTests {
         let clock = Clock()
         let ledger = MemoryLedger()
         let session = MemorySessionLedger()
-        let agentRef = agent
+        let snapshots = Snapshots()
+        snapshots.list = [(agent, [])]
         let env = MonsterStore.Environment(
             isDemo: { demo }, crittersEnabled: { critters }, isForeground: { foreground },
-            nowMs: { clock.ms }, appVersion: "2.0.0", snapshots: { [(agentRef, [])] })
+            nowMs: { clock.ms }, appVersion: "2.0.0", snapshots: { snapshots.list })
         let store = MonsterStore(account: account, api: api, environment: env, storage: ledger,
                                  sessionStorage: session, defaults: defaults)
-        return Setup(store: store, account: account, functions: functions, ledger: ledger, session: session, clock: clock)
+        return Setup(store: store, account: account, functions: functions, ledger: ledger, session: session, clock: clock,
+                     snapshots: snapshots)
+    }
+
+    private func partialWindow(_ clock: Clock, label: String = "Current session") -> UsageWindow {
+        UsageWindow(label: label, usedPercent: 40,
+                    resetsAt: Date(timeIntervalSince1970: Double(clock.ms) / 1000 + 3600), kind: .session)
     }
 
     // MARK: 게스트
@@ -167,7 +185,7 @@ struct MonsterStoreTests {
         let s = await makeSetup()
         // HP 3 몬스터를 직접 넣어 연타 간격을 본다.
         let goblin = MonsterEncounter(key: "g", ownerUID: nil, source: .completion, provider: "claude",
-                                      windowLabel: "w", resetBucketMs: 0, slotStartMs: nil, monsterID: "goblin",
+                                      windowLabel: "w", resetBucketMs: 0, drawAtMs: nil, monsterID: "goblin",
                                       maxHP: 3, hp: 3, state: .alive, spawnedAtMs: s.clock.ms,
                                       expiresAtMs: s.clock.ms + 1_000_000, position: 0.5)
         s.ledger.state = MonsterLedgerState(encounters: [goblin])
@@ -183,6 +201,53 @@ struct MonsterStoreTests {
         s.clock.ms += 200
         #expect(fresh.hit(key: "g") == .defeated)
         #expect(fresh.ledger.guest.nextCommonGuaranteed)       // 특수 처치 → 다음은 common
+    }
+
+    // MARK: 확률 출현(§15-11)
+
+    /// 확률 100% 설정 — 추첨하면 반드시 나온다.
+    private static let alwaysRandom = #"{"spawn":{"random":{"chancePerSlot":1}}}"#
+
+    @Test func guestRandomWaitsTwentyToFortyMinutesThenDraws() async throws {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w])]
+        let start = s.clock.ms
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.encounters.isEmpty)                 // 처음 보이면 일정만 정한다
+        let due = try #require(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)))
+        #expect(due >= start + 20 * 60_000 && due <= start + 40 * 60_000)
+        s.clock.ms = due - 1
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.encounters.isEmpty)
+        s.clock.ms = due
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.encounters.count == 1)
+        let e = try #require(s.store.ledger.encounters.first)
+        #expect(e.source == .random && e.drawAtMs == due && e.agentID == agent.id && e.displayLabel == w.label)
+        let next = try #require(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)))
+        #expect(next >= due + 20 * 60_000 && next <= due + 40 * 60_000)
+        #expect(s.functions.calls.isEmpty)
+    }
+
+    @Test func eachAgentDrawsOnItsOwn() async {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let second = Agent(provider: .claude)
+        let third = Agent(provider: .codex)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w]), (second, [w]), (third, [w])]
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.randomSchedule?.count == 3)
+        s.clock.ms += 40 * 60_000
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(Set(s.store.ledger.encounters.compactMap(\.agentID)) == [agent.id, second.id, third.id])
+    }
+
+    @Test func agentWithoutCandidateWindowIsSkipped() async {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        s.snapshots.list = [(agent, [fullWindow(s.clock)])]          // 100% 창은 완료 출현 몫
+        await s.store.observe(agent: agent, windows: [])
+        #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == nil)
     }
 
     // MARK: 계정
@@ -208,6 +273,53 @@ struct MonsterStoreTests {
         #expect(shown.first?.monsterID == "goblin" && shown.first?.ownerUID == "u1")
         // 기기 세션 장부에 이 세션이 u1 것으로 남는다.
         #expect(s.session.state.entries["claude|1800086400000"]?.uid == "u1")
+    }
+
+    @Test func accountRandomFollowsTheServerSchedule() async throws {
+        let s = await makeSetup(signedInTerms: 2)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w])]
+        let first = s.clock.ms + 25 * 60_000
+        let key = MonsterSessionKey.randomKey(uid: "u1", agentKey: "k", drawAtMs: first)
+        s.functions.responses["spawnEncounter"] = [
+            (200, #"{"result":{"encounter":null,"nextDrawAtMs":\#(first)}}"#),
+            (200, #"{"result":{"encounter":{"key":"\#(key)","source":"random","provider":"claude","windowLabel":"Current session","drawAtMs":\#(first),"monsterId":"slime","maxHP":1,"state":"alive","spawnedAtMs":\#(first),"expiresAtMs":\#(first + 3_600_000)},"nextDrawAtMs":\#(first + 30 * 60_000)}}"#),
+        ]
+        await s.store.observe(agent: agent, windows: [w])            // 처음: 서버에 등록만
+        #expect(s.functions.count("spawnEncounter") == 1)
+        let sent = try #require(s.functions.calls.first { $0.name == "spawnEncounter" }?.data)
+        #expect(Set(sent.keys) == ["source", "agentKey", "candidates", "platform", "appVersion", "spriteFormat"])
+        #expect(sent["agentKey"] as? String
+                == MonsterSessionKey.agentKey(uid: "u1", agentToken: MonsterSessionKey.agentToken(agent.id)))
+        #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == first)
+        s.clock.ms = first - 1
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.functions.count("spawnEncounter") == 1)             // 예정 전에는 묻지 않는다
+        s.clock.ms = first
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.functions.count("spawnEncounter") == 2)
+        let shown = s.store.encounters(agentID: agent.id, provider: .claude, window: w)
+        #expect(shown.first?.key == key && shown.first?.ownerUID == "u1")
+        #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == first + 30 * 60_000)
+    }
+
+    @Test func deviceScheduleHoldsAfterSwitchingAccounts() async {
+        // 다른 계정이 이 기기에서 방금 뽑았으면, 새 계정도 그 일정이 올 때까지 묻지 않는다.
+        let s = await makeSetup(signedInTerms: 2)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w])]
+        var state = MonsterLedgerState()
+        state.setNextDraw(s.clock.ms + 10 * 60_000, agent: MonsterSessionKey.agentToken(agent.id), nowMs: s.clock.ms)
+        s.ledger.state = state
+        let fresh = MonsterStore(account: s.account, api: MonsterAPIClient(
+                                    projectID: "demo-proj", apiKey: nil, token: { _ in "token" },
+                                    transport: { try await s.functions.handle($0) }, appVersion: "2.0.0"),
+                                 environment: .init(isDemo: { false }, crittersEnabled: { true }, isForeground: { true },
+                                                    nowMs: { s.clock.ms }, appVersion: "2.0.0",
+                                                    snapshots: { s.snapshots.list }),
+                                 storage: s.ledger, sessionStorage: s.session)
+        await fresh.observe(agent: agent, windows: [w])
+        #expect(s.functions.count("spawnEncounter") == 0)
     }
 
     @Test func sessionLedgerBlocksAnotherAccount() async {

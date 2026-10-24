@@ -102,10 +102,12 @@ extension L10n {
     var consentSent: [String] {
         lang == .ko ? ["AI 서비스 종류(예: Claude)와 사용량 창 이름(예: 주간)",
                        "그 창의 리셋 시각과 주기",
-                       "몬스터 출현·처치 기록, 앱 버전과 플랫폼"]
+                       "몬스터 출현·처치 기록, 앱 버전과 플랫폼",
+                       "연결한 AI 계정마다 앱이 만든 무작위 식별값(계정 정보는 아님)"]
                     : ["Which AI service (e.g. Claude) and the usage window name (e.g. weekly)",
                        "When that window resets and how long it is",
-                       "Monsters spawned and defeated, the app version and platform"]
+                       "Monsters spawned and defeated, the app version and platform",
+                       "A random ID the app makes for each connected AI account (not the account itself)"]
     }
     var consentNotSent: String {
         lang == .ko ? "사용률 수치, AI 서비스 계정·이메일·토큰은 보내지 않아요. 닉네임 #번호, 아바타, 점수와 처치 수는 모험가 순위에서 다른 사람에게 보여요."

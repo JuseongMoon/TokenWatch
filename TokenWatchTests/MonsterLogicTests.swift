@@ -60,14 +60,28 @@ struct MonsterLogicTests {
         #expect(MonsterSessionKey.periodSec(provider: .elevenlabs, label: "Monthly characters", windowSeconds: nil, kind: .weekly) == month)
     }
 
-    @Test func slotsAndKeys() {
-        #expect(MonsterSessionKey.slotStartMs(nowMs: 1_800_003_599_999, slotMinutes: 60) == 1_800_000_000_000)
+    @Test func keys() {
+        func hex(_ text: String) -> String {
+            SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
         #expect(MonsterSessionKey.completionLedgerKey(provider: .claude, resetBucketMs: 5) == "claude|5")
-        #expect(MonsterSessionKey.randomLedgerKey(slotStartMs: 7) == "rand|7")
         // 서버 키와 같은 공식: sha256hex("{uid}|{provider}|{bucket}").
-        let expected = SHA256.hash(data: Data("u1|claude|1800000000000".utf8)).map { String(format: "%02x", $0) }.joined()
-        #expect(MonsterSessionKey.completionKey(uid: "u1", provider: .claude, resetBucketMs: 1_800_000_000_000) == expected)
-        #expect(MonsterSessionKey.randomKey(uid: "u1", slotStartMs: 1) != MonsterSessionKey.randomKey(uid: "u2", slotStartMs: 1))
+        #expect(MonsterSessionKey.completionKey(uid: "u1", provider: .claude, resetBucketMs: 1_800_000_000_000)
+                == hex("u1|claude|1800000000000"))
+        // 확률 출현(§15-11): sha256hex("{uid}|rand|{agentKey}|{drawAtMs}"), 에이전트 키 sha256hex("{uid}|agent|{token}").
+        #expect(MonsterSessionKey.randomKey(uid: "u1", agentKey: "k", drawAtMs: 7) == hex("u1|rand|k|7"))
+        #expect(MonsterSessionKey.agentKey(uid: "u1", agentToken: "t") == hex("u1|agent|t"))
+        #expect(MonsterSessionKey.agentKey(uid: "u1", agentToken: "t") != MonsterSessionKey.agentKey(uid: "u2", agentToken: "t"))
+        let id = UUID(uuidString: "E621E1F8-C36C-495A-93FC-0C247A3E6E5F")!
+        #expect(MonsterSessionKey.agentToken(id) == "e621e1f8-c36c-495a-93fc-0c247a3e6e5f")
+    }
+
+    @Test func drawIntervalStaysBetweenMinAndMax() {
+        let c = MonsterConfig.bundledDefault
+        #expect(MonsterDraw.drawIntervalMs(config: c, roll: 0) == 20 * 60_000)
+        #expect(MonsterDraw.drawIntervalMs(config: c, roll: 0.5) == 30 * 60_000)
+        #expect(MonsterDraw.drawIntervalMs(config: c, roll: 0.999_999) < 40 * 60_000)
+        #expect(MonsterDraw.drawIntervalMs(config: c, roll: 2) == 40 * 60_000)   // 범위 밖 roll은 자른다
     }
 
     @Test func eligibility() {
@@ -90,12 +104,14 @@ struct MonsterLogicTests {
     // MARK: 설정
 
     @Test func configEnvelopeAndDefaults() throws {
-        let payload = #"{"balanceVersion":7,"spawn":{"random":{"chancePerSlot":1.5,"slotMinutes":30}},"dailySpawnCap":10,"future":1}"#
+        let payload = #"{"balanceVersion":7,"spawn":{"random":{"chancePerSlot":1.5,"drawMinMinutes":3,"drawMaxMinutes":2,"slotMinutes":30}},"dailySpawnCap":10,"future":1}"#
         let envelope = try JSONSerialization.data(withJSONObject: ["fields": ["payload": ["stringValue": payload]]])
         let c = try #require(MonsterConfigDecoder.decodeEnvelope(envelope))
         #expect(c.balanceVersion == 7)
         #expect(c.random.chancePerSlot == 1)          // 0~1로 보정
-        #expect(c.random.slotMinutes == 30)
+        #expect(c.random.drawMinMinutes == 5)         // 최소 5분
+        #expect(c.random.drawMaxMinutes == 5)         // 최대는 최소 이상
+        #expect(c.random.maxAgentsPerUser == 10)      // 빠진 필드는 기본값
         #expect(c.random.lifetimeMinutes == 60)       // 빠진 필드는 기본값
         #expect(c.dailySpawnCap == 10)
         #expect(c.catalog == MonsterConfig.bundledDefault.catalog)

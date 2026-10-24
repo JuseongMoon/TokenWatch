@@ -9,7 +9,7 @@
 //  리더보드 상위 100(이번 주·전체)은 Firestore REST runQuery로 직접 읽는다(공개 읽기 규칙, §15-6·§15-10).
 //  앱 계정의 프로필 쓰기(`setProfile`)·계정 삭제(`deleteAccount`)도 이 클라이언트로 부른다(AccountStore).
 //
-//  보내는 것: provider·창 label·주기·리셋 버킷·슬롯·플랫폼·앱 버전. 사용률 수치, AI 서비스 계정 정보,
+//  보내는 것: provider·창 label·주기·리셋 버킷·에이전트 키(계정마다 다른 해시)·플랫폼·앱 버전. 사용률 수치, AI 서비스 계정 정보,
 //  기기 식별자는 보내지 않는다.
 //
 
@@ -22,7 +22,7 @@ nonisolated struct MonsterEncounterDTO: Equatable, Sendable {
     let provider: String
     let windowLabel: String
     let resetBucketMs: Int64?
-    let slotStartMs: Int64?
+    let drawAtMs: Int64?
     let monsterID: String
     let maxHP: Int
     let state: String
@@ -42,7 +42,7 @@ nonisolated struct MonsterEncounterDTO: Equatable, Sendable {
         self.provider = provider
         self.windowLabel = label
         self.resetBucketMs = Self.int64(json["resetBucketMs"])
-        self.slotStartMs = Self.int64(json["slotStartMs"])
+        self.drawAtMs = Self.int64(json["drawAtMs"])
         self.monsterID = monsterID
         self.maxHP = max(1, maxHP)
         self.state = state
@@ -154,7 +154,7 @@ final class MonsterAPIClient {
 
     enum SpawnResult: Equatable {
         case encounter(MonsterEncounterDTO)
-        /// 확률에서 안 나왔거나 동시 생존 상한.
+        /// 서버가 몬스터 없이 응답했다(완료 출현이 꺼짐 등).
         case none
     }
 
@@ -164,23 +164,39 @@ final class MonsterAPIClient {
                      "periodSec": periodSec, "resetBucketMs": resetBucketMs, "resetsAtMs": resetsAtMs])
     }
 
-    func spawnRandom(slotStartMs: Int64, candidates: [(provider: String, windowLabel: String)]) async
-        -> Result<SpawnResult, CallError> {
-        await spawn(["source": "random", "slotStartMs": slotStartMs,
-                     "candidates": candidates.map { ["provider": $0.provider, "windowLabel": $0.windowLabel] }])
+    /// 확률 출현 응답(§15-11): 나온 몬스터(없으면 nil — 아직 때가 아니거나 안 뽑힘)와 서버가 정한 다음 추첨 시각.
+    struct RandomDraw: Equatable {
+        let encounter: MonsterEncounterDTO?
+        let nextDrawAtMs: Int64?
+    }
+
+    /// 에이전트 하나의 추첨. 후보는 그 에이전트의 100% 미만 대상 창(1~20개)이고, 서버가 하나를 고른다.
+    func spawnRandom(agentKey: String, candidates: [(provider: String, windowLabel: String)]) async
+        -> Result<RandomDraw, CallError> {
+        await call("spawnEncounter", spawnBody([
+            "source": "random", "agentKey": agentKey,
+            "candidates": candidates.map { ["provider": $0.provider, "windowLabel": $0.windowLabel] },
+        ])).map { result in
+            RandomDraw(encounter: (result["encounter"] as? [String: Any]).flatMap(MonsterEncounterDTO.init(json:)),
+                       nextDrawAtMs: MonsterEncounterDTO.int64(result["nextDrawAtMs"]))
+        }
     }
 
     private func spawn(_ data: [String: Any]) async -> Result<SpawnResult, CallError> {
-        var body = data
-        body["platform"] = Self.platform
-        body["appVersion"] = appVersion
-        body["spriteFormat"] = Self.spriteFormat
-        return await call("spawnEncounter", body).map { result in
+        await call("spawnEncounter", spawnBody(data)).map { result in
             guard let json = result["encounter"] as? [String: Any], let dto = MonsterEncounterDTO(json: json) else {
                 return .none
             }
             return .encounter(dto)
         }
+    }
+
+    private func spawnBody(_ data: [String: Any]) -> [String: Any] {
+        var body = data
+        body["platform"] = Self.platform
+        body["appVersion"] = appVersion
+        body["spriteFormat"] = Self.spriteFormat
+        return body
     }
 
     /// 처치 확정. 시간 범위를 벗어나 만료로 처리되면 서버는 `stats`를 돌려주지 않는다(nil — 지금 통계를 유지한다).

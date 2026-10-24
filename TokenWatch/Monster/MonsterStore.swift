@@ -9,7 +9,7 @@
 //    아니면 게스트(기기 추첨, 비순위). 화면에는 지금 주인의 몬스터만 그린다.
 //  - 출현 요청은 포그라운드 새로고침에서만 한다(백그라운드 갱신은 만료 처리만). 크리터 표시를 끄면 멈춘다.
 //  - 데모 중에는 서버·파일 저장을 하지 않는다. 표본 100% 게이지에는 메모리 전용 표본 몬스터를 그린다.
-//  - 서버로 보내는 것은 계약 §15의 값뿐이다(provider·창 label·주기·리셋 버킷·슬롯·플랫폼·앱 버전).
+//  - 서버로 보내는 것은 계약 §15의 값뿐이다(provider·창 label·주기·리셋 버킷·에이전트 키·플랫폼·앱 버전).
 //    사용률 수치·AI 서비스 계정 정보는 보내지 않는다.
 //
 
@@ -72,8 +72,6 @@ final class MonsterStore {
     @ObservationIgnored private var inFlight: Set<String> = []
     /// 키별 다음 요청 가능 시각(ms). 확정 거절은 이번 실행 동안 다시 묻지 않는다(Int64.max).
     @ObservationIgnored private var retryAfter: [String: Int64] = [:]
-    /// 이번 실행에서 "안 나옴"으로 정해진 확률 슬롯 키.
-    @ObservationIgnored private var settledRandomKeys: Set<String> = []
     @ObservationIgnored private var lastHitMs: [String: Int64] = [:]
     @ObservationIgnored private var rankLoadedAt: Date?
     /// 데모 표본 몬스터의 남은 HP와 처치 시각(메모리 전용 — 처치 시각이 있어야 사망 애니메이션이 나온다).
@@ -242,75 +240,91 @@ final class MonsterStore {
                 return
             }
             addGuestEncounter(key: key, source: .completion, provider: agent.provider.rawValue, windowLabel: keyLabel,
-                              resetBucketMs: bucket, slotStartMs: nil, entry: entry, now: now,
+                              resetBucketMs: bucket, drawAtMs: nil, entry: entry, now: now,
                               expiresAtMs: MonsterSessionKey.epochMs(resetsAt), anchor: (agent.id, window.label))
         }
     }
 
+    /// 확률 출현(§15-11): 에이전트(연결한 AI 계정)마다 20~40분 간격으로 한 번씩 추첨한다. 일정은 원장에
+    /// 에이전트별로 계정과 무관하게 두고(계정을 바꿔도 추첨이 늘지 않는다), 로그인 계정은 서버가 정한 다음 시각을 따른다.
+    /// 처음 보인 에이전트는 바로 뽑지 않고 일정만 정한다.
     private func handleRandom(owner: String?, now: Int64) async {
         guard config.random.enabled else { return }
-        let slot = MonsterSessionKey.slotStartMs(nowMs: now, slotMinutes: config.random.slotMinutes)
-        let key = MonsterSessionKey.randomKey(uid: owner ?? "guest", slotStartMs: slot)
-        guard !settledRandomKeys.contains(key), !ledger.encounters.contains(where: { $0.key == key }),
-              canRequest(key, now: now) else { return }
-        // 후보: 모든 에이전트의 대상 창, provider+label 단위로 하나씩(최대 20).
         let date = Date(timeIntervalSince1970: Double(now) / 1000)
-        var anchors: [String: (UUID, String)] = [:]
-        var candidates: [(provider: String, windowLabel: String)] = []
+        var drawn = 0
         for (agent, windows) in env.snapshots() {
+            guard drawn < config.random.maxAgentsPerUser else { break }
+            // 후보: 이 에이전트의 100% 미만 대상 창, label 단위로 하나씩(최대 20).
+            var anchors: [String: String] = [:]
+            var candidates: [(provider: String, windowLabel: String)] = []
             for window in windows where MonsterEligibility.isRandomCandidate(
                 window, minUsedPercent: config.random.minUsedPercent, now: date) {
                 let keyLabel = MonsterSessionKey.keyLabel(provider: agent.provider, label: window.label)
-                let id = "\(agent.provider.rawValue)|\(keyLabel)"
-                guard anchors[id] == nil, candidates.count < 20 else { continue }
-                anchors[id] = (agent.id, window.label)
+                guard anchors[keyLabel] == nil, candidates.count < 20 else { continue }
+                anchors[keyLabel] = window.label
                 candidates.append((agent.provider.rawValue, keyLabel))
             }
-        }
-        guard !candidates.isEmpty else { return }
-        if let owner, let api {
-            let ledgerKey = MonsterSessionKey.randomLedgerKey(slotStartMs: slot)
-            var session = sessionStorage.load()
-            guard !session.blocks(key: ledgerKey, uid: owner) else { return }
-            inFlight.insert(key)
-            let result = await api.spawnRandom(slotStartMs: slot, candidates: candidates)
-            inFlight.remove(key)
-            switch result {
-            case .success(.none):
-                settledRandomKeys.insert(key)
-            case .success(.encounter(let dto)):
-                session.record(key: ledgerKey, uid: owner, nowMs: now)
-                session.purge(nowMs: now)
-                sessionStorage.save(session)
-                apply(result, key: key, owner: owner, anchor: anchors["\(dto.provider)|\(dto.windowLabel)"], now: now)
-            case .failure:
-                apply(result, key: key, owner: owner, anchor: nil, now: now)
-            }
-        } else {
-            let aliveRandom = ledger.encounters.filter { $0.ownerUID == nil && $0.source == .random && $0.isAlive }.count
-            let decision = GuestSpawnPolicy.decide(
-                isCompletion: false, key: key, salt: ledger.deviceSalt, config: config, progress: ledger.guest,
-                aliveRandom: aliveRandom, nowMs: now, appVersion: env.appVersion)
-            guard case .spawn(let entry) = decision else {
-                settledRandomKeys.insert(key)
-                return
-            }
-            let pick = min(candidates.count - 1, Int(MonsterDraw.unitRoll("\(ledger.deviceSalt)|\(key)|cand")
-                                                    * Double(candidates.count)))
-            let chosen = candidates[pick]
-            addGuestEncounter(key: key, source: .random, provider: chosen.provider, windowLabel: chosen.windowLabel,
-                              resetBucketMs: nil, slotStartMs: slot, entry: entry, now: now,
-                              expiresAtMs: now + Int64(config.random.lifetimeMinutes) * 60_000,
-                              anchor: anchors["\(chosen.provider)|\(chosen.windowLabel)"])
+            guard !candidates.isEmpty else { continue }   // 대상 창이 없으면 일정을 그대로 둔다
+            drawn += 1
+            await drawRandom(agent: agent, candidates: candidates, anchors: anchors, owner: owner, now: now)
         }
     }
 
+    private func drawRandom(agent: Agent, candidates: [(provider: String, windowLabel: String)],
+                            anchors: [String: String], owner: String?, now: Int64) async {
+        let token = MonsterSessionKey.agentToken(agent.id)
+        let retryKey = "rand|\(token)"
+        let due = ledger.nextDraw(agent: token)
+        guard due.map({ $0 <= now }) ?? true, canRequest(retryKey, now: now) else { return }
+        if let owner, let api {
+            inFlight.insert(retryKey)
+            let result = await api.spawnRandom(
+                agentKey: MonsterSessionKey.agentKey(uid: owner, agentToken: token), candidates: candidates)
+            inFlight.remove(retryKey)
+            switch result {
+            case .success(let draw):
+                // 기기 시계가 서버보다 빠르면 예정 시각이 이미 지난 것으로 보일 수 있다 — 1분 간격으로만 다시 묻는다.
+                let next = draw.nextDrawAtMs ?? now + MonsterDraw.drawIntervalMs(config: config, roll: 0)
+                ledger.setNextDraw(max(next, now + 60_000), agent: token, nowMs: now)
+                if let dto = draw.encounter {
+                    apply(.success(.encounter(dto)), key: dto.key, owner: owner,
+                          anchor: anchors[dto.windowLabel].map { (agent.id, $0) }, now: now)
+                }
+            case .failure(let error):
+                apply(.failure(error), key: retryKey, owner: owner, anchor: nil, now: now)
+            }
+            return
+        }
+        let salt = ledger.deviceSalt
+        guard let due else {
+            let first = MonsterDraw.drawIntervalMs(config: config, roll: MonsterDraw.unitRoll("\(salt)|\(token)|first"))
+            ledger.setNextDraw(now + first, agent: token, nowMs: now)
+            return
+        }
+        let key = MonsterSessionKey.randomKey(uid: "guest", agentKey: token, drawAtMs: due)
+        let interval = MonsterDraw.drawIntervalMs(config: config, roll: MonsterDraw.unitRoll("\(salt)|\(key)|next"))
+        ledger.setNextDraw(now + interval, agent: token, nowMs: now)
+        guard !ledger.encounters.contains(where: { $0.key == key }) else { return }
+        let aliveRandom = ledger.encounters.filter { $0.ownerUID == nil && $0.source == .random && $0.isAlive }.count
+        let decision = GuestSpawnPolicy.decide(
+            isCompletion: false, key: key, salt: salt, config: config, progress: ledger.guest,
+            aliveRandom: aliveRandom, nowMs: now, appVersion: env.appVersion)
+        guard case .spawn(let entry) = decision else { return }
+        let pick = min(candidates.count - 1,
+                       Int(MonsterDraw.unitRoll("\(salt)|\(key)|cand") * Double(candidates.count)))
+        let chosen = candidates[pick]
+        addGuestEncounter(key: key, source: .random, provider: chosen.provider, windowLabel: chosen.windowLabel,
+                          resetBucketMs: nil, drawAtMs: due, entry: entry, now: now,
+                          expiresAtMs: now + Int64(config.random.lifetimeMinutes) * 60_000,
+                          anchor: anchors[chosen.windowLabel].map { (agent.id, $0) })
+    }
+
     private func addGuestEncounter(key: String, source: MonsterEncounter.Source, provider: String, windowLabel: String,
-                                   resetBucketMs: Int64?, slotStartMs: Int64?, entry: MonsterCatalogEntry, now: Int64,
+                                   resetBucketMs: Int64?, drawAtMs: Int64?, entry: MonsterCatalogEntry, now: Int64,
                                    expiresAtMs: Int64, anchor: (UUID, String)?) {
         let encounter = MonsterEncounter(
             key: key, ownerUID: nil, source: source, provider: provider, windowLabel: windowLabel,
-            resetBucketMs: resetBucketMs, slotStartMs: slotStartMs, monsterID: entry.id, maxHP: entry.hp, hp: entry.hp,
+            resetBucketMs: resetBucketMs, drawAtMs: drawAtMs, monsterID: entry.id, maxHP: entry.hp, hp: entry.hp,
             state: .alive, spawnedAtMs: now, expiresAtMs: expiresAtMs, agentID: anchor?.0, displayLabel: anchor?.1,
             position: MonsterDraw.position(key: key))
         ledger.encounters.append(encounter)
@@ -328,7 +342,7 @@ final class MonsterStore {
             let encounter = MonsterEncounter(
                 key: dto.key, ownerUID: owner, source: MonsterEncounter.Source(rawValue: dto.source) ?? .completion,
                 provider: dto.provider, windowLabel: dto.windowLabel, resetBucketMs: dto.resetBucketMs,
-                slotStartMs: dto.slotStartMs, monsterID: dto.monsterID, maxHP: dto.maxHP,
+                drawAtMs: dto.drawAtMs, monsterID: dto.monsterID, maxHP: dto.maxHP,
                 hp: state == .alive ? dto.maxHP : 0, state: state, spawnedAtMs: dto.spawnedAtMs,
                 expiresAtMs: dto.expiresAtMs, defeatedAtMs: dto.defeatedAtMs, awardedScore: dto.awardedScore,
                 agentID: anchor?.0, displayLabel: anchor?.1, position: MonsterDraw.position(key: dto.key))
@@ -343,7 +357,7 @@ final class MonsterStore {
             case "consent_required":
                 consentRequested = true
                 retryAfter[key] = now + 600_000
-            case "daily_cap":
+            case "daily_cap", "agent_limit":
                 retryAfter[key] = now + 3_600_000
             case "invalid_reset", "too_frequent", "invalid_argument", "suspended", "profile_required":
                 retryAfter[key] = .max
@@ -482,7 +496,7 @@ final class MonsterStore {
         _ = demoTick   // 타격 시 다시 그리게 관찰 대상에 둔다
         return [MonsterEncounter(
             key: key, ownerUID: "demo", source: .completion, provider: "", windowLabel: window.label,
-            resetBucketMs: nil, slotStartMs: nil, monsterID: entry.id, maxHP: entry.hp, hp: max(0, hp),
+            resetBucketMs: nil, drawAtMs: nil, monsterID: entry.id, maxHP: entry.hp, hp: max(0, hp),
             state: hp > 0 ? .alive : .defeated, spawnedAtMs: 0, expiresAtMs: .max,
             defeatedAtMs: demoDefeatedAt[key], agentID: agentID, displayLabel: window.label, position: 0.5)]
     }

@@ -4,7 +4,7 @@
 //
 //  게스트(로그인 안 함·동의 전) 출현 추첨과, 양쪽이 같이 쓰는 종 추첨·위치 계산. 순수 함수.
 //  로그인 사용자의 출현·종·처치는 서버가 판정하므로(§8-4) 이 파일은 게스트 몬스터와 표시만 결정한다.
-//  추첨은 키에서 결정적으로 뽑는다 — 새로고침을 반복해도 같은 슬롯·세션은 같은 결과다.
+//  추첨은 키에서 결정적으로 뽑는다 — 새로고침을 반복해도 같은 추첨·세션은 같은 결과다.
 //
 
 import Foundation
@@ -47,6 +47,13 @@ enum MonsterDraw {
 
     /// 확률 출현 몬스터의 행진 속도 배율(0.95~1.05). 같은 종 두 마리가 겹친 채 걷지 않게 한다.
     static func marchSpeed(key: String) -> Double { 0.95 + unitRoll("\(key)|speed") * 0.1 }
+
+    /// 다음 확률 추첨까지의 간격(ms): `drawMinMinutes`~`drawMaxMinutes` 사이를 roll([0, 1))로 고른다.
+    static func drawIntervalMs(config: MonsterConfig, roll: Double) -> Int64 {
+        let low = Double(config.random.drawMinMinutes)
+        let high = Double(max(config.random.drawMinMinutes, config.random.drawMaxMinutes))
+        return Int64(((low + min(max(roll, 0), 1) * (high - low)) * 60_000).rounded(.down))
+    }
 
     /// KST 날짜(하루 상한 경계 — 서버와 같은 기준).
     static func kstDay(nowMs: Int64) -> String {

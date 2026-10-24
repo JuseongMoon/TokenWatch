@@ -2,7 +2,7 @@
 //  MonsterSessionKey.swift
 //  TokenWatch
 //
-//  몬스터 출현 요청의 재료(리셋 버킷·주기·창 label·슬롯)를 Android와 비트 단위로 같게 만든다.
+//  몬스터 출현 요청의 재료(리셋 버킷·주기·창 label·에이전트 키)를 Android와 비트 단위로 같게 만든다.
 //  서버 문서 키도 같은 공식이라(SHA-256 hex) 로컬 매칭에 그대로 쓴다. 순수 함수 — 단위 테스트 대상.
 //
 //  - 리셋 시각은 300초 단위 반올림(소수점 초 흔들림에도 같은 세션이 같은 키).
@@ -63,12 +63,6 @@ enum MonsterSessionKey {
         }
     }
 
-    /// 확률 출현 슬롯 시작(epoch ms). 슬롯 길이로 내림한다.
-    static func slotStartMs(nowMs: Int64, slotMinutes: Int) -> Int64 {
-        let slot = Int64(max(1, slotMinutes)) * 60_000
-        return nowMs / slot * slot
-    }
-
     // MARK: 키
 
     /// 기기 세션 장부 키(계정 무관, §8-8).
@@ -76,15 +70,22 @@ enum MonsterSessionKey {
         "\(provider.rawValue)|\(resetBucketMs)"
     }
 
-    static func randomLedgerKey(slotStartMs: Int64) -> String { "rand|\(slotStartMs)" }
-
     /// 서버 encounter 문서 키와 같은 해시(§15-4). 게스트는 uid 자리에 `guest`를 쓴다(로컬 전용).
     static func completionKey(uid: String, provider: AgentProvider, resetBucketMs: Int64) -> String {
         sha256Hex("\(uid)|\(provider.rawValue)|\(resetBucketMs)")
     }
 
-    static func randomKey(uid: String, slotStartMs: Int64) -> String {
-        sha256Hex("\(uid)|rand|\(slotStartMs)")
+    /// 확률 출현 키(§15-11): 에이전트 키와 그 추첨의 예정 시각. 게스트는 `guest`·에이전트 UUID를 쓴다.
+    static func randomKey(uid: String, agentKey: String, drawAtMs: Int64) -> String {
+        sha256Hex("\(uid)|rand|\(agentKey)|\(drawAtMs)")
+    }
+
+    /// 기기 원장의 에이전트 표기(UUID 소문자 — Android `UUID.toString()`과 같은 꼴).
+    static func agentToken(_ id: UUID) -> String { id.uuidString.lowercased() }
+
+    /// 서버로 보내는 에이전트 키. 계정마다 달라 계정 사이에 이어지지 않고, AI 계정 정보가 아니다.
+    static func agentKey(uid: String, agentToken: String) -> String {
+        sha256Hex("\(uid)|agent|\(agentToken)")
     }
 
     static func sha256Hex(_ text: String) -> String {

@@ -7,9 +7,11 @@
 //  - 원장: Application Support의 JSON 파일 하나(`monster-encounters.v1.json`). UserDefaults는 파일 전체를
 //    다시 쓰므로 쓰지 않는다(계약 §8-7). 살아 있는 것·서버 미확정 처치·최근 처치 200건만 원본으로 두고,
 //    게스트 처치는 종별 카운터로 따로 센다.
-//  - 기기 세션 장부(§8-8): 이 기기에서 이미 몬스터를 받은 세션·슬롯 키 → 받은 uid. 다른 uid로 로그인했을 때
+//  - 기기 세션 장부(§8-8): 이 기기에서 이미 완료 몬스터를 받은 세션 키 → 받은 uid. 다른 uid로 로그인했을 때
 //    같은 키로 다시 요청하지 않는다(계정을 바꿔 같은 사용량으로 몬스터를 또 받는 것을 막는다).
 //    Keychain(ThisDeviceOnly)에 둬서 앱을 다시 깔아도 남는다. 자격증명이 아니며 서버로 보내지 않는다.
+//  - 확률 출현 일정(§15-11): 에이전트별 다음 추첨 시각을 원장에 계정과 무관하게 둔다(계정을 바꿔도 추첨이 늘지 않게).
+//    에이전트는 앱을 다시 깔면 새로 만들어지므로 Keychain에 둘 필요가 없다.
 //
 
 import Foundation
@@ -27,7 +29,8 @@ nonisolated struct MonsterEncounter: Codable, Equatable, Sendable, Identifiable 
     /// 키용 label(Codex 추가 한도는 상수).
     let windowLabel: String
     let resetBucketMs: Int64?
-    let slotStartMs: Int64?
+    /// 확률 출현 추첨의 예정 시각(§15-11).
+    let drawAtMs: Int64?
     let monsterID: String
     let maxHP: Int
     /// 남은 HP(기기 로컬 — 타격은 서버로 보내지 않는다).
@@ -66,6 +69,18 @@ nonisolated struct MonsterLedgerState: Codable, Equatable, Sendable {
     var mergedUIDs: [String] = []
     /// 설치마다 무작위 — 게스트 추첨 시드(서버로 보내지 않는다).
     var deviceSalt = UUID().uuidString
+    /// 확률 출현 기기 일정: 에이전트(`MonsterSessionKey.agentToken`) → 다음 추첨 요청 시각(ms).
+    /// 옛 원장 파일에 없는 필드라 옵셔널이다.
+    var randomSchedule: [String: Int64]?
+
+    func nextDraw(agent: String) -> Int64? { randomSchedule?[agent] }
+
+    /// 일정을 바꾸고, 40일 넘게 지난 일정(지운 에이전트)은 버린다.
+    mutating func setNextDraw(_ ms: Int64, agent: String, nowMs: Int64) {
+        var schedule = (randomSchedule ?? [:]).filter { nowMs - $0.value < DeviceSessionLedgerState.retentionMs }
+        schedule[agent] = ms
+        randomSchedule = schedule
+    }
 
     /// 보존 상한: 살아 있는 것·미확정 처치는 모두, 끝난 것은 최근 200건.
     static let keepFinished = 200

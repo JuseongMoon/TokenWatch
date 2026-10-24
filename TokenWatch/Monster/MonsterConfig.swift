@@ -20,13 +20,18 @@ nonisolated struct MonsterConfig: Equatable, Sendable {
     var tapDebounceMs: Int
     var dailySpawnCap: Int
 
+    /// 확률 출현(§15-11): 에이전트마다 `drawMinMinutes`~`drawMaxMinutes` 간격으로 한 번씩 추첨한다.
     nonisolated struct RandomSpawn: Equatable, Sendable {
         var enabled: Bool
+        /// 추첨 1회당 확률(이름은 슬롯 시절 그대로).
         var chancePerSlot: Double
-        var slotMinutes: Int
+        var drawMinMinutes: Int
+        var drawMaxMinutes: Int
         var lifetimeMinutes: Int
         var minUsedPercent: Double
         var maxAlivePerUser: Int
+        /// 추첨하는 에이전트 수 상한(서버는 최근 7일에 본 에이전트로 센다).
+        var maxAgentsPerUser: Int
     }
 
     /// 번들 기본값 — 서버 시드(계약 §8-2·§13 2026-10-19 결정)와 같은 값.
@@ -40,8 +45,8 @@ nonisolated struct MonsterConfig: Equatable, Sendable {
             MonsterCatalogEntry(id: "mimic", tier: "special", hp: 12, score: 350, weight: 0.5),
         ],
         completionEnabled: true,
-        random: RandomSpawn(enabled: true, chancePerSlot: 0.08, slotMinutes: 60, lifetimeMinutes: 60,
-                            minUsedPercent: 0, maxAlivePerUser: 3),
+        random: RandomSpawn(enabled: true, chancePerSlot: 0.08, drawMinMinutes: 20, drawMaxMinutes: 40,
+                            lifetimeMinutes: 60, minUsedPercent: 0, maxAlivePerUser: 3, maxAgentsPerUser: 10),
         guaranteedSlimeFirstN: 3, tapDebounceMs: 120, dailySpawnCap: 60)
 
     func entry(_ id: String) -> MonsterCatalogEntry? { catalog.first { $0.id == id } }
@@ -94,10 +99,14 @@ nonisolated enum MonsterConfigDecoder {
             if let r = spawn["random"] as? [String: Any] {
                 config.random.enabled = (r["enabled"] as? Bool) ?? base.random.enabled
                 config.random.chancePerSlot = clamp(double(r["chancePerSlot"]) ?? base.random.chancePerSlot, 0, 1)
-                config.random.slotMinutes = max(1, int(r["slotMinutes"]) ?? base.random.slotMinutes)
+                // 간격은 5분~하루, 최대는 최소 이상(서버 검증과 같은 범위).
+                let drawMin = min(1440, max(5, int(r["drawMinMinutes"]) ?? base.random.drawMinMinutes))
+                config.random.drawMinMinutes = drawMin
+                config.random.drawMaxMinutes = min(1440, max(drawMin, int(r["drawMaxMinutes"]) ?? base.random.drawMaxMinutes))
                 config.random.lifetimeMinutes = max(1, int(r["lifetimeMinutes"]) ?? base.random.lifetimeMinutes)
                 config.random.minUsedPercent = double(r["minUsedPercent"]) ?? base.random.minUsedPercent
                 config.random.maxAlivePerUser = max(0, int(r["maxAlivePerUser"]) ?? base.random.maxAlivePerUser)
+                config.random.maxAgentsPerUser = max(0, int(r["maxAgentsPerUser"]) ?? base.random.maxAgentsPerUser)
             }
         }
         config.guaranteedSlimeFirstN = max(0, int(json["guaranteedSlimeFirstN"]) ?? base.guaranteedSlimeFirstN)

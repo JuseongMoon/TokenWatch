@@ -234,6 +234,14 @@ struct MonsterLogicTests {
         }
     }
 
+    @Test func marchSpeedIsDeterministicWithinFivePercent() {
+        for i in 0..<200 {
+            let s = MonsterDraw.marchSpeed(key: "k\(i)")
+            #expect(s >= 0.95 && s <= 1.05)
+            #expect(s == MonsterDraw.marchSpeed(key: "k\(i)"))
+        }
+    }
+
     // MARK: 서버 응답
 
     @Test func callResponseDecoding() {

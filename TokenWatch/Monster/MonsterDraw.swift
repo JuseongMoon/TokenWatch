@@ -45,6 +45,9 @@ enum MonsterDraw {
     /// 확률 출현 몬스터의 게이지 안 위치(0.1~0.9).
     static func position(key: String) -> Double { 0.1 + unitRoll("\(key)|pos") * 0.8 }
 
+    /// 확률 출현 몬스터의 행진 속도 배율(0.95~1.05). 같은 종 두 마리가 겹친 채 걷지 않게 한다.
+    static func marchSpeed(key: String) -> Double { 0.95 + unitRoll("\(key)|speed") * 0.1 }
+
     /// KST 날짜(하루 상한 경계 — 서버와 같은 기준).
     static func kstDay(nowMs: Int64) -> String {
         var cal = Calendar(identifier: .gregorian)

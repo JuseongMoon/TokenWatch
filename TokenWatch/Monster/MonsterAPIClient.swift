@@ -170,7 +170,7 @@ final class MonsterAPIClient {
         let nextDrawAtMs: Int64?
     }
 
-    /// 에이전트 하나의 추첨. 후보는 그 에이전트의 100% 미만 대상 창(1~20개)이고, 서버가 하나를 고른다.
+    /// 에이전트 하나의 추첨. 후보는 그 에이전트의 대상 창(1~20개, 완료 몬스터가 살아 있는 100% 창 제외)이고, 서버가 하나를 고른다.
     func spawnRandom(agentKey: String, candidates: [(provider: String, windowLabel: String)]) async
         -> Result<RandomDraw, CallError> {
         await call("spawnEncounter", spawnBody([

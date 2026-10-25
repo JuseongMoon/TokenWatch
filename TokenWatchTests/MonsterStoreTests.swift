@@ -8,7 +8,8 @@
 //  - 계정(동의 완료): 서버 출현 요청(보내는 키 목록 — 사용률 수치 없음), 같은 세션 재요청 없음,
 //    기기 세션 장부가 다른 uid 것이면 요청하지 않음, consent_required면 동의 요청 상태
 //  - 처치 확정: 오프라인이면 미확정으로 남고 다음에 다시 보낸다
-//  - 확률 출현(§15-11): 에이전트마다 따로, 처음 보이면 일정만, 20~40분 뒤 추첨, 서버가 정한 다음 시각을 따른다
+//  - 확률 출현(§15-11): 에이전트마다 따로, 처음 보이면 일정만, 20~40분 뒤 추첨, 서버가 정한 다음 시각을 따른다,
+//    100% 창은 완료 몬스터를 잡은 뒤부터 후보
 //  - 계정 삭제 뒤 그 계정 기록을 지운다
 //
 
@@ -243,9 +244,30 @@ struct MonsterStoreTests {
         #expect(Set(s.store.ledger.encounters.compactMap(\.agentID)) == [agent.id, second.id, third.id])
     }
 
+    @Test func fullWindowJoinsTheDrawOnceItsCompletionMonsterIsDefeated() async throws {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let w = fullWindow(s.clock)
+        s.snapshots.list = [(agent, [w])]
+        let token = MonsterSessionKey.agentToken(agent.id)
+        await s.store.observe(agent: agent, windows: [w])
+        let completion = try #require(s.store.ledger.encounters.first)
+        #expect(completion.source == .completion && s.store.ledger.encounters.count == 1)
+        #expect(s.store.ledger.nextDraw(agent: token) == nil)          // 완료 몬스터가 살아 있으면 후보가 아니다
+        #expect(s.store.hit(key: completion.key) == .defeated)         // 첫 3회는 HP 1 슬라임
+        await s.store.observe(agent: agent, windows: [w])
+        let due = try #require(s.store.ledger.nextDraw(agent: token))  // 잡은 뒤부터 일정이 흐른다
+        s.clock.ms = due
+        await s.store.observe(agent: agent, windows: [w])
+        let random = try #require(s.store.ledger.encounters.first { $0.source == .random })
+        #expect(random.agentID == agent.id && random.displayLabel == w.label)
+    }
+
     @Test func agentWithoutCandidateWindowIsSkipped() async {
         let s = await makeSetup(configPayload: Self.alwaysRandom)
-        s.snapshots.list = [(agent, [fullWindow(s.clock)])]          // 100% 창은 완료 출현 몫
+        let credit = UsageWindow(label: "credits", usedPercent: 40,
+                                 resetsAt: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000 + 86_400),
+                                 kind: .weekly, style: .creditGauge)
+        s.snapshots.list = [(agent, [credit])]                        // 충전형 게이지는 대상이 아니다
         await s.store.observe(agent: agent, windows: [])
         #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == nil)
     }

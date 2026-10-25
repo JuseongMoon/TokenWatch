@@ -110,8 +110,9 @@ enum MonsterEligibility {
         isTarget(window, now: now) && window.usedPercent / 100 >= completionThreshold
     }
 
-    /// 확률 출현 후보. 이미 완료된 창은 완료 몬스터가 있으므로 뺀다.
+    /// 확률 출현 후보. 100%가 된 창도 후보다 — 일찍 다 써도 리셋까지 추첨이 이어진다.
+    /// 그 창의 완료 몬스터가 살아 있는 동안만 호출측(MonsterStore)이 뺀다.
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {
-        isTarget(window, now: now) && !isCompleted(window, now: now) && window.usedPercent >= minUsedPercent
+        isTarget(window, now: now) && window.usedPercent >= minUsedPercent
     }
 }

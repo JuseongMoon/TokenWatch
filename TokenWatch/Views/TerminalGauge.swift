@@ -43,9 +43,9 @@ struct TerminalGauge: View {
     private var elapsed: Double? { elapsedFraction.map { min(1, max(0, $0)) } }
     /// 실제 채움 폭 비율 — 구독형은 사용량, 충전형은 남은 잔액.
     private var fill: Double { Self.fillFraction(used: used, fillsRemaining: fillsRemaining) }
-    /// 슬라임 표시 조건 — 설정 on & 소진(≈100%). 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
+    /// 슬라임 표시 조건 — 설정 on & 소진(≈100%) & 이 바에 몬스터가 없을 때. 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
     private var showCritter: Bool {
-        gaugeCritter && used >= GaugeCritter.threshold && !monsters.contains { $0.source == .completion }
+        gaugeCritter && used >= GaugeCritter.threshold && monsters.isEmpty
     }
 
     /// 채움 비율(0...1). 구독형은 사용량(used), 충전형(fillsRemaining)은 남은 잔액(1−used)을 그린다.

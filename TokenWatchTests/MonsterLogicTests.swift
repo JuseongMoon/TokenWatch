@@ -99,7 +99,8 @@ struct MonsterLogicTests {
         #expect(!MonsterEligibility.isTarget(credit, now: now))
         #expect(MonsterEligibility.isRandomCandidate(half, minUsedPercent: 0, now: now))
         #expect(!MonsterEligibility.isRandomCandidate(half, minUsedPercent: 50, now: now))
-        #expect(!MonsterEligibility.isRandomCandidate(full, minUsedPercent: 0, now: now))   // 완료 창은 완료 몬스터 몫
+        #expect(MonsterEligibility.isRandomCandidate(full, minUsedPercent: 0, now: now))    // 100% 창도 추첨 후보
+        #expect(!MonsterEligibility.isRandomCandidate(credit, minUsedPercent: 0, now: now))
     }
 
     // MARK: 설정

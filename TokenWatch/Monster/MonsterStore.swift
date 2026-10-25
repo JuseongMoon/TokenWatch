@@ -254,11 +254,14 @@ final class MonsterStore {
         var drawn = 0
         for (agent, windows) in env.snapshots() {
             guard drawn < config.random.maxAgentsPerUser else { break }
-            // 후보: 이 에이전트의 100% 미만 대상 창, label 단위로 하나씩(최대 20).
+            // 후보: 이 에이전트의 대상 창, label 단위로 하나씩(최대 20). 100% 창은 완료 몬스터를 잡은 뒤부터 들어간다.
             var anchors: [String: String] = [:]
             var candidates: [(provider: String, windowLabel: String)] = []
             for window in windows where MonsterEligibility.isRandomCandidate(
                 window, minUsedPercent: config.random.minUsedPercent, now: date) {
+                if MonsterEligibility.isCompleted(window, now: date),
+                   encounters(agentID: agent.id, provider: agent.provider, window: window)
+                       .contains(where: { $0.source == .completion && $0.isAlive }) { continue }
                 let keyLabel = MonsterSessionKey.keyLabel(provider: agent.provider, label: window.label)
                 guard anchors[keyLabel] == nil, candidates.count < 20 else { continue }
                 anchors[keyLabel] = window.label

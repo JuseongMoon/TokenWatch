@@ -6,7 +6,7 @@
 //  `POST https://asia-northeast3-{project}.cloudfunctions.net/{name}`, 본문 `{"data": …}`, 응답 `{"result": …}`.
 //  오류는 `error.details.code` 열거 문자열만 쓴다 — `message`는 표시·로깅하지 않는다.
 //  ID 토큰은 요청 직전에 받아 헤더에만 싣는다. 401이면 토큰을 강제 갱신해 한 번 다시 보낸다.
-//  리더보드 상위 100(이번 주·전체)은 Firestore REST runQuery로 직접 읽는다(공개 읽기 규칙, §15-6·§15-10).
+//  리더보드 상위 10(이번 주·전체)은 Firestore REST runQuery로 직접 읽는다(공개 읽기 규칙, §15-6·§15-10).
 //  앱 계정의 프로필 쓰기(`setProfile`)·계정 삭제(`deleteAccount`)도 이 클라이언트로 부른다(AccountStore).
 //
 //  보내는 것: provider·창 label·주기·리셋 버킷·에이전트 키(계정마다 다른 해시)·플랫폼·앱 버전. 사용률 수치, AI 서비스 계정 정보,
@@ -301,20 +301,14 @@ final class MonsterAPIClient {
         return await call("mergeGuestHistory", data).map { ($0["merged"] as? Bool) ?? false }
     }
 
-    /// 신고 사유(§15-7).
-    enum ReportReason: String, CaseIterable, Sendable {
-        case nickname, avatar, cheating, other
-    }
-
-    func report(targetUID: String, reason: ReportReason) async -> Result<Void, CallError> {
-        await call("reportPlayer", ["targetUid": targetUID, "reason": reason.rawValue]).map { _ in () }
-    }
-
     // MARK: 리더보드
 
-    /// 상위 100(점수 내림차순, 동점이면 먼저 도달한 순). 로그인 전에도 읽을 수 있다.
+    /// 순위표에 보여 주는 인원.
+    nonisolated static let leaderboardSize = 10
+
+    /// 상위 10(점수 내림차순, 동점이면 먼저 도달한 순). 로그인 전에도 읽을 수 있다.
     /// 이번 주 탭은 `weekID`(그 주 월요일 KST 날짜)가 같은 문서만 주간 점수로 줄 세운다.
-    func leaderboardTop(_ scope: LeaderboardScope, weekID: String, limit: Int = 100) async -> [LeaderboardEntry]? {
+    func leaderboardTop(_ scope: LeaderboardScope, weekID: String, limit: Int = leaderboardSize) async -> [LeaderboardEntry]? {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "firestore.googleapis.com"
@@ -394,7 +388,7 @@ final class MonsterAPIClient {
             "from": [["collectionId": "leaderboard"]],
             "orderBy": [["field": ["fieldPath": f.score], "direction": "DESCENDING"],
                         ["field": ["fieldPath": f.reachedAt], "direction": "ASCENDING"]],
-            "limit": min(100, max(1, limit)),
+            "limit": min(leaderboardSize, max(1, limit)),
         ]
         if scope == .week {
             structured["where"] = ["fieldFilter": ["field": ["fieldPath": "weekId"], "op": "EQUAL",

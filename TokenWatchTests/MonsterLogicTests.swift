@@ -304,7 +304,7 @@ struct MonsterLogicTests {
 
         let query = try #require(MonsterAPIClient.leaderboardQuery(.week, weekID: "2026-10-19", limit: 500)["structuredQuery"]
                                  as? [String: Any])
-        #expect(query["limit"] as? Int == 100)
+        #expect(query["limit"] as? Int == 10)
         let filter = try #require((query["where"] as? [String: Any])?["fieldFilter"] as? [String: Any])
         #expect((filter["field"] as? [String: Any])?["fieldPath"] as? String == "weekId")
         #expect((filter["value"] as? [String: Any])?["stringValue"] as? String == "2026-10-19")

@@ -56,8 +56,6 @@ final class MonsterStore {
     private(set) var leaderboardLoadedAt: [LeaderboardScope: Date] = [:]
     private(set) var leaderboardFailed: Set<LeaderboardScope> = []
     @ObservationIgnored private var leaderboardWeekID: String?
-    /// 기기 로컬 차단 목록(리더보드에서 숨김).
-    private(set) var blockedUIDs: Set<String>
     /// 마지막 타격 시각(검 효과 표시용).
     private(set) var lastHitAt: [String: Date] = [:]
     /// 서버가 동의를 요구했다(`consent_required`).
@@ -85,7 +83,6 @@ final class MonsterStore {
 
     private static let configCacheKey = "tokenwatch.monster.config.v1"
     private static let configFetchedAtKey = "tokenwatch.monster.configFetchedAt"
-    private static let blockedKey = "tokenwatch.guild.blocked.v1"
 
     init(account: AccountStore, api: MonsterAPIClient?, environment: Environment,
          storage: MonsterLedgerStorage? = nil,
@@ -103,7 +100,6 @@ final class MonsterStore {
         ledger = loaded
         config = defaults.data(forKey: Self.configCacheKey).flatMap(MonsterConfigDecoder.decodePayload)
             ?? .bundledDefault
-        blockedUIDs = Set(defaults.stringArray(forKey: Self.blockedKey) ?? [])
     }
 
     /// 앱에서 쓰는 실제 구성.
@@ -549,28 +545,9 @@ final class MonsterStore {
         }
     }
 
-    /// 차단한 사람을 뺀 그 탭의 리더보드.
-    func visibleLeaderboard(_ scope: LeaderboardScope) -> [LeaderboardEntry] {
-        (leaderboards[scope] ?? []).filter { !blockedUIDs.contains($0.uid) }
-    }
-
-    func block(uid: String) {
-        blockedUIDs.insert(uid)
-        defaults.set(Array(blockedUIDs).sorted(), forKey: Self.blockedKey)
-    }
-
-    func unblock(uid: String) {
-        blockedUIDs.remove(uid)
-        defaults.set(Array(blockedUIDs).sorted(), forKey: Self.blockedKey)
-    }
-
-    func report(uid: String, reason: MonsterAPIClient.ReportReason) async -> Bool {
-        guard let api, activeOwner != nil || account.uid != nil else { return false }
-        if case .success = await api.report(targetUID: uid, reason: reason) {
-            AnalyticsService.shared.log(.guildReport(reason: reason))
-            return true
-        }
-        return false
+    /// 그 탭의 리더보드(받아 온 상위 10).
+    func leaderboard(_ scope: LeaderboardScope) -> [LeaderboardEntry] {
+        leaderboards[scope] ?? []
     }
 
     // MARK: 도감

@@ -2,11 +2,11 @@
 //  GuildViews.swift
 //  TokenWatch
 //
-//  모험가 순위(V2) 화면: 상단 바 간판 버튼(공지 버튼 왼쪽), 리더보드 시트(이번 주·전체 탭, 상위 100·내 순위·신고·차단),
+//  모험가 순위(V2) 화면: 상단 바 간판 버튼(공지 버튼 왼쪽), 리더보드 시트(이번 주·전체 탭, 상위 10·내 순위),
 //  몬스터 사냥 동의 시트. 사용자에게 보이는 이름은 "모험가 순위"다(코드 이름 `Guild…`는 그대로).
 //  - 간판: 누르면 순위, 동의 전이면 동의 화면(청록 점 표시).
 //  - 리더보드: 공개 목록(로그인 전에도 볼 수 있음). 이번 주 탭은 한국 시간 월요일 0시에 새로 시작한다.
-//    신고는 로그인한 계정만, 차단은 기기 로컬 숨김.
+//    10위 밖이면 내 순위는 ME 칸에만 나온다.
 //  - 동의: 무엇을 서버로 보내는지(사용률·계정 정보는 안 보냄)와 공개 범위를 보여 주고 약관 v2 동의를 받는다.
 //
 
@@ -91,9 +91,6 @@ struct LeaderboardSheet: View {
 
     @State private var scope: LeaderboardScope = .week
     @State private var showingConsent = false
-    @State private var menuTarget: LeaderboardEntry?
-    @State private var reportTarget: LeaderboardEntry?
-    @State private var notice: (text: String, ok: Bool)?
 
     var body: some View {
         NavigationStack {
@@ -106,13 +103,7 @@ struct LeaderboardSheet: View {
                             .font(.term(11)).foregroundStyle(Term.dim)
                             .fixedSize(horizontal: false, vertical: true)
                         mine
-                        if let notice {
-                            AccountNoticeLine(text: notice.text, color: notice.ok ? Term.green : Term.red)
-                        }
                         ranks
-                        if !monsters.blockedUIDs.isEmpty {
-                            Text(loc.leaderboardBlockedNote).font(.term(10)).foregroundStyle(Term.dim)
-                        }
                     }
                     .padding(16)
                     .containerRelativeFrame(.horizontal)
@@ -131,7 +122,6 @@ struct LeaderboardSheet: View {
                     .buttonStyle(.plain)
                 }
             }
-            .overlay { menuOverlay }
             .sheet(isPresented: $showingConsent) { MonsterConsentSheet().environment(monsters) }
         }
         .tint(Term.green)
@@ -223,8 +213,8 @@ struct LeaderboardSheet: View {
 
     // 순위 목록
     @ViewBuilder private var ranks: some View {
-        TerminalBox(title: "TOP 100") {
-            let list = monsters.visibleLeaderboard(scope)
+        TerminalBox(title: "TOP \(MonsterAPIClient.leaderboardSize)") {
+            let list = monsters.leaderboard(scope)
             if list.isEmpty {
                 Text(monsters.leaderboardFailed.contains(scope) ? loc.leaderboardFailed
                      : (monsters.leaderboardLoadedAt[scope] == nil ? loc.leaderboardLoading : loc.leaderboardEmpty))
@@ -242,7 +232,7 @@ struct LeaderboardSheet: View {
     private func row(_ entry: LeaderboardEntry, rank: Int) -> some View {
         let isMe = entry.uid == account.uid
         return HStack(spacing: 10) {
-            Text(String(format: "%3d", rank))
+            Text(String(format: "%2d", rank))
                 .font(.term(12, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(rank <= 3 ? Term.yellow : Term.dim)
             AvatarView(avatarID: entry.avatarID, cell: 2)
@@ -251,61 +241,8 @@ struct LeaderboardSheet: View {
                 .font(.term(12, weight: .semibold)).lineLimit(1)
             Spacer(minLength: 6)
             Text("\(entry.score)").font(.term(12)).monospacedDigit().foregroundStyle(Term.green)
-            if !isMe {
-                Button { menuTarget = entry } label: {
-                    Text("[⋯]").font(.term(12)).foregroundStyle(Term.dim)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(loc.reportTitle("\(entry.nickname) #\(entry.tag)"))
-            }
         }
         .frame(minHeight: 36)
-    }
-
-    // 신고·차단 선택(터미널 다이얼로그)
-    @ViewBuilder private var menuOverlay: some View {
-        if let entry = menuTarget {
-            ZStack {
-                dialogScrim { menuTarget = nil }
-                TerminalBox(title: "\(entry.nickname) #\(entry.tag)", borderColor: Term.cyan) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if reportTarget == nil {
-                            TerminalButton(title: "[ report ]", color: Term.yellow) { reportTarget = entry }
-                            TerminalButton(title: "[ block ]", color: Term.red) {
-                                monsters.block(uid: entry.uid)
-                                menuTarget = nil
-                            }
-                            Text(loc.blockMessage).font(.term(10)).foregroundStyle(Term.dim)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text(loc.reportIntro).font(.term(11)).foregroundStyle(Term.dim)
-                                .fixedSize(horizontal: false, vertical: true)
-                            ForEach(MonsterAPIClient.ReportReason.allCases, id: \.self) { reason in
-                                TerminalButton(title: loc.reportReason(reason), color: Term.yellow) {
-                                    Task { await send(reason, about: entry) }
-                                }
-                            }
-                        }
-                        TerminalButton(title: "[ cancel ]", color: Term.dim) {
-                            reportTarget = nil
-                            menuTarget = nil
-                        }
-                    }
-                }
-                .padding(24)
-            }
-        }
-    }
-
-    private func send(_ reason: MonsterAPIClient.ReportReason, about entry: LeaderboardEntry) async {
-        reportTarget = nil
-        menuTarget = nil
-        guard account.uid != nil else {
-            notice = (loc.reportNeedsAccount, false)
-            return
-        }
-        let ok = await monsters.report(uid: entry.uid, reason: reason)
-        notice = ok ? (loc.reportSent, true) : (loc.reportFailed, false)
     }
 }
 

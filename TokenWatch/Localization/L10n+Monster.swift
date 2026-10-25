@@ -83,30 +83,6 @@ extension L10n {
         lang == .ko ? "슬라임 \(common) · 특수 \(special)" : "slimes \(common) · special \(special)"
     }
     var leaderboardNotListed: String { lang == .ko ? "아직 순위에 없어요" : "not ranked yet" }
-    var leaderboardBlockedNote: String { lang == .ko ? "차단한 모험가는 이 기기에서 보이지 않아요." : "Blocked adventurers are hidden on this device." }
-
-    // MARK: 신고·차단
-    func reportTitle(_ nametag: String) -> String { lang == .ko ? "\(nametag) 신고" : "Report \(nametag)" }
-    var reportIntro: String {
-        lang == .ko ? "신고 사유를 고르세요. 여러 사람이 신고하면 순위에서 숨겨지고 운영자가 검토해요."
-                    : "Pick a reason. When several people report someone, they're hidden from the ranks until an operator reviews it."
-    }
-    func reportReason(_ reason: MonsterAPIClient.ReportReason) -> String {
-        switch reason {
-        case .nickname: return lang == .ko ? "부적절한 닉네임" : "Inappropriate nickname"
-        case .avatar: return lang == .ko ? "부적절한 아바타" : "Inappropriate avatar"
-        case .cheating: return lang == .ko ? "부정행위 의심" : "Suspected cheating"
-        case .other: return lang == .ko ? "기타" : "Other"
-        }
-    }
-    var reportSent: String { lang == .ko ? "신고했어요. 검토할게요." : "Report sent. We'll take a look." }
-    var reportFailed: String { lang == .ko ? "신고를 보내지 못했어요. 다시 시도해 주세요." : "Couldn't send the report. Try again." }
-    var reportNeedsAccount: String { lang == .ko ? "신고는 로그인한 계정만 할 수 있어요." : "Sign in to report." }
-    func blockTitle(_ nametag: String) -> String { lang == .ko ? "\(nametag) 차단" : "Block \(nametag)" }
-    var blockMessage: String {
-        lang == .ko ? "이 기기의 순위 목록에서 이 모험가를 숨겨요. 언제든 다시 보이게 할 수 있어요."
-                    : "Hide this adventurer from the ranks on this device. You can undo it anytime."
-    }
 
     // MARK: 동의(약관 v2)
     var consentTitle: String { lang == .ko ? "몬스터 사냥 시작하기" : "Start the monster hunt" }

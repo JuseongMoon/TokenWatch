@@ -64,7 +64,7 @@ final class MonsterStore {
     private(set) var consentRequested = false
     /// 프로필 도감: 지금 계정의 종별 처치 수(서버 기록 + 합친 게스트 이력). nil이면 아직 못 읽었다.
     private(set) var bestiaryKills: [String: Int]?
-    private(set) var bestiaryFailed = false
+    private var bestiaryLoadFailed = false
     @ObservationIgnored private var bestiaryOwner: String?
 
     @ObservationIgnored private let account: AccountStore
@@ -582,16 +582,21 @@ final class MonsterStore {
             bestiaryOwner = uid
             bestiaryKills = nil
         }
-        bestiaryFailed = false
+        bestiaryLoadFailed = false
         let kills = await api.myKills(uid: uid)
         guard account.uid == uid else { return }
-        if let kills { bestiaryKills = kills } else if bestiaryKills == nil { bestiaryFailed = true }
+        if let kills { bestiaryKills = kills } else if bestiaryKills == nil { bestiaryLoadFailed = true }
     }
 
-    /// 도감 줄(지금 설정 기준). 처치 수를 아직 못 읽었으면 nil.
+    /// 도감 줄(지금 설정 기준). 처치 수를 아직 못 읽었거나 지난 값이 다른 계정 것이면 nil
+    /// (계정을 바꾼 직후 다시 읽기 전 첫 프레임에도 다른 계정 기록을 보이지 않게).
     var bestiaryRows: [BestiaryRow]? {
-        bestiaryKills.map { MonsterBestiary.rows(config: config, kills: $0, appVersion: env.appVersion) }
+        guard bestiaryOwner == account.uid else { return nil }
+        return bestiaryKills.map { MonsterBestiary.rows(config: config, kills: $0, appVersion: env.appVersion) }
     }
+
+    /// 지금 계정의 처치 수를 처음 읽다가 실패했다.
+    var bestiaryFailed: Bool { bestiaryOwner == account.uid && bestiaryLoadFailed }
 
     // MARK: 계정 삭제·설정·저장
 

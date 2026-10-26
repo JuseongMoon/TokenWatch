@@ -2,8 +2,9 @@
 //  BestiaryBox.swift
 //  TokenWatch
 //
-//  계정 화면의 몬스터 도감. 종마다 지금까지 잡은 수를 보여 주고, 한 번도 잡지 않은 종은
-//  실루엣 안에 물음표만 둔다(이름도 감춘다). 처치 수는 열 때마다 서버 기록을 다시 읽는다.
+//  계정 화면의 몬스터 도감(4열, 아바타 격자와 같은 폭). 종마다 지금까지 잡은 수를 보여 주고, 한 번도 잡지 않은 종은
+//  실루엣 안에 물음표만 둔다(이름도 감춘다). 아직 없는 몬스터 자리는 회색 네모 + 물음표로 채워 최소 8칸(4×2)을 맞춘다.
+//  처치 수는 열 때마다 서버 기록을 다시 읽는다.
 //
 
 import SwiftUI
@@ -12,7 +13,9 @@ struct BestiaryBox: View {
     @Environment(MonsterStore.self) private var monsters
     let loc: L10n
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    /// 도감 최소 칸 수. 새 몬스터가 나오면 빈 자리를 차례로 채운다.
+    static let minimumSlots = 8
 
     var body: some View {
         TerminalBox(title: "BESTIARY") {
@@ -23,6 +26,7 @@ struct BestiaryBox: View {
                         .font(.term(11, weight: .semibold)).foregroundStyle(Term.fg)
                     LazyVGrid(columns: columns, spacing: 8) {
                         ForEach(rows) { cell($0) }
+                        ForEach(0..<max(0, Self.minimumSlots - rows.count), id: \.self) { _ in comingSoonCell }
                     }
                     Text(loc.bestiaryHint).font(.term(10)).foregroundStyle(Term.dim)
                         .fixedSize(horizontal: false, vertical: true)
@@ -68,5 +72,22 @@ struct BestiaryBox: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.discovered ? loc.bestiaryA11y(name: loc.monsterName(row.entry.id), kills: row.kills)
                                            : loc.bestiaryUnknown)
+    }
+
+    /// 아직 없는 몬스터 자리 — 몬스터 실루엣과 같은 크기의 회색 네모 + 물음표.
+    private var comingSoonCell: some View {
+        VStack(spacing: 6) {
+            Rectangle().fill(Term.dim.opacity(0.45))
+                .frame(width: 32, height: 32)
+                .overlay { Text("?").font(.term(15, weight: .bold)).foregroundStyle(Term.fg) }
+                .frame(height: 40, alignment: .bottom)
+            Text("???").font(.term(11, weight: .semibold)).foregroundStyle(Term.dim).lineLimit(1)
+            Text("—").font(.term(11)).foregroundStyle(Term.dim)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .overlay(Rectangle().stroke(Term.dim.opacity(0.3), lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(loc.bestiaryComingSoon)
     }
 }

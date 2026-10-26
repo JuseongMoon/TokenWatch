@@ -32,6 +32,7 @@ extension L10n {
     var bestiaryLoading: String { lang == .ko ? "처치 기록을 불러오는 중…" : "Loading your defeats…" }
     var bestiaryFailed: String { lang == .ko ? "처치 기록을 불러오지 못했어요." : "Couldn't load your defeats." }
     var bestiaryUnknown: String { lang == .ko ? "아직 잡지 않은 몬스터" : "Not defeated yet" }
+    var bestiaryComingSoon: String { lang == .ko ? "준비 중인 몬스터" : "Monster coming soon" }
     func bestiaryA11y(name: String, kills: Int) -> String {
         lang == .ko ? "\(name), \(kills)마리 처치" : "\(name), \(kills) defeated"
     }

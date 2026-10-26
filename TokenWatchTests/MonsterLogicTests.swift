@@ -417,12 +417,12 @@ struct MonsterLogicTests {
                 }
             }
         }
-        // 도감 처치 수의 점수 합 = 전체 탭 내 점수, 미믹은 아직 못 잡은 실루엣.
+        // 도감 처치 수의 점수 합 = 전체 탭 내 점수, 고블린 다음 종부터는 아직 못 잡은 실루엣.
         let config = MonsterConfig.bundledDefault
         let points = DemoAdventure.kills.reduce(0) { $0 + (config.entry($1.key)?.score ?? 0) * $1.value }
         #expect(points == DemoAdventure.mine(.allTime).score)
         let rows = MonsterBestiary.rows(config: config, kills: DemoAdventure.kills, appVersion: "2.0.0")
-        #expect(rows.filter { !$0.discovered }.map(\.id) == ["mimic"])
+        #expect(rows.filter { !$0.discovered }.map(\.id) == ["skeleton", "orc", "mimic"])
     }
 }
 

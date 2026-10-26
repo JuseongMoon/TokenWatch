@@ -19,7 +19,8 @@ struct PlayerSection: View {
         TerminalBox(title: "PLAYER") {
             VStack(alignment: .leading, spacing: 10) {
                 if store.isDemo {
-                    help(loc.playerDemoDisabled)
+                    signedInRow(DemoAdventure.profile(loc.lang), avatarID: DemoAdventure.profile(loc.lang).avatarID,
+                                methods: DemoAdventure.methods)
                 } else {
                     content
                 }
@@ -49,24 +50,27 @@ struct PlayerSection: View {
         case .deleting:
             help(loc.playerDeleting)
         case .signedIn(let profile):
-            HStack(spacing: 12) {
-                let avatarID = account.displayAvatarID(for: profile)
-                AvatarView(avatarID: avatarID, cell: 3)
-                    .accessibilityLabel(AvatarCatalog.resolve(avatarID).name(loc.lang))
-                VStack(alignment: .leading, spacing: 3) {
-                    NametagText(profile: profile)
-                    Text(account.methods.map(loc.accountMethodName).joined(separator: " · "))
-                        .font(.term(10)).foregroundStyle(Term.dim)
-                }
-                Spacer(minLength: 8)
-                Button { open(.manage) } label: {
-                    Text("[ manage ]").font(.term(12, weight: .semibold)).foregroundStyle(Term.green)
-                }
-                .buttonStyle(.plain)
-            }
+            signedInRow(profile, avatarID: account.displayAvatarID(for: profile), methods: account.methods)
         }
         if let notice = account.notice {
             AccountNoticeLine(text: loc.accountNotice(notice), color: notice.isPositive ? Term.green : Term.red)
+        }
+    }
+
+    private func signedInRow(_ profile: PlayerProfile, avatarID: String, methods: [AccountMethod]) -> some View {
+        HStack(spacing: 12) {
+            AvatarView(avatarID: avatarID, cell: 3)
+                .accessibilityLabel(AvatarCatalog.resolve(avatarID).name(loc.lang))
+            VStack(alignment: .leading, spacing: 3) {
+                NametagText(profile: profile)
+                Text(methods.map(loc.accountMethodName).joined(separator: " · "))
+                    .font(.term(10)).foregroundStyle(Term.dim)
+            }
+            Spacer(minLength: 8)
+            Button { open(.manage) } label: {
+                Text("[ manage ]").font(.term(12, weight: .semibold)).foregroundStyle(Term.green)
+            }
+            .buttonStyle(.plain)
         }
     }
 

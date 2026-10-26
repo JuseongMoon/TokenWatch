@@ -5,6 +5,7 @@
 //  앱 계정 시트. 상태에 따라 세 화면 중 하나를 보여준다 — 로그인(account_login) · 프로필 설정(profile_setup) ·
 //  계정(account). 화면 이벤트는 각 화면이 나타날 때 1회씩 기록한다(Android와 같은 단위).
 //  로그인·가입으로 들어왔으면 프로필이 생기는 순간 닫고, 계정 화면에서 로그아웃·삭제하면 닫는다.
+//  데모 중에는 실제 계정 상태와 상관없이 표본 모험가(`DemoAdventure`)의 계정 화면을 보여 주고 편집은 막는다.
 //
 
 import AuthenticationServices
@@ -18,6 +19,7 @@ struct PlayerSheet: View {
 
     let entry: Entry
     @Environment(AccountStore.self) private var account
+    @Environment(MonsterStore.self) private var monsters
     @Environment(\.dismiss) private var dismiss
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
 
@@ -64,6 +66,14 @@ struct PlayerSheet: View {
     }
 
     @ViewBuilder private var screen: some View {
+        if monsters.isDemo {
+            AccountView(profile: DemoAdventure.profile(loc.lang), loc: loc, demo: true)
+        } else {
+            accountScreen
+        }
+    }
+
+    @ViewBuilder private var accountScreen: some View {
         switch account.state {
         case .unavailable:
             EmptyView()
@@ -253,6 +263,8 @@ private struct AccountView: View {
     @Environment(AccountStore.self) private var account
     let profile: PlayerProfile
     let loc: L10n
+    /// 데모 표본 — 실제 계정 값(로그인 방법·운영자·안내·쿨다운)을 보이지 않고 편집을 막는다.
+    var demo = false
 
     @State private var nickname = ""
     @State private var nicknameError: NicknameError?
@@ -265,17 +277,17 @@ private struct AccountView: View {
             TerminalBox(title: "PROFILE") {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 14) {
-                        let shownAvatar = account.displayAvatarID(for: profile)
+                        let shownAvatar = demo ? profile.avatarID : account.displayAvatarID(for: profile)
                         AvatarView(avatarID: shownAvatar, cell: 4)
                             .accessibilityLabel(AvatarCatalog.resolve(shownAvatar).name(loc.lang))
                         VStack(alignment: .leading, spacing: 4) {
                             NametagText(profile: profile, size: 16)
-                            Text(account.methods.map(loc.accountMethodName).joined(separator: " · "))
+                            Text(methods.map(loc.accountMethodName).joined(separator: " · "))
                                 .font(.term(10)).foregroundStyle(Term.dim)
                         }
                         Spacer(minLength: 0)
                     }
-                    if let notice = account.notice {
+                    if !demo, let notice = account.notice {
                         AccountNoticeLine(text: loc.accountNotice(notice),
                                           color: notice.isPositive ? Term.green : Term.red)
                     }
@@ -283,9 +295,12 @@ private struct AccountView: View {
             }
 
             BestiaryBox(loc: loc)
-            nicknameBox
-            avatarBox
-            linkBox
+            Group {
+                nicknameBox
+                avatarBox
+                linkBox
+            }
+            .disabled(demo)
 
             TerminalBox(title: "SESSION") {
                 HStack(spacing: 16) {
@@ -299,7 +314,7 @@ private struct AccountView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .disabled(account.isWorking)
+                .disabled(account.isWorking || demo)
             }
         }
         .onAppear {
@@ -325,7 +340,10 @@ private struct AccountView: View {
             onConfirm: { Task { await account.deleteAccount() } })
     }
 
+    private var methods: [AccountMethod] { demo ? DemoAdventure.methods : account.methods }
+
     private var cooldown: (days: Int, hours: Int)? {
+        guard !demo else { return nil }
         let ms = account.nicknameCooldownRemainingMs
         guard ms > 0 else { return nil }
         let hours = Int((ms + 3_599_999) / 3_600_000)   // 올림 — "0시간 남음"을 보이지 않게
@@ -366,7 +384,7 @@ private struct AccountView: View {
     private var avatarBox: some View {
         TerminalBox(title: "AVATAR") {
             VStack(alignment: .leading, spacing: 10) {
-                if account.isOperator, AvatarCatalog.operatorAvatar != nil {
+                if !demo, account.isOperator, AvatarCatalog.operatorAvatar != nil {
                     Text(loc.operatorAvatarNote).font(.term(10)).foregroundStyle(Term.yellow)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -388,7 +406,7 @@ private struct AccountView: View {
 
     @ViewBuilder private var linkBox: some View {
         let missing = AccountMethod.allCases.filter {
-            !account.methods.contains($0) && ($0 != .google || account.isGoogleAvailable)
+            !methods.contains($0) && ($0 != .google || account.isGoogleAvailable)
         }
         if !missing.isEmpty {
             TerminalBox(title: "LINK") {

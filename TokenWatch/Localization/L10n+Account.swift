@@ -14,10 +14,6 @@ extension L10n {
         lang == .ko ? "TokenWatch 계정으로 로그인하면 닉네임과 아바타를 기기·플랫폼과 상관없이 이어서 써요. 사용량 기능은 로그인 없이도 그대로 쓸 수 있어요."
                     : "Sign in to a TokenWatch account to keep your nickname and avatar across devices and platforms. Usage tracking works without signing in."
     }
-    var playerDemoDisabled: String {
-        lang == .ko ? "데모 중에는 TokenWatch 계정을 쓸 수 없어요."
-                    : "TokenWatch accounts aren't available in demo mode."
-    }
     var playerSigningIn: String { lang == .ko ? "로그인 중…" : "signing in…" }
     var playerLoading: String { lang == .ko ? "프로필을 불러오는 중…" : "loading profile…" }
     var playerNeedsProfile: String {

@@ -45,7 +45,7 @@ extension PixelSprite {
 // MARK: - 상단 바 간판 버튼
 
 /// 상단 바(공지 버튼 왼쪽)의 길드 간판. 누르면 순위, 몬스터 동의 전이면 동의 화면을 연다.
-/// 동의가 필요하면 우상단에 청록 점을 얹는다. 데모 중에는 흐리게 막는다.
+/// 동의가 필요하면 우상단에 청록 점을 얹는다. 데모 중에는 표본 순위를 연다.
 struct GuildSignButton: View {
     @Environment(MonsterStore.self) private var monsters
     @Environment(AgentStore.self) private var store
@@ -60,8 +60,7 @@ struct GuildSignButton: View {
         Button {
             if monsters.needsConsent { onOpenConsent() } else { onOpenRanks() }
         } label: {
-            PixelSpriteView(sprite: .guildSign, frameIndex: 0, cell: Self.cell,
-                            flatColor: store.isDemo ? Term.dim : nil)
+            PixelSpriteView(sprite: .guildSign, frameIndex: 0, cell: Self.cell)
                 .overlay(alignment: .topTrailing) {
                     if monsters.needsConsent, !store.isDemo {
                         Circle().fill(Term.cyan).frame(width: 6, height: 6).offset(x: 3, y: -3)
@@ -71,7 +70,6 @@ struct GuildSignButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(store.isDemo)
         .accessibilityLabel(loc.guildBoardTitle)
         .accessibilityHint(monsters.needsConsent ? loc.guildBoardConsent : "")
     }
@@ -149,8 +147,22 @@ struct LeaderboardSheet: View {
         .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
     }
 
+    /// ME 칸의 내 프로필 — 동의한 로그인 계정, 데모면 표본 모험가. 없으면 nil.
+    private var me: (owner: String, profile: PlayerProfile, avatarID: String)? {
+        if monsters.isDemo {
+            let profile = DemoAdventure.profile(loc.lang)
+            return (DemoAdventure.uid, profile, profile.avatarID)
+        }
+        guard let owner = monsters.activeOwner, let profile = account.profile else { return nil }
+        return (owner, profile, account.displayAvatarID(for: profile))
+    }
+
     /// 지금 탭의 내 순위·점수·처치 수. 순위에 없으면 nil.
     private var myLine: (rank: Int?, score: Int, common: Int, special: Int)? {
+        if monsters.isDemo {
+            let line = DemoAdventure.mine(scope)
+            return (line.rank, line.score, line.common, line.special)
+        }
         switch scope {
         case .week:
             guard let week = monsters.rank?.week, week.listed else { return nil }
@@ -172,11 +184,11 @@ struct LeaderboardSheet: View {
     // 내 영역
     @ViewBuilder private var mine: some View {
         TerminalBox(title: "ME") {
-            if let owner = monsters.activeOwner, let profile = account.profile {
+            if let me {
                 HStack(spacing: 10) {
-                    AvatarView(avatarID: account.displayAvatarID(for: profile), cell: 2)
+                    AvatarView(avatarID: me.avatarID, cell: 2)
                     VStack(alignment: .leading, spacing: 3) {
-                        NametagText(profile: profile, size: 13)
+                        NametagText(profile: me.profile, size: 13)
                         Text(loc.leaderboardMine(common: myKills.common, special: myKills.special))
                             .font(.term(10)).foregroundStyle(Term.dim)
                     }
@@ -192,7 +204,7 @@ struct LeaderboardSheet: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .id(owner)
+                .id(me.owner)
             } else if monsters.needsConsent {
                 Text(loc.guildBoardConsent).font(.term(11)).foregroundStyle(Term.cyan)
                 TerminalButton(title: "[ start ]") { showingConsent = true }
@@ -214,7 +226,7 @@ struct LeaderboardSheet: View {
     // 순위 목록
     @ViewBuilder private var ranks: some View {
         TerminalBox(title: "TOP \(MonsterAPIClient.leaderboardSize)") {
-            let list = monsters.leaderboard(scope)
+            let list = monsters.isDemo ? DemoAdventure.leaderboard(scope, lang: loc.lang) : monsters.leaderboard(scope)
             if list.isEmpty {
                 Text(monsters.leaderboardFailed.contains(scope) ? loc.leaderboardFailed
                      : (monsters.leaderboardLoadedAt[scope] == nil ? loc.leaderboardLoading : loc.leaderboardEmpty))
@@ -230,7 +242,7 @@ struct LeaderboardSheet: View {
     }
 
     private func row(_ entry: LeaderboardEntry, rank: Int) -> some View {
-        let isMe = entry.uid == account.uid
+        let isMe = entry.uid == (monsters.isDemo ? DemoAdventure.uid : account.uid)
         return HStack(spacing: 10) {
             Text(String(format: "%2d", rank))
                 .font(.term(12, weight: .semibold)).monospacedDigit()

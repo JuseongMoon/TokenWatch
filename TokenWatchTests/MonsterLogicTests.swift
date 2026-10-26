@@ -11,6 +11,7 @@
 //  - 서버 응답: result/error.details.code, 리더보드 runQuery 디코딩(이번 주·전체), 내 순위(주간 포함), setProfile 공개 프로필 디코딩
 //  - 주간 순위의 주 경계(한국 시간 월요일 0시)
 //  - 도감: 계정 처치 수 + 합친 게스트 이력 합산, 줄 세우기(공개된 종·이미 잡은 종)
+//  - 데모 표본 모험가: 닉네임 규칙·순위 정렬·탭별 내 순위·도감 점수 합
 //
 
 import CryptoKit
@@ -392,6 +393,36 @@ struct MonsterLogicTests {
         // 공개 전 종·이 앱이 못 그리는 종도 이미 잡았으면 보인다.
         let caught = MonsterBestiary.rows(config: config, kills: ["dragon": 1, "wyvern": 2], appVersion: "1.4.0")
         #expect(caught.suffix(2).map(\.id) == ["dragon", "wyvern"])
+    }
+
+    // MARK: 데모 표본 모험가
+
+    @Test func demoAdventureIsSelfConsistent() throws {
+        for lang in [Lang.ko, .en] {
+            let me = DemoAdventure.profile(lang)
+            #expect(NicknamePolicy.validate(me.nickname) == nil && NicknamePolicy.isValidTag(me.tag))
+            #expect(AvatarCatalog.ids.contains(me.avatarID))
+            for scope in LeaderboardScope.allCases {
+                let rows = DemoAdventure.leaderboard(scope, lang: lang)
+                #expect(rows.count == MonsterAPIClient.leaderboardSize)
+                #expect(rows.map(\.score) == rows.map(\.score).sorted(by: >))
+                #expect(Set(rows.map(\.uid)).count == rows.count)
+                let line = DemoAdventure.mine(scope)
+                let mine = try #require(rows.firstIndex { $0.uid == DemoAdventure.uid })
+                #expect(mine + 1 == line.rank && rows[mine].score == line.score)
+                #expect(rows[mine].nickname == me.nickname && rows[mine].avatarID == me.avatarID)
+                for row in rows {   // 표본 이름도 닉네임 규칙·프리셋 아바타를 지킨다
+                    #expect(NicknamePolicy.validate(row.nickname) == nil, "\(row.nickname)")
+                    #expect(AvatarCatalog.ids.contains(row.avatarID), "\(row.avatarID)")
+                }
+            }
+        }
+        // 도감 처치 수의 점수 합 = 전체 탭 내 점수, 미믹은 아직 못 잡은 실루엣.
+        let config = MonsterConfig.bundledDefault
+        let points = DemoAdventure.kills.reduce(0) { $0 + (config.entry($1.key)?.score ?? 0) * $1.value }
+        #expect(points == DemoAdventure.mine(.allTime).score)
+        let rows = MonsterBestiary.rows(config: config, kills: DemoAdventure.kills, appVersion: "2.0.0")
+        #expect(rows.filter { !$0.discovered }.map(\.id) == ["mimic"])
     }
 }
 

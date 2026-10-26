@@ -141,6 +141,9 @@ final class MonsterStore {
         return uid
     }
 
+    /// 데모 중이면 순위·도감·PLAYER 화면이 표본 모험가(`DemoAdventure`)를 보여 준다.
+    var isDemo: Bool { env.isDemo() }
+
     /// 로그인했고 프로필도 있지만 몬스터 동의 전이다(동의 화면을 띄울 대상).
     var needsConsent: Bool {
         guard api != nil, !env.isDemo(), let p = account.profile else { return false }
@@ -571,12 +574,13 @@ final class MonsterStore {
     /// 도감 줄(지금 설정 기준). 처치 수를 아직 못 읽었거나 지난 값이 다른 계정 것이면 nil
     /// (계정을 바꾼 직후 다시 읽기 전 첫 프레임에도 다른 계정 기록을 보이지 않게).
     var bestiaryRows: [BestiaryRow]? {
+        if env.isDemo() { return MonsterBestiary.rows(config: config, kills: DemoAdventure.kills, appVersion: env.appVersion) }
         guard bestiaryOwner == account.uid else { return nil }
         return bestiaryKills.map { MonsterBestiary.rows(config: config, kills: $0, appVersion: env.appVersion) }
     }
 
     /// 지금 계정의 처치 수를 처음 읽다가 실패했다.
-    var bestiaryFailed: Bool { bestiaryOwner == account.uid && bestiaryLoadFailed }
+    var bestiaryFailed: Bool { !env.isDemo() && bestiaryOwner == account.uid && bestiaryLoadFailed }
 
     // MARK: 계정 삭제·설정·저장
 

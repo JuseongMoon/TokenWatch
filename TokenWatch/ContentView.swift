@@ -34,6 +34,10 @@ struct ContentView: View {
     /// 리더보드에서 로그인을 고르면 리더보드를 닫은 뒤 PLAYER 로그인 시트를 연다.
     @State private var signInAfterGuild = false
     @State private var playerEntry: PlayerSheet.Entry?
+    #if DEBUG
+    /// 스토어 스크린샷 촬영용 — 상세 화면을 코드로 연다(`openShotScene`).
+    @State private var shotDetailIndex: Int?
+    #endif
 
     /// 시트가 하나라도 떠 있는지 — 공지 팝업 보류 판단에 쓴다(아래 overlay 주석 참고).
     private var sheetShowing: Bool {
@@ -51,6 +55,11 @@ struct ContentView: View {
             }
             // 시스템 네비바를 숨기고 상단 배너를 직접 고정한다(두 줄 배너를 위해 커스텀 바 사용).
             .toolbar(.hidden, for: .navigationBar)
+            #if DEBUG
+            .navigationDestination(item: $shotDetailIndex) { index in
+                AgentDetailView(agent: store.agents[index]).environment(store)
+            }
+            #endif
             .sheet(isPresented: $showingAdd) {
                 AddAgentSheet().environment(store)
             }
@@ -84,7 +93,7 @@ struct ContentView: View {
         // 시트(추가/설정/공지함)는 UIKit 프레젠테이션이라 이 오버레이를 덮으므로, 시트가 열려 있으면
         // 보류하고 닫힌 뒤에 뜬다(로그인 퍼널을 가로막지 않기 위해서도).
         .overlay {
-            if let announcement = announcements.presented, !sheetShowing {
+            if let announcement = announcements.presented, !sheetShowing, !shotMode {
                 AnnouncementOverlay(announcement: announcement)
             }
         }
@@ -101,11 +110,39 @@ struct ContentView: View {
             applyIdleTimer(phase: scenePhase)
         }
         .onAppear { AnalyticsService.shared.log(.screenView(.main)) }
+        #if DEBUG
+        .task { openShotScene() }
+        #endif
         // 리뷰 프롬프트: 조건 충족(스토어 판정) 후 시트·공지 팝업이 모두 걷힌 메인 화면에서만.
         .onChange(of: store.reviewPromptPending) { _, _ in tryPresentReviewPrompt() }
         .onChange(of: sheetShowing) { _, _ in tryPresentReviewPrompt() }
         .onChange(of: announcements.presented?.id) { _, _ in tryPresentReviewPrompt() }
     }
+
+    #if DEBUG
+    /// 촬영 중에는 서버 공지 팝업을 띄우지 않는다.
+    private var shotMode: Bool { ProcessInfo.processInfo.arguments.contains("-TWShotScene") }
+    #else
+    private var shotMode: Bool { false }
+    #endif
+
+    #if DEBUG
+    /// 스토어 스크린샷 촬영용 실행 인자(디버그 빌드 전용): `-TWShotScene main|detail:N|ranks|player`.
+    /// 데모로 들어가 그 화면을 연다 — 시뮬레이터에서 탭 없이 같은 화면을 다시 찍기 위해서다.
+    private func openShotScene() {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-TWShotScene"), i + 1 < args.count else { return }
+        store.enterDemo()
+        let scene = args[i + 1]
+        if scene == "ranks" {
+            showingGuild = true
+        } else if scene == "player" {
+            playerEntry = .manage
+        } else if scene.hasPrefix("detail:"), let n = Int(scene.dropFirst(7)), store.agents.indices.contains(n) {
+            shotDetailIndex = n
+        }
+    }
+    #endif
 
     /// 리뷰 프롬프트를 띄울 수 있는 화면 상태인지 — 공지 오버레이와 같은 이유로 시트를 피한다.
     private var canPresentReviewPrompt: Bool {

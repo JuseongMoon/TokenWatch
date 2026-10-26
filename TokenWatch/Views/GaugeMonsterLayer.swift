@@ -76,8 +76,9 @@ struct GaugeMonsterLayer: View {
 
     /// 살아 있음 → 행진(완료는 바 왼쪽 밖에서, 확률은 나타난 자리에서 출발 — 사용자 확정 2026-10-24).
     /// 처치 → 멈춘 채 검 → 몬스터별 사망 애니메이션 → 엔젤링 몬스터:
-    /// 완료 출현은 바 왼쪽 끝에서 나와 절반 속도로 계속 행진하고, 확률 출현은 사망 자리에서 오른쪽으로 걸어가
-    /// 끝을 지나면 다시 나오지 않는다(사용자 확정 2026-10-20). 모션 줄이기면 `restX`에 멈춰 있다.
+    /// 완료 출현은 바 왼쪽 끝에서 나와 절반 속도로 계속 행진하고, 확률 출현은 사망 자리에서 절반 속도로 출발해
+    /// 오른쪽 끝을 지나면 왼쪽에서 다시 나온다 — 처치 뒤 1시간 동안(사용자 확정 2026-10-26, 목록은 MonsterStore가 거른다).
+    /// 모션 줄이기면 `restX`에 멈춰 있다.
     func pose(_ e: MonsterEncounter, now: Date) -> Pose? {
         let entry = config.entry(e.monsterID)
         let living = MonsterSprites.sprite(for: e.monsterID, entry: entry, sessionWindow: sessionWindow)
@@ -117,8 +118,8 @@ struct GaugeMonsterLayer: View {
         if e.source == .completion {
             x = GaugeCritter.offsetX(tick: tick, hop: hop, spriteWidth: width, barWidth: barSize.width)
         } else {
-            x = deathX + CGFloat((tick + 1) / 2) * hop
-            guard x < barSize.width else { return nil }   // 오른쪽 끝을 지나면 끝
+            x = GaugeCritter.offsetX(tick: tick, startTick: 0, startX: deathX, hop: hop, spriteWidth: width,
+                                     barWidth: barSize.width)
         }
         return Pose(sprite: ghost, frame: GaugeCritter.frameIndex(tick: tick), x: x, sword: false, halo: true)
     }

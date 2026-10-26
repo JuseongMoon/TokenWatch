@@ -26,8 +26,9 @@ final class MonsterStore {
     static let configRefreshInterval: TimeInterval = 3600
     /// 리더보드·내 순위 캐시.
     static let guildCacheInterval: TimeInterval = 300
-    /// 확률 출현 몬스터를 처치한 뒤 엔젤링 유령을 목록에 남겨 두는 최대 시간(바를 다 건너기에 넉넉한 3분).
-    static let randomGhostMs: Int64 = 180_000
+    /// 처치한 뒤 엔젤링 유령을 남겨 두는 시간(1시간, 사용자 확정 2026-10-26). 확률 출현 유령은 이 시간이 지나면 사라지고,
+    /// 완료 출현 유령은 리셋까지 남되 이 시간이 지나면 새 확률 몬스터에게 바를 내준다.
+    static let ghostHoldMs: Int64 = 3_600_000
 
     /// 의존성. 테스트는 시계·포그라운드·저장소를 바꿔 끼운다.
     struct Environment {
@@ -257,19 +258,24 @@ final class MonsterStore {
         var drawn = 0
         for (agent, windows) in env.snapshots() {
             guard drawn < config.random.maxAgentsPerUser else { break }
-            // 후보: 이 에이전트의 대상 창, label 단위로 하나씩(최대 20). 100% 창은 완료 몬스터를 잡은 뒤부터 들어간다.
+            // 후보: 이 에이전트의 대상 창, label 단위로 하나씩(최대 20). 몬스터가 살아 있는 바는 빼고,
+            // 처치 1시간 안의 유령이 있는 바는 빈 바가 하나도 없을 때만 쓴다(그때 새 몬스터가 유령을 치운다).
             var anchors: [String: String] = [:]
-            var candidates: [(provider: String, windowLabel: String)] = []
+            var free: [(provider: String, windowLabel: String)] = []
+            var haunted: [(provider: String, windowLabel: String)] = []
             for window in windows where MonsterEligibility.isRandomCandidate(
                 window, minUsedPercent: config.random.minUsedPercent, now: date) {
-                if MonsterEligibility.isCompleted(window, now: date),
-                   encounters(agentID: agent.id, provider: agent.provider, window: window)
-                       .contains(where: { $0.source == .completion && $0.isAlive }) { continue }
                 let keyLabel = MonsterSessionKey.keyLabel(provider: agent.provider, label: window.label)
-                guard anchors[keyLabel] == nil, candidates.count < 20 else { continue }
+                guard anchors[keyLabel] == nil, anchors.count < 20 else { continue }
+                let shown = encounters(agentID: agent.id, provider: agent.provider, window: window)
+                guard !shown.contains(where: \.isAlive) else { continue }
                 anchors[keyLabel] = window.label
-                candidates.append((agent.provider.rawValue, keyLabel))
+                let ghost = shown.contains { e in
+                    e.state == .defeated && e.defeatedAtMs.map { now - $0 < Self.ghostHoldMs } ?? false
+                }
+                if ghost { haunted.append((agent.provider.rawValue, keyLabel)) } else { free.append((agent.provider.rawValue, keyLabel)) }
             }
+            let candidates = free.isEmpty ? haunted : free
             guard !candidates.isEmpty else { continue }   // 대상 창이 없으면 일정을 그대로 둔다
             drawn += 1
             await drawRandom(agent: agent, candidates: candidates, anchors: anchors, owner: owner, now: now)
@@ -334,8 +340,20 @@ final class MonsterStore {
             state: .alive, spawnedAtMs: now, expiresAtMs: expiresAtMs, agentID: anchor?.0, displayLabel: anchor?.1,
             position: MonsterDraw.position(key: key))
         ledger.encounters.append(encounter)
+        dismissGhosts(under: encounter, now: now)
         GuestSpawnPolicy.recordSpawn(&ledger.guest, nowMs: now)
         AnalyticsService.shared.log(.monsterSpawn(monsterID: entry.id, source: source))
+    }
+
+    /// 새 몬스터가 앉은 바의 유령을 치운다 — 한 바에는 몬스터든 유령이든 하나만 보인다.
+    private func dismissGhosts(under encounter: MonsterEncounter, now: Int64) {
+        for i in ledger.encounters.indices {
+            let e = ledger.encounters[i]
+            guard e.key != encounter.key, e.ownerUID == encounter.ownerUID, e.state == .defeated, e.dismissedAtMs == nil,
+                  e.provider == encounter.provider, e.windowLabel == encounter.windowLabel else { continue }
+            if let a = e.agentID, let b = encounter.agentID, a != b { continue }
+            ledger.encounters[i].dismissedAtMs = now
+        }
     }
 
     /// 서버 출현 응답 반영.
@@ -354,6 +372,7 @@ final class MonsterStore {
                 agentID: anchor?.0, displayLabel: anchor?.1, position: MonsterDraw.position(key: dto.key))
             ledger.encounters.append(encounter)
             if state == .alive {
+                dismissGhosts(under: encounter, now: now)
                 AnalyticsService.shared.log(.monsterSpawn(monsterID: dto.monsterID, source: encounter.source))
             }
         case .success(.none):
@@ -478,10 +497,13 @@ final class MonsterStore {
         let owner = activeOwner
         let keyLabel = MonsterSessionKey.keyLabel(provider: provider, label: window.label)
         return ledger.encounters.filter { e in
-            guard e.ownerUID == owner, e.state != .expired, e.expiresAtMs > now else { return false }
-            // 확률 출현 유령은 오른쪽 끝으로 걸어 나가면 끝난다(화면이 알아서 숨기지만, 오래된 것은 목록에서도 뺀다).
-            if e.source == .random, e.state == .defeated, let at = e.defeatedAtMs,
-               now - at > Self.randomGhostMs { return false }
+            guard e.ownerUID == owner, e.state != .expired, e.dismissedAtMs == nil else { return false }
+            // 확률 출현 유령은 처치 뒤 1시간(살아 있던 시간과 무관), 나머지는 만료(완료 출현은 리셋)까지.
+            if e.source == .random, e.state == .defeated {
+                guard let at = e.defeatedAtMs, now - at < Self.ghostHoldMs else { return false }
+            } else if e.expiresAtMs <= now {
+                return false
+            }
             if let anchored = e.agentID { return anchored == agentID && e.displayLabel == window.label }
             return e.provider == provider.rawValue && e.windowLabel == keyLabel
         }

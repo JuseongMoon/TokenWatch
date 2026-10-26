@@ -42,6 +42,8 @@ nonisolated struct MonsterEncounter: Codable, Equatable, Sendable, Identifiable 
     var awardedScore: Int?
     /// 처치했지만 서버 확인 전(오프라인 등) — 다음 기회에 다시 보낸다.
     var pendingDefeat: Bool = false
+    /// 같은 바에 새 몬스터가 나와 유령을 치운 시각. 기록(완료 중복 출현 방지)은 남기고 화면에서만 뺀다.
+    var dismissedAtMs: Int64?
     /// 화면에 붙일 창(이 기기의 에이전트·표시 label). 다른 기기에서 받은 몬스터는 provider·label로 다시 찾는다.
     var agentID: UUID?
     var displayLabel: String?

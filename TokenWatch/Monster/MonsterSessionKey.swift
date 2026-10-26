@@ -111,7 +111,7 @@ enum MonsterEligibility {
     }
 
     /// 확률 출현 후보. 100%가 된 창도 후보다 — 일찍 다 써도 리셋까지 추첨이 이어진다.
-    /// 그 창의 완료 몬스터가 살아 있는 동안만 호출측(MonsterStore)이 뺀다.
+    /// 몬스터가 살아 있는 바·처치 1시간 안의 유령이 있는 바는 호출측(MonsterStore)이 거른다.
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {
         isTarget(window, now: now) && window.usedPercent >= minUsedPercent
     }

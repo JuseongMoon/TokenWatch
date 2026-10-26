@@ -9,7 +9,8 @@
 //    기기 세션 장부가 다른 uid 것이면 요청하지 않음, consent_required면 동의 요청 상태
 //  - 처치 확정: 오프라인이면 미확정으로 남고 다음에 다시 보낸다
 //  - 확률 출현(§15-11): 에이전트마다 따로, 처음 보이면 일정만, 20~40분 뒤 추첨, 서버가 정한 다음 시각을 따른다,
-//    100% 창은 완료 몬스터를 잡은 뒤부터 후보
+//    100% 창은 완료 몬스터를 잡은 뒤부터 후보, 유령은 처치 뒤 1시간, 새 몬스터는 몬스터·유령이 없는 바로
+//    (빈 바가 없으면 유령 바에 나오고 그 유령을 치운다)
 //  - 계정 삭제 뒤 그 계정 기록을 지운다
 //
 
@@ -260,6 +261,67 @@ struct MonsterStoreTests {
         await s.store.observe(agent: agent, windows: [w])
         let random = try #require(s.store.ledger.encounters.first { $0.source == .random })
         #expect(random.agentID == agent.id && random.displayLabel == w.label)
+    }
+
+    /// 첫 관찰로 일정을 정한 뒤 예정 시각에 한 번 더 관찰해 확률 몬스터를 하나 받는다.
+    private func drawOnce(_ s: Setup, windows: [UsageWindow]) async throws -> MonsterEncounter {
+        let token = MonsterSessionKey.agentToken(agent.id)
+        if s.store.ledger.nextDraw(agent: token) == nil { await s.store.observe(agent: agent, windows: windows) }
+        let before = Set(s.store.ledger.encounters.map(\.key))
+        s.clock.ms = try #require(s.store.ledger.nextDraw(agent: token))
+        await s.store.observe(agent: agent, windows: windows)
+        return try #require(s.store.ledger.encounters.first { !before.contains($0.key) && $0.source == .random })
+    }
+
+    @Test func randomGhostStaysAnHourAfterTheKill() async throws {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w])]
+        let e = try await drawOnce(s, windows: [w])
+        s.clock.ms += 30 * 60_000
+        #expect(s.store.hit(key: e.key) == .defeated)
+        let killedAt = s.clock.ms
+        s.clock.ms = killedAt + 50 * 60_000                         // 살아 있던 한도(출현 + 60분)는 지났다
+        #expect(s.store.encounters(agentID: agent.id, provider: .claude, window: w).map(\.key) == [e.key])
+        s.clock.ms = killedAt + 60 * 60_000
+        #expect(s.store.encounters(agentID: agent.id, provider: .claude, window: w).isEmpty)
+    }
+
+    @Test func nextMonsterAvoidsBarsWithAMonsterOrAGhost() async throws {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let session = partialWindow(s.clock)
+        let week = UsageWindow(label: "Current week (all models)", usedPercent: 40,
+                               resetsAt: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000 + 86_400), kind: .weekly)
+        let windows = [session, week]
+        s.snapshots.list = [(agent, windows)]
+        let first = try await drawOnce(s, windows: windows)
+        let second = try await drawOnce(s, windows: windows)       // 40분 안이라 첫 몬스터는 아직 살아 있다
+        #expect(second.displayLabel != first.displayLabel)          // 몬스터가 있는 바는 피한다
+        #expect(s.store.hit(key: first.key) == .defeated)
+        #expect(s.store.hit(key: second.key) == .defeated)
+        let third = try await drawOnce(s, windows: windows)        // 두 바 모두 1시간 안의 유령 → 그중 한 바에 나온다
+        let thirdBar = try #require(windows.first { $0.label == third.displayLabel })
+        let otherBar = try #require(windows.first { $0.label != third.displayLabel })
+        #expect(s.store.encounters(agentID: agent.id, provider: .claude, window: thirdBar).map(\.key) == [third.key])
+        #expect(s.store.encounters(agentID: agent.id, provider: .claude, window: otherBar).count == 1)   // 다른 유령은 그대로
+    }
+
+    @Test func singleBarGhostMakesWayForTheNextMonster() async throws {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w])]
+        let token = MonsterSessionKey.agentToken(agent.id)
+        let first = try await drawOnce(s, windows: [w])
+        // 살아 있는 동안 다음 예정 시각이 오면 추첨하지 않고 일정을 그대로 둔다.
+        let due = try #require(s.store.ledger.nextDraw(agent: token))
+        s.clock.ms = due
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.encounters.count == 1 && s.store.ledger.nextDraw(agent: token) == due)
+        #expect(s.store.hit(key: first.key) == .defeated)
+        let next = try await drawOnce(s, windows: [w])               // 바가 하나뿐이면 유령 바에 나온다
+        let shown = s.store.encounters(agentID: agent.id, provider: .claude, window: w)
+        #expect(shown.map(\.key) == [next.key] && shown.first?.isAlive == true)   // 유령은 비켜 준다
+        #expect(s.store.ledger.encounters.first { $0.key == first.key }?.dismissedAtMs != nil)
     }
 
     @Test func agentWithoutCandidateWindowIsSkipped() async {

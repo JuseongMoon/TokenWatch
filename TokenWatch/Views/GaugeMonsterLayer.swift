@@ -136,13 +136,23 @@ struct GaugeMonsterLayer: View {
             .clipped()
         if pose.halo, let halo = MonsterSprites.halo {
             let bob: CGFloat = reduceMotion ? 0 : CGFloat(Int(now.timeIntervalSinceReferenceDate / 0.5) % 2) * c
-            PixelSpriteView(sprite: halo, frameIndex: 0, cell: c)
-                .offset(x: pose.x + (width - c * CGFloat(halo.cols)) / 2, y: top - c * CGFloat(halo.rows) + c - bob)
+            overBar(halo, cell: c, x: pose.x + (width - c * CGFloat(halo.cols)) / 2,
+                    y: top - c * CGFloat(halo.rows) + c - bob)
         }
         if pose.sword, let sword = MonsterSprites.sword {
-            PixelSpriteView(sprite: sword, frameIndex: 0, cell: c)
-                .offset(x: pose.x + (width - c * CGFloat(sword.cols)) / 2, y: top - c * CGFloat(sword.rows) * 0.55)
+            overBar(sword, cell: c, x: pose.x + (width - c * CGFloat(sword.cols)) / 2,
+                    y: top - c * CGFloat(sword.rows) * 0.55)
         }
+    }
+
+    /// 바 위로 넘치는 검·엔젤링. 세로로는 넘쳐도 그리되 가로는 몸과 같은 바 범위로 잘라, 양끝에서 몸과 함께 벽 뒤로 사라진다.
+    private func overBar(_ sprite: PixelSprite, cell c: CGFloat, x: CGFloat, y: CGFloat) -> some View {
+        let pad = c * CGFloat(sprite.rows)
+        return PixelSpriteView(sprite: sprite, frameIndex: 0, cell: c)
+            .offset(x: x, y: y + pad)
+            .frame(width: barSize.width, height: barSize.height + pad * 2, alignment: .topLeading)
+            .clipped()
+            .offset(y: -pad)
     }
 }
 

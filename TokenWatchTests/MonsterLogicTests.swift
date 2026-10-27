@@ -104,6 +104,22 @@ struct MonsterLogicTests {
         #expect(!MonsterEligibility.isRandomCandidate(credit, minUsedPercent: 0, now: now))
     }
 
+    @Test func accountSignatureSeparatesDifferentAccounts() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let reset = now.addingTimeInterval(3600)
+        let a = [UsageWindow(label: "s", usedPercent: 40, resetsAt: reset, kind: .session),
+                 UsageWindow(label: "w", usedPercent: 12, resetsAt: reset.addingTimeInterval(86_400), kind: .weekly)]
+        let sig = { (p: AgentProvider, w: [UsageWindow]) in MonsterEligibility.accountSignature(provider: p, windows: w, now: now) }
+        #expect(sig(.claude, a) == sig(.claude, a.reversed()))                        // 창 순서 무관
+        let jitter = [UsageWindow(label: "s", usedPercent: 40.2, resetsAt: reset.addingTimeInterval(20), kind: .session), a[1]]
+        #expect(sig(.claude, a) == sig(.claude, jitter))                              // 리셋 초 흔들림·소수점은 같은 계정
+        let used = [UsageWindow(label: "s", usedPercent: 55, resetsAt: reset, kind: .session), a[1]]
+        #expect(sig(.claude, a) != sig(.claude, used))                                // 사용률이 다르면 다른 계정
+        #expect(sig(.claude, a) != sig(.codex, a))                                    // 서비스가 다르면 다른 계정
+        let credit = UsageWindow(label: "c", usedPercent: 30, resetsAt: reset, kind: .weekly, style: .creditGauge)
+        #expect(sig(.claude, a) == sig(.claude, a + [credit]))                        // 대상이 아닌 창은 보지 않는다
+    }
+
     // MARK: 설정
 
     @Test func configEnvelopeAndDefaults() throws {

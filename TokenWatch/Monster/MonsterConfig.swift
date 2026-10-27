@@ -46,7 +46,7 @@ nonisolated struct MonsterConfig: Equatable, Sendable {
         ],
         completionEnabled: true,
         random: RandomSpawn(enabled: true, chancePerSlot: 0.08, drawMinMinutes: 20, drawMaxMinutes: 40,
-                            lifetimeMinutes: 60, minUsedPercent: 0, maxAlivePerUser: 3, maxAgentsPerUser: 10),
+                            lifetimeMinutes: 60, minUsedPercent: 1, maxAlivePerUser: 3, maxAgentsPerUser: 10),
         guaranteedSlimeFirstN: 3, tapDebounceMs: 120, dailySpawnCap: 60)
 
     func entry(_ id: String) -> MonsterCatalogEntry? { catalog.first { $0.id == id } }

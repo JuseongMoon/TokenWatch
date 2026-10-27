@@ -115,4 +115,16 @@ enum MonsterEligibility {
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {
         isTarget(window, now: now) && window.usedPercent >= minUsedPercent
     }
+
+    /// 같은 AI 계정으로 보이는 에이전트의 표식(기기 안에서만 쓴다). 같은 계정을 여러 번 추가하면 대상 창의
+    /// label·리셋 시각·사용률이 똑같으므로 확률 추첨은 그중 하나만 한다. 서로 다른 계정은 숫자가 달라 갈린다.
+    static func accountSignature(provider: AgentProvider, windows: [UsageWindow], now: Date) -> String {
+        let parts = windows.compactMap { window -> String? in
+            guard isTarget(window, now: now), let resetsAt = window.resetsAt else { return nil }
+            let reset = MonsterSessionKey.resetBucketMs(
+                MonsterSessionKey.keyResetsAtMs(provider: provider, resetsAt: resetsAt))
+            return "\(window.label)|\(reset)|\(Int(window.usedPercent.rounded()))"
+        }
+        return ([provider.rawValue] + parts.sorted()).joined(separator: "\n")
+    }
 }

@@ -251,13 +251,16 @@ final class MonsterStore {
 
     /// 확률 출현(§15-11): 에이전트(연결한 AI 계정)마다 20~40분 간격으로 한 번씩 추첨한다. 일정은 원장에
     /// 에이전트별로 계정과 무관하게 두고(계정을 바꿔도 추첨이 늘지 않는다), 로그인 계정은 서버가 정한 다음 시각을 따른다.
-    /// 처음 보인 에이전트는 바로 뽑지 않고 일정만 정한다.
+    /// 처음 보인 에이전트는 바로 뽑지 않고 일정만 정한다. 같은 AI 계정을 여러 번 추가했으면 처음 것만 뽑는다.
     private func handleRandom(owner: String?, now: Int64) async {
         guard config.random.enabled else { return }
         let date = Date(timeIntervalSince1970: Double(now) / 1000)
         var drawn = 0
+        var accounts: Set<String> = []
         for (agent, windows) in env.snapshots() {
             guard drawn < config.random.maxAgentsPerUser else { break }
+            guard accounts.insert(MonsterEligibility.accountSignature(
+                provider: agent.provider, windows: windows, now: date)).inserted else { continue }
             // 후보: 이 에이전트의 대상 창, label 단위로 하나씩(최대 20). 몬스터가 살아 있는 바는 빼고,
             // 처치 1시간 안의 유령이 있는 바는 빈 바가 하나도 없을 때만 쓴다(그때 새 몬스터가 유령을 치운다).
             var anchors: [String: String] = [:]

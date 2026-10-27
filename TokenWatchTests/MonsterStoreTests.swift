@@ -237,12 +237,34 @@ struct MonsterStoreTests {
         let second = Agent(provider: .claude)
         let third = Agent(provider: .codex)
         let w = partialWindow(s.clock)
-        s.snapshots.list = [(agent, [w]), (second, [w]), (third, [w])]
+        let other = UsageWindow(label: w.label, usedPercent: 70, resetsAt: w.resetsAt, kind: .session)   // 다른 계정
+        s.snapshots.list = [(agent, [w]), (second, [other]), (third, [w])]
         await s.store.observe(agent: agent, windows: [w])
         #expect(s.store.ledger.randomSchedule?.count == 3)
         s.clock.ms += 40 * 60_000
         await s.store.observe(agent: agent, windows: [w])
         #expect(Set(s.store.ledger.encounters.compactMap(\.agentID)) == [agent.id, second.id, third.id])
+    }
+
+    @Test func sameAccountAddedTwiceDrawsOnce() async {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let copy = Agent(provider: .claude)
+        let w = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [w]), (copy, [w])]                // 창 숫자·리셋이 똑같다 = 같은 계정
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.randomSchedule?.keys.sorted() == [MonsterSessionKey.agentToken(agent.id)])
+        s.clock.ms += 40 * 60_000
+        await s.store.observe(agent: agent, windows: [w])
+        #expect(s.store.ledger.encounters.compactMap(\.agentID) == [agent.id])
+    }
+
+    @Test func unusedWindowWaitsForTheFirstUse() async {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let unused = UsageWindow(label: "Current week (all models)", usedPercent: 0,
+                                 resetsAt: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000 + 86_400), kind: .weekly)
+        s.snapshots.list = [(agent, [unused])]                        // 기본 최소 사용률 1% 미만
+        await s.store.observe(agent: agent, windows: [unused])
+        #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == nil)
     }
 
     @Test func fullWindowJoinsTheDrawOnceItsCompletionMonsterIsDefeated() async throws {

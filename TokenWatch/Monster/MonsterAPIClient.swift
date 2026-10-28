@@ -9,7 +9,7 @@
 //  리더보드 상위 10(이번 주·전체)은 Firestore REST runQuery로 직접 읽는다(공개 읽기 규칙, §15-6·§15-10).
 //  앱 계정의 프로필 쓰기(`setProfile`)·계정 삭제(`deleteAccount`)도 이 클라이언트로 부른다(AccountStore).
 //
-//  보내는 것: provider·창 label·주기·리셋 버킷·에이전트 키(계정마다 다른 해시)·플랫폼·앱 버전. 사용률 수치, AI 서비스 계정 정보,
+//  보내는 것: provider·창 label·주기·세션 창 여부·리셋 버킷·에이전트 키(계정마다 다른 해시)·플랫폼·앱 버전. 사용률 수치, AI 서비스 계정 정보,
 //  기기 식별자는 보내지 않는다.
 //
 
@@ -158,11 +158,15 @@ final class MonsterAPIClient {
         case none
     }
 
-    func spawnCompletion(provider: String, windowLabel: String, periodSec: Int64, resetBucketMs: Int64,
+    /// `session`: 세션 창(5시간)이면 true — 서버가 그 창의 슬라임을 파랑 슬라임으로 바꾼다.
+    func spawnCompletion(provider: String, windowLabel: String, periodSec: Int64, session: Bool, resetBucketMs: Int64,
                          resetsAtMs: Int64) async -> Result<SpawnResult, CallError> {
         await spawn(["source": "completion", "provider": provider, "windowLabel": windowLabel,
-                     "periodSec": periodSec, "resetBucketMs": resetBucketMs, "resetsAtMs": resetsAtMs])
+                     "periodSec": periodSec, "session": session, "resetBucketMs": resetBucketMs, "resetsAtMs": resetsAtMs])
     }
+
+    /// 확률 출현 후보 창 하나. `session`은 완료 출현과 같은 뜻.
+    typealias RandomCandidate = (provider: String, windowLabel: String, session: Bool)
 
     /// 확률 출현 응답(§15-11): 나온 몬스터(없으면 nil — 아직 때가 아니거나 안 뽑힘)와 서버가 정한 다음 추첨 시각.
     struct RandomDraw: Equatable {
@@ -171,11 +175,11 @@ final class MonsterAPIClient {
     }
 
     /// 에이전트 하나의 추첨. 후보는 그 에이전트의 대상 창(1~20개, 완료 몬스터가 살아 있는 100% 창 제외)이고, 서버가 하나를 고른다.
-    func spawnRandom(agentKey: String, candidates: [(provider: String, windowLabel: String)]) async
+    func spawnRandom(agentKey: String, candidates: [RandomCandidate]) async
         -> Result<RandomDraw, CallError> {
         await call("spawnEncounter", spawnBody([
             "source": "random", "agentKey": agentKey,
-            "candidates": candidates.map { ["provider": $0.provider, "windowLabel": $0.windowLabel] },
+            "candidates": candidates.map { ["provider": $0.provider, "windowLabel": $0.windowLabel, "session": $0.session] },
         ])).map { result in
             RandomDraw(encounter: (result["encounter"] as? [String: Any]).flatMap(MonsterEncounterDTO.init(json:)),
                        nextDrawAtMs: MonsterEncounterDTO.int64(result["nextDrawAtMs"]))

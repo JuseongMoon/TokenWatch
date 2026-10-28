@@ -171,8 +171,9 @@ struct MonsterLogicTests {
             #expect(death.frames.count == 4 && death.rows == s.rows && death.cols == s.cols)
         }
         #expect(sprites["slime-death"]?.rows == PixelSprite.slime.rows && sprites["slime-death"]?.cols == PixelSprite.slime.cols)
-        #expect(MonsterSprites.deathSprite(for: "slime", sessionWindow: true) != nil)
-        #expect(MonsterSprites.deathSprite(for: "pumpkin", sessionWindow: false) == nil)
+        #expect(MonsterSprites.deathSprite(for: "slime") != nil)
+        #expect(MonsterSprites.deathSprite(for: "slime-sky") != nil)
+        #expect(MonsterSprites.deathSprite(for: "pumpkin") == nil)
     }
 
     @Test func inlineSpriteLimits() {
@@ -203,6 +204,30 @@ struct MonsterLogicTests {
         #expect(MonsterDraw.pick(config: c, appVersion: "2.0", commonOnly: false, roll: 0.9).id == "goblin")
         #expect(MonsterDraw.pick(config: c, appVersion: "2.0", commonOnly: false, roll: 0.9999).id == "mimic")
         #expect(MonsterDraw.pick(config: c, appVersion: "2.0", commonOnly: true, roll: 0.9999).id == "slime")
+    }
+
+    @Test func sessionBarSlimeBecomesTheBlueSlime() throws {
+        var c = MonsterConfig.bundledDefault
+        let slime = try #require(c.entry("slime"))
+        let goblin = try #require(c.entry("goblin"))
+        let sky = MonsterDraw.forWindow(slime, session: true, config: c, appVersion: "2.0.0")
+        #expect(sky.id == "slime-sky" && sky.hp == 2 && sky.score == 15 && sky.isCommon)
+        #expect(MonsterDraw.forWindow(slime, session: false, config: c, appVersion: "2.0.0").id == "slime")
+        #expect(MonsterDraw.forWindow(goblin, session: true, config: c, appVersion: "2.0.0").id == "goblin")
+        // 파랑 슬라임은 weight 0이라 직접 뽑히지 않는다.
+        for roll in stride(from: 0.0, to: 1.0, by: 0.01) {
+            #expect(MonsterDraw.pick(config: c, appVersion: "2.0", commonOnly: false, roll: roll).id != "slime-sky")
+            #expect(MonsterDraw.pick(config: c, appVersion: "2.0", commonOnly: true, roll: roll).id == "slime")
+        }
+        // 카탈로그에 없거나 비공개거나 이 앱이 못 그리면 슬라임 그대로.
+        c.catalog = c.catalog.map { $0.id == "slime-sky" ? MonsterCatalogEntry(id: $0.id, tier: $0.tier, hp: $0.hp,
+                                                                               score: $0.score, weight: 0, released: false) : $0 }
+        #expect(MonsterDraw.forWindow(slime, session: true, config: c, appVersion: "2.0.0").id == "slime")
+        c.catalog = c.catalog.map { $0.id == "slime-sky" ? MonsterCatalogEntry(id: $0.id, tier: $0.tier, hp: $0.hp,
+                                                                               score: $0.score, weight: 0, minAppVersion: "9.0") : $0 }
+        #expect(MonsterDraw.forWindow(slime, session: true, config: c, appVersion: "2.0.0").id == "slime")
+        c.catalog.removeAll { $0.id == "slime-sky" }
+        #expect(MonsterDraw.forWindow(slime, session: true, config: c, appVersion: "2.0.0").id == "slime")
     }
 
     @Test func unreleasedAndNewerMonstersAreSkipped() {
@@ -403,7 +428,7 @@ struct MonsterLogicTests {
         config.catalog.append(MonsterCatalogEntry(id: "wyvern", tier: "special", hp: 9, score: 300, weight: 1,
                                                   minAppVersion: "9.0"))
         let rows = MonsterBestiary.rows(config: config, kills: ["slime": 4, "orc": 1], appVersion: "1.4.0")
-        #expect(rows.map(\.id) == ["slime", "goblin", "skeleton", "orc", "mimic"])
+        #expect(rows.map(\.id) == ["slime", "slime-sky", "goblin", "skeleton", "orc", "mimic"])
         #expect(rows.filter(\.discovered).map(\.id) == ["slime", "orc"])
         #expect(rows.first { $0.id == "goblin" }?.kills == 0)
         // 공개 전 종·이 앱이 못 그리는 종도 이미 잡았으면 보인다.
@@ -433,12 +458,12 @@ struct MonsterLogicTests {
                 }
             }
         }
-        // 도감 처치 수의 점수 합 = 전체 탭 내 점수, 고블린 다음 종부터는 아직 못 잡은 실루엣.
+        // 도감 처치 수의 점수 합 = 전체 탭 내 점수, 슬라임·고블린 말고는 아직 못 잡은 실루엣.
         let config = MonsterConfig.bundledDefault
         let points = DemoAdventure.kills.reduce(0) { $0 + (config.entry($1.key)?.score ?? 0) * $1.value }
         #expect(points == DemoAdventure.mine(.allTime).score)
         let rows = MonsterBestiary.rows(config: config, kills: DemoAdventure.kills, appVersion: "2.0.0")
-        #expect(rows.filter { !$0.discovered }.map(\.id) == ["skeleton", "orc", "mimic"])
+        #expect(rows.filter { !$0.discovered }.map(\.id) == ["slime-sky", "skeleton", "orc", "mimic"])
     }
 }
 

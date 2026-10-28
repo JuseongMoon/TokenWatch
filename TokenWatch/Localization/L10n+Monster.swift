@@ -13,6 +13,7 @@ extension L10n {
     func monsterName(_ id: String) -> String {
         switch id {
         case "slime": return lang == .ko ? "슬라임" : "Slime"
+        case "slime-sky": return lang == .ko ? "파랑 슬라임" : "Blue Slime"
         case "goblin": return lang == .ko ? "고블린" : "Goblin"
         case "skeleton": return lang == .ko ? "스켈레톤" : "Skeleton"
         case "orc": return lang == .ko ? "오크" : "Orc"

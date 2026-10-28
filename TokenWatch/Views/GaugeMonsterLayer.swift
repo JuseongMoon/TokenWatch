@@ -13,7 +13,7 @@ import UIKit
 struct GaugeMonsterLayer: View {
     let barSize: CGSize
     let encounters: [MonsterEncounter]
-    /// 세션 창이면 슬라임을 하늘색으로(게이지 크리터와 같은 규칙).
+    /// 세션 창 여부 — 그림을 못 찾은 몬스터를 하늘색 슬라임으로 그릴 때만 쓴다(파랑 슬라임은 종 자체가 다르다).
     let sessionWindow: Bool
     let config: MonsterConfig
     let lastHitAt: [String: Date]
@@ -106,7 +106,7 @@ struct GaugeMonsterLayer: View {
         if t < Self.swordSeconds {
             return Pose(sprite: living, frame: 0, x: deathX, sword: true, halo: false)
         }
-        let death = MonsterSprites.deathSprite(for: e.monsterID, sessionWindow: sessionWindow)
+        let death = MonsterSprites.deathSprite(for: e.monsterID)
         let deathDuration = Double(death?.frames.count ?? 0) * Self.deathFrameSeconds
         if let death, t < Self.swordSeconds + deathDuration {
             let frame = min(death.frames.count - 1, Int((t - Self.swordSeconds) / Self.deathFrameSeconds))
@@ -156,7 +156,7 @@ struct GaugeMonsterLayer: View {
     }
 }
 
-/// 남은 HP 하트(첫 타격 뒤에만, 특수 몬스터). 다섯 개를 넘으면 `+n`.
+/// 남은 HP 하트(첫 타격 뒤에만, HP 2 이상인 몬스터). 다섯 개를 넘으면 `+n`.
 struct MonsterHPHearts: View {
     let hp: Int
     let maxHP: Int

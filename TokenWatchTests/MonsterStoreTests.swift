@@ -10,7 +10,7 @@
 //  - 처치 확정: 오프라인이면 미확정으로 남고 다음에 다시 보낸다
 //  - 확률 출현(§15-11): 에이전트마다 따로, 처음 보이면 일정만, 20~40분 뒤 추첨, 서버가 정한 다음 시각을 따른다,
 //    100% 창은 완료 몬스터를 잡은 뒤부터 후보, 유령은 처치 뒤 1시간, 새 몬스터는 몬스터·유령이 없는 바로
-//    (빈 바가 없으면 유령 바에 나오고 그 유령을 치운다)
+//    (빈 바가 없으면 유령 바에 나오고 그 유령을 치운다), 세션 창의 슬라임은 파랑 슬라임(HP 2·15점)
 //  - 계정 삭제 뒤 그 계정 기록을 지운다
 //
 
@@ -132,6 +132,17 @@ struct MonsterStoreTests {
                     resetsAt: Date(timeIntervalSince1970: Double(clock.ms) / 1000 + 3600), kind: .session)
     }
 
+    /// HP가 다 닳을 때까지 디바운스 간격을 두고 때린다(세션 창의 파랑 슬라임은 HP 2). 마지막 결과를 돌려준다.
+    @discardableResult
+    private func kill(_ s: Setup, _ key: String) -> MonsterStore.HitResult {
+        var result = s.store.hit(key: key)
+        while case .damaged = result {
+            s.clock.ms += 200
+            result = s.store.hit(key: key)
+        }
+        return result
+    }
+
     // MARK: 게스트
 
     @Test func guestCompletionSpawnsOnce() async {
@@ -232,6 +243,23 @@ struct MonsterStoreTests {
         #expect(s.functions.calls.isEmpty)
     }
 
+    @Test func guestSessionBarSlimeIsTheBlueSlime() async throws {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let session = partialWindow(s.clock)
+        s.snapshots.list = [(agent, [session])]
+        let e = try await drawOnce(s, windows: [session])            // 첫 3회는 common → 세션 창이라 파랑 슬라임
+        #expect(e.monsterID == "slime-sky" && e.maxHP == 2 && e.hp == 2)
+        #expect(s.store.hit(key: e.key) == .damaged(remaining: 1))
+        s.clock.ms += 200
+        #expect(s.store.hit(key: e.key) == .defeated)
+        #expect(s.store.ledger.encounters.first { $0.key == e.key }?.awardedScore == 15)
+        #expect(s.store.ledger.guest.kills["slime-sky"] == 1 && s.store.ledger.guest.kills["slime"] == nil)
+        // 주간 창 완료 출현은 그대로 슬라임.
+        let week = fullWindow(s.clock)
+        await s.store.observe(agent: agent, windows: [week])
+        #expect(s.store.encounters(agentID: agent.id, provider: .claude, window: week).first?.monsterID == "slime")
+    }
+
     @Test func eachAgentDrawsOnItsOwn() async {
         let s = await makeSetup(configPayload: Self.alwaysRandom)
         let second = Agent(provider: .claude)
@@ -301,7 +329,7 @@ struct MonsterStoreTests {
         s.snapshots.list = [(agent, [w])]
         let e = try await drawOnce(s, windows: [w])
         s.clock.ms += 30 * 60_000
-        #expect(s.store.hit(key: e.key) == .defeated)
+        #expect(kill(s, e.key) == .defeated)
         let killedAt = s.clock.ms
         s.clock.ms = killedAt + 50 * 60_000                         // 살아 있던 한도(출현 + 60분)는 지났다
         #expect(s.store.encounters(agentID: agent.id, provider: .claude, window: w).map(\.key) == [e.key])
@@ -319,8 +347,8 @@ struct MonsterStoreTests {
         let first = try await drawOnce(s, windows: windows)
         let second = try await drawOnce(s, windows: windows)       // 40분 안이라 첫 몬스터는 아직 살아 있다
         #expect(second.displayLabel != first.displayLabel)          // 몬스터가 있는 바는 피한다
-        #expect(s.store.hit(key: first.key) == .defeated)
-        #expect(s.store.hit(key: second.key) == .defeated)
+        #expect(kill(s, first.key) == .defeated)
+        #expect(kill(s, second.key) == .defeated)
         let third = try await drawOnce(s, windows: windows)        // 두 바 모두 1시간 안의 유령 → 그중 한 바에 나온다
         let thirdBar = try #require(windows.first { $0.label == third.displayLabel })
         let otherBar = try #require(windows.first { $0.label != third.displayLabel })
@@ -339,7 +367,7 @@ struct MonsterStoreTests {
         s.clock.ms = due
         await s.store.observe(agent: agent, windows: [w])
         #expect(s.store.ledger.encounters.count == 1 && s.store.ledger.nextDraw(agent: token) == due)
-        #expect(s.store.hit(key: first.key) == .defeated)
+        #expect(kill(s, first.key) == .defeated)
         let next = try await drawOnce(s, windows: [w])               // 바가 하나뿐이면 유령 바에 나온다
         let shown = s.store.encounters(agentID: agent.id, provider: .claude, window: w)
         #expect(shown.map(\.key) == [next.key] && shown.first?.isAlive == true)   // 유령은 비켜 준다
@@ -372,9 +400,10 @@ struct MonsterStoreTests {
         await s.store.observe(agent: agent, windows: [w])
         #expect(s.functions.count("spawnEncounter") == 1)
         let sent = try #require(s.functions.calls.first { $0.name == "spawnEncounter" }?.data)
-        #expect(Set(sent.keys) == ["source", "provider", "windowLabel", "periodSec", "resetBucketMs", "resetsAtMs",
-                                   "platform", "appVersion", "spriteFormat"])   // 사용률 수치·계정 정보 없음
+        #expect(Set(sent.keys) == ["source", "provider", "windowLabel", "periodSec", "session", "resetBucketMs",
+                                   "resetsAtMs", "platform", "appVersion", "spriteFormat"])   // 사용률 수치·계정 정보 없음
         #expect(sent["periodSec"] as? Int == 604_800)
+        #expect(sent["session"] as? Bool == false)
         let shown = s.store.encounters(agentID: agent.id, provider: .claude, window: w)
         #expect(shown.first?.monsterID == "goblin" && shown.first?.ownerUID == "u1")
         // 기기 세션 장부에 이 세션이 u1 것으로 남는다.
@@ -395,6 +424,9 @@ struct MonsterStoreTests {
         #expect(s.functions.count("spawnEncounter") == 1)
         let sent = try #require(s.functions.calls.first { $0.name == "spawnEncounter" }?.data)
         #expect(Set(sent.keys) == ["source", "agentKey", "candidates", "platform", "appVersion", "spriteFormat"])
+        let sentCandidates = try #require(sent["candidates"] as? [[String: Any]])
+        #expect(sentCandidates.count == 1 && Set(sentCandidates[0].keys) == ["provider", "windowLabel", "session"])
+        #expect(sentCandidates[0]["session"] as? Bool == true)
         #expect(sent["agentKey"] as? String
                 == MonsterSessionKey.agentKey(uid: "u1", agentToken: MonsterSessionKey.agentToken(agent.id)))
         #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == first)

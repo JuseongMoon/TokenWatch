@@ -9,7 +9,7 @@
 //    아니면 게스트(기기 추첨, 비순위). 화면에는 지금 주인의 몬스터만 그린다.
 //  - 출현 요청은 포그라운드 새로고침에서만 한다(백그라운드 갱신은 만료 처리만). 크리터 표시를 끄면 멈춘다.
 //  - 데모 중에는 서버·파일 저장을 하지 않는다. 표본 100% 게이지에는 메모리 전용 표본 몬스터를 그린다.
-//  - 서버로 보내는 것은 계약 §15의 값뿐이다(provider·창 label·주기·리셋 버킷·에이전트 키·플랫폼·앱 버전).
+//  - 서버로 보내는 것은 계약 §15의 값뿐이다(provider·창 label·주기·세션 창 여부·리셋 버킷·에이전트 키·플랫폼·앱 버전).
 //    사용률 수치·AI 서비스 계정 정보는 보내지 않는다.
 //
 
@@ -227,7 +227,7 @@ final class MonsterStore {
                 provider: agent.provider.rawValue, windowLabel: keyLabel,
                 periodSec: MonsterSessionKey.periodSec(provider: agent.provider, label: window.label,
                                                        windowSeconds: window.windowSeconds, kind: window.kind),
-                resetBucketMs: bucket, resetsAtMs: MonsterSessionKey.epochMs(resetsAt))
+                session: window.kind == .session, resetBucketMs: bucket, resetsAtMs: MonsterSessionKey.epochMs(resetsAt))
             inFlight.remove(key)
             if case .success(.encounter) = result {
                 session.record(key: ledgerKey, uid: owner, nowMs: now)
@@ -244,7 +244,10 @@ final class MonsterStore {
                 return
             }
             addGuestEncounter(key: key, source: .completion, provider: agent.provider.rawValue, windowLabel: keyLabel,
-                              resetBucketMs: bucket, drawAtMs: nil, entry: entry, now: now,
+                              resetBucketMs: bucket, drawAtMs: nil,
+                              entry: MonsterDraw.forWindow(entry, session: window.kind == .session, config: config,
+                                                           appVersion: env.appVersion),
+                              now: now,
                               expiresAtMs: MonsterSessionKey.epochMs(resetsAt), anchor: (agent.id, window.label))
         }
     }
@@ -264,8 +267,8 @@ final class MonsterStore {
             // 후보: 이 에이전트의 대상 창, label 단위로 하나씩(최대 20). 몬스터가 살아 있는 바는 빼고,
             // 처치 1시간 안의 유령이 있는 바는 빈 바가 하나도 없을 때만 쓴다(그때 새 몬스터가 유령을 치운다).
             var anchors: [String: String] = [:]
-            var free: [(provider: String, windowLabel: String)] = []
-            var haunted: [(provider: String, windowLabel: String)] = []
+            var free: [MonsterAPIClient.RandomCandidate] = []
+            var haunted: [MonsterAPIClient.RandomCandidate] = []
             for window in windows where MonsterEligibility.isRandomCandidate(
                 window, minUsedPercent: config.random.minUsedPercent, now: date) {
                 let keyLabel = MonsterSessionKey.keyLabel(provider: agent.provider, label: window.label)
@@ -276,7 +279,8 @@ final class MonsterStore {
                 let ghost = shown.contains { e in
                     e.state == .defeated && e.defeatedAtMs.map { now - $0 < Self.ghostHoldMs } ?? false
                 }
-                if ghost { haunted.append((agent.provider.rawValue, keyLabel)) } else { free.append((agent.provider.rawValue, keyLabel)) }
+                let candidate: MonsterAPIClient.RandomCandidate = (agent.provider.rawValue, keyLabel, window.kind == .session)
+                if ghost { haunted.append(candidate) } else { free.append(candidate) }
             }
             let candidates = free.isEmpty ? haunted : free
             guard !candidates.isEmpty else { continue }   // 대상 창이 없으면 일정을 그대로 둔다
@@ -285,7 +289,7 @@ final class MonsterStore {
         }
     }
 
-    private func drawRandom(agent: Agent, candidates: [(provider: String, windowLabel: String)],
+    private func drawRandom(agent: Agent, candidates: [MonsterAPIClient.RandomCandidate],
                             anchors: [String: String], owner: String?, now: Int64) async {
         let token = MonsterSessionKey.agentToken(agent.id)
         let retryKey = "rand|\(token)"
@@ -329,7 +333,10 @@ final class MonsterStore {
                        Int(MonsterDraw.unitRoll("\(salt)|\(key)|cand") * Double(candidates.count)))
         let chosen = candidates[pick]
         addGuestEncounter(key: key, source: .random, provider: chosen.provider, windowLabel: chosen.windowLabel,
-                          resetBucketMs: nil, drawAtMs: due, entry: entry, now: now,
+                          resetBucketMs: nil, drawAtMs: due,
+                          entry: MonsterDraw.forWindow(entry, session: chosen.session, config: config,
+                                                       appVersion: env.appVersion),
+                          now: now,
                           expiresAtMs: now + Int64(config.random.lifetimeMinutes) * 60_000,
                           anchor: anchors[chosen.windowLabel].map { (agent.id, $0) })
     }

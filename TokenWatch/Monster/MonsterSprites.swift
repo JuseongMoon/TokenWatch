@@ -4,7 +4,7 @@
 //
 //  게이지 몬스터·효과 스프라이트. 번들 정본 `monsters-v1.json`(Android와 바이트 동일, SHA-256 parity)과
 //  카탈로그의 원격 inline 스프라이트(V3)를 같은 디코더로 읽는다. 실행 코드가 아니라 픽셀 데이터다.
-//  슬라임은 기존 앱 스프라이트(PixelSprite.slime·slimeSky)를 그대로 쓴다.
+//  슬라임·파랑 슬라임은 기존 앱 스프라이트(PixelSprite.slime·slimeSky)를 그대로 쓴다.
 //
 //  처치 상태는 원래 색을 흑백톤으로(밝기 Y = 0.299R + 0.587G + 0.114B, ×0.8 — Android와 같은 공식).
 //  처치 직후에는 몬스터별 사망 애니메이션(`{id}-death`, 4프레임)을 먼저 보여 준다.
@@ -90,27 +90,26 @@ enum MonsterSprites {
         return MonsterSpriteDecoder.decodeFile(data)
     }()
 
-    /// 몬스터 그림. 카탈로그 inline → 번들(카탈로그가 가리키는 이름 또는 id) → 슬라임 순서.
-    /// 세션 창(5시간 등)의 슬라임은 기존 게이지 크리터처럼 하늘색이다.
+    /// 몬스터 그림. 슬라임은 초록, 파랑 슬라임은 하늘색 앱 내장 그림이고, 그 밖은 카탈로그 inline → 번들(카탈로그가
+    /// 가리키는 이름 또는 id) → 슬라임 순서.
     static func sprite(for monsterID: String, entry: MonsterCatalogEntry?, sessionWindow: Bool,
                        defeated: Bool = false) -> PixelSprite {
-        if monsterID == "slime" || (entry == nil && bundled[monsterID] == nil) {
-            let slime: PixelSprite = sessionWindow ? .slimeSky : .slime
+        if monsterID == "slime" || monsterID == MonsterDraw.sessionSlimeID {
+            let slime: PixelSprite = monsterID == "slime" ? .slime : .slimeSky
             return defeated ? grayscale(slime) : slime
         }
         let data = entry?.inlineSprite ?? bundled[entry?.bundledSprite ?? monsterID] ?? bundled[monsterID]
         guard let data else {
-            // 카탈로그에는 있는데 그림이 없는 몬스터 — 세션 창이면 하늘색 슬라임(Android와 같은 규칙).
+            // 그림을 못 찾은 몬스터 — 세션 창이면 하늘색 슬라임(Android와 같은 규칙).
             let slime: PixelSprite = sessionWindow ? .slimeSky : .slime
             return defeated ? grayscale(slime) : slime
         }
         return pixelSprite(data, defeated: defeated)
     }
 
-    /// 몬스터별 사망 애니메이션(`{id}-death`, 세션 창 슬라임은 하늘색 판). 없으면 nil — 바로 엔젤링으로 넘어간다.
-    static func deathSprite(for monsterID: String, sessionWindow: Bool) -> PixelSprite? {
-        let id = monsterID == "slime" && sessionWindow ? "slime-sky-death" : "\(monsterID)-death"
-        return bundled[id].map { pixelSprite($0, defeated: false) }
+    /// 몬스터별 사망 애니메이션(`{id}-death` — 파랑 슬라임은 `slime-sky-death`). 없으면 nil — 바로 엔젤링으로 넘어간다.
+    static func deathSprite(for monsterID: String) -> PixelSprite? {
+        bundled["\(monsterID)-death"].map { pixelSprite($0, defeated: false) }
     }
 
     static var sword: PixelSprite? { bundled[swordID].map { pixelSprite($0, defeated: false) } }

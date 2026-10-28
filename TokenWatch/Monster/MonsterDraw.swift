@@ -42,6 +42,18 @@ enum MonsterDraw {
         return candidates[candidates.count - 1]
     }
 
+    /// 세션 창(5시간)에 붙는 슬라임 — HP·점수가 다른 별도 종이다(사용자 확정 2026-10-28).
+    static let sessionSlimeID = "slime-sky"
+
+    /// 뽑힌 종을 창에 맞춘다: 세션 창의 슬라임은 파랑 슬라임. 카탈로그에 공개돼 있고 이 앱 버전이 그릴 수 있을 때만 바꾼다(서버와 같은 규칙).
+    static func forWindow(_ entry: MonsterCatalogEntry, session: Bool, config: MonsterConfig,
+                          appVersion: String) -> MonsterCatalogEntry {
+        guard session, entry.id == "slime", let sky = config.entry(sessionSlimeID), sky.released,
+              sky.minAppVersion.map({ AppVersionCompare.isAtLeast(appVersion, minimum: $0) }) ?? true
+        else { return entry }
+        return sky
+    }
+
     /// 확률 출현 몬스터의 게이지 안 위치(0.1~0.9).
     static func position(key: String) -> Double { 0.1 + unitRoll("\(key)|pos") * 0.8 }
 

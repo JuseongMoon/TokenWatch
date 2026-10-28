@@ -39,6 +39,8 @@ nonisolated struct MonsterConfig: Equatable, Sendable {
         schemaVersion: 1, balanceVersion: 1,
         catalog: [
             MonsterCatalogEntry(id: "slime", tier: "common", hp: 1, score: 10, weight: 90),
+            // 파랑 슬라임은 따로 뽑히지 않는다(weight 0) — 세션 창에 슬라임이 뽑히면 이 종으로 바뀐다.
+            MonsterCatalogEntry(id: "slime-sky", tier: "common", hp: 2, score: 15, weight: 0),
             MonsterCatalogEntry(id: "goblin", tier: "special", hp: 3, score: 50, weight: 6),
             MonsterCatalogEntry(id: "skeleton", tier: "special", hp: 5, score: 100, weight: 2.5),
             MonsterCatalogEntry(id: "orc", tier: "special", hp: 8, score: 190, weight: 1),

@@ -3,6 +3,8 @@
 여러 AI 서비스에 흩어진 **사용량과 잔여 크레딧을 한 화면에서 확인**하는 iOS 앱입니다.
 Claude의 5시간 세션 창이 언제 초기화되는지, ElevenLabs 크레딧이 얼마나 남았는지를
 각 서비스 대시보드를 돌아다니지 않고 봅니다.
+2.0.0부터는 사용량 게이지에 나타나는 몬스터를 잡아 주간·전체 순위에 오르는
+선택형 게임 레이어가 있습니다.
 
 - 플랫폼: iOS 17.0+ (SwiftUI)
 - 언어: 한국어 / 영어
@@ -58,11 +60,21 @@ Claude의 사용량 엔드포인트는 429를 공격적으로 돌려줍니다.
 응답 캐시·쿠키·자격증명이 전부 메모리에만 있다가 사라집니다.
 민감하지 않은 공개 상태 페이지 조회는 공유 세션을 그대로 씁니다.
 토큰 자체는 Keychain에만 저장하고, 사용량 조회를 중계하는 서버는 두지 않았습니다 — 앱이
-각 서비스의 엔드포인트를 직접 호출합니다. 개발자 서버와 오가는 것은 읽기 전용 공지 피드 조회와,
-설정에서 끌 수 있는 로그인 실패 진단 보고(오류 코드만 전송)뿐입니다.
+각 서비스의 엔드포인트를 직접 호출합니다. 개발자 서버와 오가는 것은 읽기 전용 공지 피드 조회,
+설정에서 끌 수 있는 로그인 실패 진단 보고(오류 코드만 전송), 그리고 선택 사항인 앱 계정과
+몬스터 기록뿐입니다. 몬스터 서버에는 서비스 종류·창 이름·리셋 구간 같은 출현 판정 값만 보내고,
+사용률 수치와 연결한 AI 계정 정보는 보내지 않습니다.
 → [`API/APISession.swift`](TokenWatch/API/APISession.swift), [`Auth/Keychain.swift`](TokenWatch/Auth/Keychain.swift)
 
-**5. 터미널 감성 UI**
+**5. 선택형 몬스터 사냥 — 판정은 서버, 추첨은 결정적으로**
+게이지를 탭해 몬스터를 잡고, 점수로 주간·전체 상위 10 순위에 오릅니다. 로그인(Apple·Google)은
+선택이며, 로그인한 사용자의 출현·처치·점수는 서버(Cloud Functions)가 판정합니다.
+앱 계정 인증에만 Firebase Auth SDK를 쓰고, 프로필·몬스터 호출과 순위 조회는 REST로 직접 합니다.
+로그인하지 않은 사용자는 같은 규칙을 기기에서 적용하고, 추첨은 키의 해시에서 뽑아
+새로고침을 반복해도 결과가 같습니다.
+→ [`Monster/MonsterDraw.swift`](TokenWatch/Monster/MonsterDraw.swift), [`Monster/MonsterAPIClient.swift`](TokenWatch/Monster/MonsterAPIClient.swift)
+
+**6. 터미널 감성 UI**
 사용량을 막대가 아니라 문자 게이지로 그립니다.
 `TerminalKit`, `PixelSprite`로 모노스페이스 기반 렌더링을 직접 구성했습니다.
 
@@ -72,6 +84,8 @@ Claude의 사용량 엔드포인트는 429를 공격적으로 돌려줍니다.
 TokenWatch/
 ├── API/            서비스별 사용량 클라이언트 · 디스패처 · rate limit 게이트 · 전용 세션
 ├── Auth/           OAuth(PKCE · device flow) · Keychain · JWT · 토큰 저장소
+├── Account/        선택형 앱 계정(Apple · Google 로그인) · 프로필
+├── Monster/        몬스터 출현 · 처치 · 도감 · 순위 클라이언트
 ├── Models/         Agent 메타데이터 · 사용량 창 · 업무시간 스케줄 · 데모 데이터
 ├── Notifications/  리셋 감지 · 예약 정책 · 백그라운드 새로고침
 ├── Analytics/      이벤트 정의와 전송
@@ -85,7 +99,8 @@ TokenWatch/
 ## 기술 스택
 
 SwiftUI · Swift Concurrency(actor, async/await) · Keychain Services ·
-ASWebAuthenticationSession · UserNotifications · BackgroundTasks
+ASWebAuthenticationSession · UserNotifications · BackgroundTasks ·
+Firebase Auth(앱 계정) · Cloud Functions · Firestore REST
 OAuth와 JWT 파싱은 직접 구현했습니다.
 
 ## 실행 방법

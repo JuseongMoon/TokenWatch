@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		63FB0A01000000000000A003 /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 63FB0A01000000000000A002 /* FirebaseAnalyticsCore */; };
+		63FB0A01000000000000A004 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 63FB0A01000000000000A005 /* FirebaseAuth */; };
+		63FB0A01000000000000A008 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 63FB0A01000000000000A007 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +59,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				63FB0A01000000000000A003 /* FirebaseAnalyticsCore in Frameworks */,
+				63FB0A01000000000000A004 /* FirebaseAuth in Frameworks */,
+				63FB0A01000000000000A008 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +122,8 @@
 			name = TokenWatch;
 			packageProductDependencies = (
 				63FB0A01000000000000A002 /* FirebaseAnalyticsCore */,
+				63FB0A01000000000000A005 /* FirebaseAuth */,
+				63FB0A01000000000000A007 /* GoogleSignIn */,
 			);
 			productName = TokenWatch;
 			productReference = 637EB6122FFF71D4009BFCC0 /* TokenWatch.app */;
@@ -203,6 +209,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				63FB0A01000000000000A001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				63FB0A01000000000000A006 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 637EB6132FFF71D4009BFCC0 /* Products */;
@@ -404,8 +411,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = TokenWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = LRMVZ8GHUX;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -425,7 +433,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.0;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ScienceFiction.TokenWatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -448,8 +456,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = TokenWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = LRMVZ8GHUX;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -469,7 +478,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.0;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ScienceFiction.TokenWatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -621,6 +630,14 @@
 				minimumVersion = 12.0.0;
 			};
 		};
+		63FB0A01000000000000A006 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 10.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -628,6 +645,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 63FB0A01000000000000A001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAnalyticsCore;
+		};
+		63FB0A01000000000000A005 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 63FB0A01000000000000A001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		63FB0A01000000000000A007 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 63FB0A01000000000000A006 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

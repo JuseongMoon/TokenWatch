@@ -43,6 +43,13 @@ enum ScreenName: String, Sendable {
     case workHours = "work_hours"
     case announcements
     case announcementDetail = "announcement_detail"
+    // 앱 계정(TokenWatch 자체 계정) — 세 화면이 나타날 때 1회씩. Android와 같은 단위.
+    case accountLogin = "account_login"
+    case profileSetup = "profile_setup"
+    case account
+    // 몬스터·길드(V2)
+    case leaderboard
+    case monsterConsent = "monster_consent"
 
     /// screen_class로 함께 보낼 뷰 이름. 생략하면 SDK가 UIHostingController의 제네릭
     /// 타입명(274자)을 채워 넣는데, 이는 100자 제한을 넘겨 이벤트에 오류 파라미터가 붙고
@@ -56,6 +63,11 @@ enum ScreenName: String, Sendable {
         case .workHours: return "WorkHoursEditor"
         case .announcements: return "AnnouncementListSheet"
         case .announcementDetail: return "AnnouncementDetailView"
+        case .accountLogin: return "AccountLoginSheet"
+        case .profileSetup: return "ProfileSetupSheet"
+        case .account: return "AccountSheet"
+        case .leaderboard: return "LeaderboardSheet"
+        case .monsterConsent: return "MonsterConsentSheet"
         }
     }
 }
@@ -95,6 +107,23 @@ enum AnalyticsEvent {
     // 평점·리뷰 — 시스템 프롬프트를 요청했거나 설정에서 리뷰 화면을 열었다.
     // (프롬프트는 시스템이 실제로 띄울지 결정하므로 "요청"까지만 셀 수 있다.)
     case storeReview(source: StoreReviewSource)
+    // 앱 계정 — 방법·단계·필드 열거값만. uid·닉네임·이메일은 어떤 경로로도 보내지 않는다(setUserID도 쓰지 않음).
+    // 앱 계정 실패는 loginFail(provider 로그인 전용 — 진단 보고로 나감)과 분리한다.
+    case accountLogin(method: AccountMethod, isNew: Bool)
+    case accountLoginFail(method: AccountMethod, stage: AccountFailStage)
+    case accountLink(method: AccountMethod)
+    case accountLogout
+    case accountDelete
+    case profileUpdate(field: ProfileField)
+    // 몬스터·길드(V2) — 카탈로그 ID(개발자가 정한 열거 문자열)·출현 경로·HP·점수 정수만.
+    // encounter 키·창 이름·provider·닉네임·uid는 보내지 않는다. 데모 중에는 차단된다(isProviderScoped).
+    case monsterSpawn(monsterID: String, source: MonsterEncounter.Source)
+    case monsterKill(monsterID: String, hp: Int, score: Int, source: MonsterEncounter.Source)
+
+    enum ProfileField: String, Sendable {
+        case nickname
+        case avatar
+    }
 
     enum StoreReviewSource: String, Sendable {
         case prompt
@@ -139,6 +168,14 @@ enum AnalyticsEvent {
         case .announcementAction: return "announcement_action"
         case .announcementOpen: return "announcement_open"
         case .storeReview: return "store_review"
+        case .accountLogin: return "account_login"
+        case .accountLoginFail: return "account_login_fail"
+        case .accountLink: return "account_link"
+        case .accountLogout: return "account_logout"
+        case .accountDelete: return "account_delete"
+        case .profileUpdate: return "profile_update"
+        case .monsterSpawn: return "monster_spawn"
+        case .monsterKill: return "monster_kill"
         }
     }
 
@@ -184,6 +221,22 @@ enum AnalyticsEvent {
             return ["announcement_id": String(id.prefix(40)), "kind": kind.rawValue]
         case .storeReview(let source):
             return ["source": source.rawValue]
+        case .accountLogin(let method, let isNew):
+            return ["method": method.rawValue, "is_new": isNew ? 1 : 0]
+        case .accountLoginFail(let method, let stage):
+            return ["method": method.rawValue, "stage": stage.rawValue]
+        case .accountLink(let method):
+            return ["method": method.rawValue]
+        case .accountLogout:
+            return [:]
+        case .accountDelete:
+            return ["surface": "app"]
+        case .profileUpdate(let field):
+            return ["field": field.rawValue]
+        case .monsterSpawn(let id, let source):
+            return ["monster_id": String(id.prefix(40)), "source": source.rawValue]
+        case .monsterKill(let id, let hp, let score, let source):
+            return ["monster_id": String(id.prefix(40)), "hp": hp, "score": score, "source": source.rawValue]
         }
     }
 
@@ -192,7 +245,8 @@ enum AnalyticsEvent {
     var isProviderScoped: Bool {
         switch self {
         case .screenView, .settingChange, .demoStart, .demoEnd, .notificationOpen,
-             .announcementShown, .announcementAction, .announcementOpen, .storeReview:
+             .announcementShown, .announcementAction, .announcementOpen, .storeReview,
+             .accountLogin, .accountLoginFail, .accountLink, .accountLogout, .accountDelete, .profileUpdate:
             return false
         default:
             return true

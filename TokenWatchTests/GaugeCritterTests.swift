@@ -61,6 +61,49 @@ struct GaugeCritterTests {
         #expect(GaugeCritter.offsetX(tick: 5, hop: 10, spriteWidth: 20, barWidth: 0) == -20)
     }
 
+    // MARK: 중간 출현 행진 — 출현 틱에 제자리에서 출발
+
+    // hop 10, 몸 20, 바 100 → 한 바퀴 12걸음. 출발점 38은 hop 격자로 맞춰 6번째 칸(x = 40)이 된다.
+    private func midX(_ tick: Int, start: Int, startX: CGFloat = 38) -> CGFloat {
+        GaugeCritter.offsetX(tick: tick, startTick: start, startX: startX, hop: 10, spriteWidth: 20, barWidth: 100)
+    }
+
+    @Test func midSpawnStartsAtItsSpot() {
+        #expect(midX(1000, start: 1000) == 40)
+        #expect(midX(1001, start: 1001) == 40)
+    }
+
+    @Test func midSpawnKeepsTheJumpRhythm() {
+        // 짝수 틱 출발: 다음 홀수 틱에 전진, 짝수 틱엔 그대로.
+        #expect(midX(1001, start: 1000) == 50)
+        #expect(midX(1002, start: 1000) == 50)
+        #expect(midX(1003, start: 1000) == 60)
+        // 홀수 틱 출발: 다음 짝수 틱은 착지라 그대로, 그다음 홀수 틱에 전진.
+        #expect(midX(1002, start: 1001) == 40)
+        #expect(midX(1003, start: 1001) == 50)
+    }
+
+    @Test func midSpawnWrapsToLeftEdge() {
+        #expect(midX(1010, start: 1000) == 90)    // 마지막 걸음: 바 오른끝
+        #expect(midX(1011, start: 1000) == -20)   // 왼쪽 밖에서 재등장
+        #expect(midX(1013, start: 1000) == -10)
+    }
+
+    @Test func midSpawnHoldsBeforeItsStartTick() {
+        // 기기 시계가 서버 출현 시각보다 늦으면 출발점에 둔다.
+        #expect(midX(990, start: 1000) == 40)
+    }
+
+    @Test func midSpawnStaysInsideBar() {
+        for tick in 1000...1300 {
+            let x = GaugeCritter.offsetX(tick: tick, startTick: 1000, startX: 180, hop: 7,
+                                         spriteWidth: 15.4, barWidth: 250)
+            #expect(x >= -15.4)
+            #expect(x < 250)
+        }
+        #expect(GaugeCritter.offsetX(tick: 5, startTick: 0, startX: 30, hop: 0, spriteWidth: 20, barWidth: 100) == -20)
+    }
+
     // MARK: 등장/소멸 8단계 페이드
 
     @Test func steppedOpacityQuantizesToEighths() {

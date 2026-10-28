@@ -12,6 +12,8 @@ import StoreKit
 struct ContentView: View {
     @Environment(AgentStore.self) private var store
     @Environment(AnnouncementStore.self) private var announcements
+    @Environment(AccountStore.self) private var account
+    @Environment(MonsterStore.self) private var monsters
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.requestReview) private var requestReview
 
@@ -27,9 +29,20 @@ struct ContentView: View {
     @State private var showingAdd = false
     @State private var showingSettings = false
     @State private var showingAnnouncements = false
+    @State private var showingGuild = false
+    @State private var showingConsent = false
+    /// 리더보드에서 로그인을 고르면 리더보드를 닫은 뒤 PLAYER 로그인 시트를 연다.
+    @State private var signInAfterGuild = false
+    @State private var playerEntry: PlayerSheet.Entry?
+    #if DEBUG
+    /// 스토어 스크린샷 촬영용 — 상세 화면을 코드로 연다(`openShotScene`).
+    @State private var shotDetailIndex: Int?
+    #endif
 
     /// 시트가 하나라도 떠 있는지 — 공지 팝업 보류 판단에 쓴다(아래 overlay 주석 참고).
-    private var sheetShowing: Bool { showingAdd || showingSettings || showingAnnouncements }
+    private var sheetShowing: Bool {
+        showingAdd || showingSettings || showingAnnouncements || showingGuild || showingConsent || playerEntry != nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -42,6 +55,11 @@ struct ContentView: View {
             }
             // 시스템 네비바를 숨기고 상단 배너를 직접 고정한다(두 줄 배너를 위해 커스텀 바 사용).
             .toolbar(.hidden, for: .navigationBar)
+            #if DEBUG
+            .navigationDestination(item: $shotDetailIndex) { index in
+                AgentDetailView(agent: store.agents[index]).environment(store)
+            }
+            #endif
             .sheet(isPresented: $showingAdd) {
                 AddAgentSheet().environment(store)
             }
@@ -51,13 +69,31 @@ struct ContentView: View {
             .sheet(isPresented: $showingAnnouncements) {
                 AnnouncementListSheet().environment(announcements)
             }
+            .sheet(isPresented: $showingGuild, onDismiss: {
+                if signInAfterGuild {
+                    signInAfterGuild = false
+                    playerEntry = .login
+                }
+            }) {
+                LeaderboardSheet {
+                    signInAfterGuild = true
+                    showingGuild = false
+                }
+                .environment(monsters).environment(account)
+            }
+            .sheet(isPresented: $showingConsent) {
+                MonsterConsentSheet().environment(monsters)
+            }
+            .sheet(item: $playerEntry) { entry in
+                PlayerSheet(entry: entry).environment(account).environment(monsters)
+            }
         }
         .tint(Term.green)
         // 서버 공지 팝업. NavigationStack 바깥에 얹어 push된 상세 화면 위에도 뜬다.
         // 시트(추가/설정/공지함)는 UIKit 프레젠테이션이라 이 오버레이를 덮으므로, 시트가 열려 있으면
         // 보류하고 닫힌 뒤에 뜬다(로그인 퍼널을 가로막지 않기 위해서도).
         .overlay {
-            if let announcement = announcements.presented, !sheetShowing {
+            if let announcement = announcements.presented, !sheetShowing, !shotMode {
                 AnnouncementOverlay(announcement: announcement)
             }
         }
@@ -74,11 +110,39 @@ struct ContentView: View {
             applyIdleTimer(phase: scenePhase)
         }
         .onAppear { AnalyticsService.shared.log(.screenView(.main)) }
+        #if DEBUG
+        .task { openShotScene() }
+        #endif
         // 리뷰 프롬프트: 조건 충족(스토어 판정) 후 시트·공지 팝업이 모두 걷힌 메인 화면에서만.
         .onChange(of: store.reviewPromptPending) { _, _ in tryPresentReviewPrompt() }
         .onChange(of: sheetShowing) { _, _ in tryPresentReviewPrompt() }
         .onChange(of: announcements.presented?.id) { _, _ in tryPresentReviewPrompt() }
     }
+
+    #if DEBUG
+    /// 촬영 중에는 서버 공지 팝업을 띄우지 않는다.
+    private var shotMode: Bool { ProcessInfo.processInfo.arguments.contains("-TWShotScene") }
+    #else
+    private var shotMode: Bool { false }
+    #endif
+
+    #if DEBUG
+    /// 스토어 스크린샷 촬영용 실행 인자(디버그 빌드 전용): `-TWShotScene main|detail:N|ranks|player`.
+    /// 데모로 들어가 그 화면을 연다 — 시뮬레이터에서 탭 없이 같은 화면을 다시 찍기 위해서다.
+    private func openShotScene() {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-TWShotScene"), i + 1 < args.count else { return }
+        store.enterDemo()
+        let scene = args[i + 1]
+        if scene == "ranks" {
+            showingGuild = true
+        } else if scene == "player" {
+            playerEntry = .manage
+        } else if scene.hasPrefix("detail:"), let n = Int(scene.dropFirst(7)), store.agents.indices.contains(n) {
+            shotDetailIndex = n
+        }
+    }
+    #endif
 
     /// 리뷰 프롬프트를 띄울 수 있는 화면 상태인지 — 공지 오버레이와 같은 이유로 시트를 피한다.
     private var canPresentReviewPrompt: Bool {
@@ -126,7 +190,7 @@ struct ContentView: View {
 
     // MARK: 상단 고정 바
 
-    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·[✉]·[⚙] 모두 스크롤과 무관하게 고정.
+    /// 화면 최상단에 고정되는 상단 바 — 앱 이름·상태 라인·길드 간판·[✉]·[⚙] 모두 스크롤과 무관하게 고정.
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
@@ -135,6 +199,12 @@ struct ContentView: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 10) {
+                // 모험가 길드 간판(V2) — 앱 계정 기능을 쓸 수 있을 때만.
+                if account.isAvailable {
+                    GuildSignButton(loc: loc, onOpenRanks: { showingGuild = true },
+                                    onOpenConsent: { showingConsent = true })
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 8 }
+                }
                 announcementsButton
                 TerminalGlyphButton(systemImage: "gearshape") { showingSettings = true }
                     .accessibilityLabel(loc.a11ySettings)
@@ -396,11 +466,22 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView().environment(AgentStore())
+    let store = AgentStore()
+    let account = AccountStore.disabled()
+    return ContentView()
+        .environment(store)
+        .environment(AnnouncementStore())
+        .environment(account)
+        .environment(MonsterStore.preview(account: account, agents: store))
 }
 
 #Preview("demo mode") {
     let store = AgentStore()
     store.enterDemo()
-    return ContentView().environment(store)
+    let account = AccountStore.disabled()
+    return ContentView()
+        .environment(store)
+        .environment(AnnouncementStore())
+        .environment(account)
+        .environment(MonsterStore.preview(account: account, agents: store))
 }

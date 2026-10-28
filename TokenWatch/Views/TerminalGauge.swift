@@ -29,6 +29,10 @@ struct TerminalGauge: View {
     var bracketSize: CGFloat = 13
     /// 소진 게이지 위 슬라임 변종 — 창 종류에 따라 색·속도가 다르다. 기본은 weekly(기존 초록).
     var critterVariant: GaugeCritterVariant = .weekly
+    /// 이 창의 몬스터(V2). 완료 출현 몬스터가 있으면 슬라임 행진 대신 몬스터를 그린다.
+    var monsters: [MonsterEncounter] = []
+    var monsterHits: [String: Date] = [:]
+    var monsterConfig: MonsterConfig = .bundledDefault
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     /// 소진 게이지 위 픽셀 슬라임 표시 여부(설정 DISPLAY). 기본 켜짐.
@@ -39,8 +43,10 @@ struct TerminalGauge: View {
     private var elapsed: Double? { elapsedFraction.map { min(1, max(0, $0)) } }
     /// 실제 채움 폭 비율 — 구독형은 사용량, 충전형은 남은 잔액.
     private var fill: Double { Self.fillFraction(used: used, fillsRemaining: fillsRemaining) }
-    /// 슬라임 표시 조건 — 설정 on & 소진(≈100%). 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
-    private var showCritter: Bool { gaugeCritter && used >= GaugeCritter.threshold }
+    /// 슬라임 표시 조건 — 설정 on & 소진(≈100%) & 이 바에 몬스터가 없을 때. 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
+    private var showCritter: Bool {
+        gaugeCritter && used >= GaugeCritter.threshold && monsters.isEmpty
+    }
 
     /// 채움 비율(0...1). 구독형은 사용량(used), 충전형(fillsRemaining)은 남은 잔액(1−used)을 그린다.
     /// (뷰 밖 순수 함수 — 방향 반전 로직을 단위 테스트로 고정한다.)
@@ -88,6 +94,11 @@ struct TerminalGauge: View {
                 }
                 // 스코프를 슬라임에만 한정 → 리셋 시 채움 바가 함께 애니메이션되지 않는다.
                 .animation(GaugeCritter.fadeAnimation, value: showCritter)
+                if gaugeCritter, !monsters.isEmpty {                 // 몬스터(V2)
+                    GaugeMonsterLayer(barSize: geo.size, encounters: monsters,
+                                      sessionWindow: critterVariant == .session,
+                                      config: monsterConfig, lastHitAt: monsterHits)
+                }
             }
         }
         .frame(height: height)
@@ -196,6 +207,19 @@ struct GaugeCritter: View {
         guard hop > 0, barWidth > 0 else { return -spriteWidth }
         let hopsPerCross = Int(((barWidth + spriteWidth) / hop).rounded(.up))
         let hopIndex = (abs(tick) + 1) / 2 % max(1, hopsPerCross)
+        return CGFloat(hopIndex) * hop - spriteWidth
+    }
+
+    /// 중간에 나온 크리터(확률 출현 몬스터)의 행진: `startTick`에 `startX`(hop 격자로 맞춤)에서 출발해
+    /// 위와 같은 리듬(홀수 틱에 전진)으로 걷고, 오른끝을 지나면 왼쪽 밖에서 재등장한다.
+    /// 출발 틱보다 이른 틱(시계 차)은 출발점에 둔다. 출발 틱 기준이라 시계 기준점과 무관하다.
+    static func offsetX(tick: Int, startTick: Int, startX: CGFloat, hop: CGFloat,
+                        spriteWidth: CGFloat, barWidth: CGFloat) -> CGFloat {
+        guard hop > 0, barWidth > 0 else { return -spriteWidth }
+        let hopsPerCross = max(1, Int(((barWidth + spriteWidth) / hop).rounded(.up)))
+        let startHop = Int(((startX + spriteWidth) / hop).rounded())
+        let hops = (max(tick, startTick) + 1) / 2 - (startTick + 1) / 2
+        let hopIndex = ((startHop + hops) % hopsPerCross + hopsPerCross) % hopsPerCross
         return CGFloat(hopIndex) * hop - spriteWidth
     }
 }

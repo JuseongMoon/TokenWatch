@@ -116,7 +116,7 @@ struct AgentCardView: View {
                     .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             } else {
                 ForEach(windows) { window in
-                    UsageBar(window: window)
+                    UsageBar(window: window, agent: agent)
                 }
             }
         } else if let error = snapshot?.error {

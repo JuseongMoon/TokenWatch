@@ -50,6 +50,7 @@ enum LoginFailureCode {
         case UsageError.unauthorized: return "http_401"
         case UsageError.rateLimited: return "http_429"
         case UsageError.http(let status, _): return http(status)
+        case UsageError.keyRejected(let status, _): return http(status)
         case UsageError.decode, UsageError.noWindows: return "parse"
         case let e as URLError: return network(e)
         case is DecodingError: return "parse"

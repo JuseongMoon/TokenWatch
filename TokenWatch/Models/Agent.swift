@@ -164,7 +164,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .claude, .codex, .copilot, .grok, .cursor: return nil
         case .kimi: return URL(string: "https://www.kimi.com/code/console")
-        case .openrouter: return URL(string: "https://openrouter.ai/settings/keys")
+        // /credits(계정 잔액)는 관리 키 전용이라 관리 키 발급 페이지로 보낸다.
+        case .openrouter: return URL(string: "https://openrouter.ai/settings/management-keys")
         case .deepseek: return URL(string: "https://platform.deepseek.com/api_keys")
         case .poe: return URL(string: "https://poe.com/api_key")
         case .elevenlabs: return URL(string: "https://elevenlabs.io/app/settings/api-keys")

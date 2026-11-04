@@ -132,13 +132,7 @@ enum GrokOAuth {
     /// `application/x-www-form-urlencoded` 본문. `A-Za-z0-9-._~`만 그대로 두고 나머지는 전부 퍼센트 인코딩한다.
     /// (`URLComponents`는 `+`를 그대로 두는데, 폼 디코더는 `+`를 공백으로 읽어 토큰 값이 바뀐다.)
     static func formBody(_ params: [(String, String)]) -> Data {
-        let unreserved = CharacterSet(charactersIn:
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-        func encode(_ text: String) -> String {
-            text.addingPercentEncoding(withAllowedCharacters: unreserved) ?? text
-        }
-        let pairs = params.map { "\(encode($0.0))=\(encode($0.1))" }
-        return Data(pairs.joined(separator: "&").utf8)
+        FormURLEncoding.body(params)
     }
 
     // MARK: 네트워크

@@ -89,7 +89,33 @@ final class AgentStore {
     @ObservationIgnored private var resetRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var scheduledResetRefreshAt: Date?
 
-    init() {
+    /// 스냅샷 조회 함수 — 앱은 `ProviderUsage.fetchSnapshot`, 테스트는 완료 순서를 통제하는 가짜를 쓴다.
+    typealias SnapshotFetcher = @MainActor (_ provider: AgentProvider, _ agentID: UUID, _ manual: Bool) async -> AgentSnapshot?
+    /// GitHub 토큰 → 사용자 ID(레거시 Copilot 카드 식별용). 실패하면 nil.
+    typealias CopilotIdentityResolver = @Sendable (_ accessToken: String) async -> String?
+
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let tokenStore: TokenStore
+    @ObservationIgnored private let fetchSnapshot: SnapshotFetcher
+    @ObservationIgnored private let copilotIdentity: CopilotIdentityResolver
+
+    /// 카드별 로그인 세대(화면 상태용). 같은 카드로 재로그인하거나 카드를 지우면 오른다.
+    /// 조회는 시작할 때의 값을 기억했다가, 끝났을 때 값이 바뀌었으면 결과를 화면에 반영하지 않는다 —
+    /// 이전 토큰으로 시작한 조회의 오류·스냅샷이 새 로그인 상태를 덮지 않게 한다.
+    @ObservationIgnored private var loginEpoch: [UUID: UInt64] = [:]
+
+    init(defaults: UserDefaults = .standard,
+         tokenStore: TokenStore = .shared,
+         fetchSnapshot: SnapshotFetcher? = nil,
+         copilotIdentity: CopilotIdentityResolver? = nil) {
+        self.defaults = defaults
+        self.tokenStore = tokenStore
+        self.fetchSnapshot = fetchSnapshot ?? { provider, agentID, manual in
+            await ProviderUsage.fetchSnapshot(provider, for: agentID, manual: manual)
+        }
+        self.copilotIdentity = copilotIdentity ?? { token in
+            try? await CopilotDeviceFlow.fetchUserID(accessToken: token)
+        }
         let dropped = load()
         creditPeaks = loadCreditPeaks()
         resetBaseline = loadResetBaseline()
@@ -124,7 +150,7 @@ final class AgentStore {
     /// 저장된 목록을 읽어 지원 중인 provider만 채택한다.
     /// - Returns: 지원이 끊긴 provider라 걸러낸 에이전트 ID들(고아 데이터 정리용).
     private func load() -> [UUID] {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return [] }
+        guard let data = defaults.data(forKey: defaultsKey) else { return [] }
         let (kept, droppedIDs) = Self.decodeAgents(from: data)
         agents = kept
         return droppedIDs
@@ -141,7 +167,7 @@ final class AgentStore {
         let prunedBaseline = resetBaseline.filter { key in !prefixes.contains { key.key.hasPrefix($0) } }
         if prunedBaseline.count != resetBaseline.count { resetBaseline = prunedBaseline; saveResetBaseline() }
         for id in droppedIDs {
-            Task { await TokenStore.shared.delete(for: id) }
+            Task { [tokenStore] in await tokenStore.delete(for: id) }
             Task { await NotificationManager.shared.removePending(forAgentID: id) }
         }
     }
@@ -150,29 +176,29 @@ final class AgentStore {
         // 데모 목록이 실제 저장 데이터를 덮어쓰지 않게 한다(데모는 표시 전용).
         guard !isDemo else { return }
         guard let data = try? JSONEncoder().encode(agents) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+        defaults.set(data, forKey: defaultsKey)
     }
 
     private func loadCreditPeaks() -> [String: Double] {
-        guard let data = UserDefaults.standard.data(forKey: creditPeaksKey),
+        guard let data = defaults.data(forKey: creditPeaksKey),
               let decoded = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
         return decoded
     }
 
     private func saveCreditPeaks(_ peaks: [String: Double]) {
         guard let data = try? JSONEncoder().encode(peaks) else { return }
-        UserDefaults.standard.set(data, forKey: creditPeaksKey)
+        defaults.set(data, forKey: creditPeaksKey)
     }
 
     private func loadResetBaseline() -> [String: WindowObservation] {
-        guard let data = UserDefaults.standard.data(forKey: resetBaselineKey),
+        guard let data = defaults.data(forKey: resetBaselineKey),
               let decoded = try? JSONDecoder().decode([String: WindowObservation].self, from: data) else { return [:] }
         return decoded
     }
 
     private func saveResetBaseline() {
         guard let data = try? JSONEncoder().encode(resetBaseline) else { return }
-        UserDefaults.standard.set(data, forKey: resetBaselineKey)
+        defaults.set(data, forKey: resetBaselineKey)
     }
 
     // MARK: 변경
@@ -188,16 +214,20 @@ final class AgentStore {
         // 같은 계정으로 다시 로그인했으면 카드를 새로 만들지 않고 토큰만 교체한다.
         // (인증 시트는 Safari에 로그인된 계정을 그대로 쓰므로 같은 계정이 다시 들어오기 쉽다.
         //  카드가 둘이면 한 계정의 refresh token 계열을 두 곳에서 갱신해 로테이션 충돌이 난다.)
-        if let email = tokens.accountEmail,
-           let existing = agents.first(where: { $0.provider == provider && $0.accountLabel == email }) {
-            guard await TokenStore.shared.save(tokens, for: existing.id) else { return false }
+        if let existing = await existingAgent(for: provider, tokens: tokens) {
+            // 새 로그인 세대로 저장 — 진행 중이던 이전 갱신이 이 토큰을 덮거나 지우지 못한다.
+            guard await tokenStore.replaceLogin(tokens, for: existing.id) else { return false }
+            // 화면 세대도 올린다. 이전 토큰으로 진행 중인 조회의 결과는 버려지고 새 토큰으로 다시 조회한다.
+            loginEpoch[existing.id, default: 0] &+= 1
             AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
-            await refresh(existing)
+            // 직전 조회가 20초 안에 있었어도(예: 인증 오류를 본 직후) 새 자격증명으로 반드시 한 번 조회한다.
+            let current = agents.first(where: { $0.id == existing.id }) ?? existing
+            await refresh(current, manual: false, bypassSpacing: true)
             return true
         }
         var agent = Agent(provider: provider)
         agent.accountLabel = tokens.accountEmail ?? tokens.plan
-        guard await TokenStore.shared.save(tokens, for: agent.id) else { return false }
+        guard await tokenStore.replaceLogin(tokens, for: agent.id) else { return false }
         agents.append(agent)
         persist()
         AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
@@ -210,6 +240,31 @@ final class AgentStore {
         return true
     }
 
+    /// 같은 계정으로 다시 로그인한 것인지 — 기존 카드를 찾는다.
+    /// - Copilot: GitHub 사용자 숫자 ID로만 비교한다(이메일·사용자명·플랜은 바뀌거나 비공개일 수 있다).
+    ///   ID가 없는 이전 버전 카드는 저장된 토큰이 아직 통하면 그 토큰으로 ID를 확인해 비교·보강한다.
+    ///   토큰이 죽어 확인할 수 없는 카드는 추측으로 합치지 않는다(새 카드가 생기고, 사용자가 옛 카드를 지운다).
+    /// - 그 외: 기존처럼 계정 이메일이 카드 라벨과 같을 때.
+    private func existingAgent(for provider: AgentProvider, tokens: OAuthTokens) async -> Agent? {
+        if provider == .copilot {
+            guard let userID = tokens.stableUserID else { return nil }
+            for candidate in agents where candidate.provider == .copilot {
+                guard let stored = await tokenStore.tokens(for: candidate.id) else { continue }
+                if let storedID = stored.stableUserID {
+                    if storedID == userID { return candidate }
+                    continue
+                }
+                let generation = await tokenStore.generation(for: candidate.id)
+                guard let resolved = await copilotIdentity(stored.accessToken) else { continue }
+                await tokenStore.updateStableUserID(resolved, for: candidate.id, generation: generation)
+                if resolved == userID { return candidate }
+            }
+            return nil
+        }
+        guard let email = tokens.accountEmail else { return nil }
+        return agents.first(where: { $0.provider == provider && $0.accountLabel == email })
+    }
+
     /// 리뷰 프롬프트를 요청했다 — 설치당 1회이므로 영구 기록한다.
     func markReviewPrompted() {
         ReviewPromptState().markPrompted()
@@ -219,6 +274,8 @@ final class AgentStore {
     func remove(_ agent: Agent) {
         agents.removeAll { $0.id == agent.id }
         snapshots[agent.id] = nil
+        // 진행 중인 조회 결과가 지운 카드의 스냅샷을 되살리지 않게 한다.
+        loginEpoch[agent.id, default: 0] &+= 1
         // 데모 카드는 표시 전용 — 저장소·Keychain·예약 알림에는 애초에 흔적이 없다.
         // (데모를 다시 열면 원래 목록이 그대로 복원된다.)
         guard !isDemo else { return }
@@ -232,7 +289,7 @@ final class AgentStore {
         let prunedBaseline = resetBaseline.filter { !$0.key.hasPrefix(prefix) }
         if prunedBaseline.count != resetBaseline.count { resetBaseline = prunedBaseline; saveResetBaseline() }
         persist()
-        Task { await TokenStore.shared.delete(for: agent.id) }
+        Task { [tokenStore] in await tokenStore.delete(for: agent.id) }
         // 이 에이전트에 걸려 있던 예약 리셋 알림도 제거.
         Task { await NotificationManager.shared.removePending(forAgentID: agent.id) }
     }
@@ -256,7 +313,7 @@ final class AgentStore {
     /// 상세 화면용: Keychain에 저장된 토큰에서 계정 정보를 읽어온다.
     func accountInfo(for agent: Agent) async -> AccountInfo? {
         if isDemo { return DemoData.accountInfo(for: agent) }
-        guard let t = await TokenStore.shared.tokens(for: agent.id) else { return nil }
+        guard let t = await tokenStore.tokens(for: agent.id) else { return nil }
         return AccountInfo(email: t.accountEmail, plan: t.plan, scopes: t.scopes,
                            expiresAt: t.expiresAt, canRefresh: t.refreshToken != nil,
                            accountId: t.accountId)
@@ -313,17 +370,35 @@ final class AgentStore {
     /// - Parameter manual: 사용자가 직접 [refresh]를 눌렀을 때 true. 버스트 스로틀을 우회하고,
     ///   Codex는 이때 accounts/check에서 현재 plan을 라이브로 읽어 갱신한다(Pro→Free 반영).
     func refresh(_ agent: Agent, manual: Bool = false) async {
+        await refresh(agent, manual: manual, bypassSpacing: manual)
+    }
+
+    /// - Parameter bypassSpacing: 버스트 스로틀(minFetchSpacing)을 건너뛴다. 수동 새로고침과
+    ///   재로그인 직후 조회가 쓴다(재로그인은 Codex plan 조회 같은 수동 전용 동작은 하지 않는다).
+    private func refresh(_ agent: Agent, manual: Bool, bypassSpacing: Bool) async {
         if isDemo { tickDemo(); return }
-        // 이미 조회 중이면 중복 실행 방지.
+        // 이미 조회 중이면 중복 실행 방지. (재로그인으로 세대가 바뀌었다면 진행 중인 조회가
+        // 끝날 때 결과를 버리고 새 자격증명으로 다시 조회한다 — 아래 세대 확인.)
         guard !loadingIDs.contains(agent.id) else { return }
         // 최근 minFetchSpacing 안에 이미 조회했으면 캐시 유지(버스트 흡수).
         // 단, 수동 새로고침은 방금 조회했더라도 항상 실행한다.
-        if !manual, let last = lastFetchAt[agent.id],
+        if !bypassSpacing, let last = lastFetchAt[agent.id],
            Date().timeIntervalSince(last) < minFetchSpacing { return }
         lastFetchAt[agent.id] = Date()
+        let epoch = loginEpoch[agent.id, default: 0]
         loadingIDs.insert(agent.id)
-        defer { loadingIDs.remove(agent.id) }
-        guard var snapshot = await ProviderUsage.fetchSnapshot(agent.provider, for: agent.id, manual: manual) else {
+        let fetched = await fetchSnapshot(agent.provider, agent.id, manual)
+        loadingIDs.remove(agent.id)
+        // 조회하는 사이 같은 카드로 재로그인했거나 카드를 지웠다 — 이전 자격증명의 결과(오류 포함)는
+        // 화면에 반영하지 않는다. 카드가 남아 있으면 새 자격증명으로 곧바로 다시 조회한다.
+        guard loginEpoch[agent.id, default: 0] == epoch else {
+            lastFetchAt[agent.id] = nil
+            if let current = agents.first(where: { $0.id == agent.id }) {
+                await refresh(current, manual: false, bypassSpacing: true)
+            }
+            return
+        }
+        guard var snapshot = fetched else {
             // 취소됨(백그라운드 전환·주기 변경) — 표시 상태를 건드리지 않고,
             // 다음 시도가 버스트 스로틀에 걸리지 않도록 스탬프를 되돌린다.
             lastFetchAt[agent.id] = nil
@@ -360,8 +435,8 @@ final class AgentStore {
         }
 
         // 활성화 완료(설치 후 1회): 첫 에이전트의 첫 정상 스냅샷 — GA4 키 이벤트.
-        if snapshot.error == nil, !UserDefaults.standard.bool(forKey: Self.activatedKey) {
-            UserDefaults.standard.set(true, forKey: Self.activatedKey)
+        if snapshot.error == nil, !defaults.bool(forKey: Self.activatedKey) {
+            defaults.set(true, forKey: Self.activatedKey)
             AnalyticsService.shared.log(.activationComplete(provider: agent.provider))
         }
 
@@ -373,7 +448,7 @@ final class AgentStore {
                 return s.error == nil && !s.windows.isEmpty
             }
             reviewPromptPending = ReviewPromptPolicy.shouldPrompt(
-                activated: UserDefaults.standard.bool(forKey: Self.activatedKey),
+                activated: defaults.bool(forKey: Self.activatedKey),
                 firstLaunchAt: review.firstLaunchAt, launchCount: review.launchCount,
                 alreadyPrompted: review.prompted, allSnapshotsHealthy: healthy, now: Date())
         }
@@ -671,12 +746,12 @@ final class AgentStore {
 
     /// 세션 리셋 알림 on/off(기본 OFF — 5시간마다라 잦음). 키 부재 시 false.
     private var notifySessionEnabled: Bool {
-        UserDefaults.standard.bool(forKey: NotificationDefaults.sessionKey)
+        defaults.bool(forKey: NotificationDefaults.sessionKey)
     }
     /// 주간 리셋 알림 on/off(기본 ON). 키 부재 시 true.
     private var notifyWeeklyEnabled: Bool {
-        UserDefaults.standard.object(forKey: NotificationDefaults.weeklyKey) == nil
-            ? true : UserDefaults.standard.bool(forKey: NotificationDefaults.weeklyKey)
+        defaults.object(forKey: NotificationDefaults.weeklyKey) == nil
+            ? true : defaults.bool(forKey: NotificationDefaults.weeklyKey)
     }
 }
 

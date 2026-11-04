@@ -322,7 +322,7 @@ struct AddAgentSheet: View {
             // code에는 원문 메시지 대신 분류 코드만 — 키·URL 혼입 방지.
             AnalyticsService.shared.log(.loginFail(provider: provider, stage: .apiKeyEntry,
                                                    code: LoginFailureCode.from(error)))
-            phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            phase = .failed(LoginErrorText.message(for: error, lang: currentLang()))
         }
     }
 
@@ -417,7 +417,7 @@ struct AddAgentSheet: View {
             } else {
                 pendingExchange = nil
             }
-            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            let msg = LoginErrorText.message(for: error, lang: currentLang())
             phase = .failed(msg)
         }
     }
@@ -598,6 +598,9 @@ private struct DeviceFlowView: View {
     @State private var started = false
     @State private var userCode: String?
     @State private var verificationURI: URL?
+    /// 폴링 대기를 깨우는 장치 — 앱이 다시 활성화되면(승인하러 다른 앱에 갔다 돌아옴) 곧바로 한 번 묻는다.
+    @State private var waker = PollWaker()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -665,11 +668,14 @@ private struct DeviceFlowView: View {
             .padding(16)
         }
         .task { await run() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { waker.wake() }
+        }
     }
 
     private func run() async {
         do {
-            let login = try await ProviderAuth.startPollingLogin(provider)
+            let login = try await ProviderAuth.startPollingLogin(provider, waker: waker)
             userCode = login.userCode
             verificationURI = login.verificationURL
             started = true
@@ -687,7 +693,7 @@ private struct DeviceFlowView: View {
             // 화면 이탈로 진행 중이던 요청이 끊김 — 취소와 같다(로그인 실패로 기록하지 않는다).
         } catch {
             InAppSafari.close()
-            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+            onError(LoginErrorText.message(for: error, lang: currentLang()),
                     LoginFailureCode.from(error))
         }
     }

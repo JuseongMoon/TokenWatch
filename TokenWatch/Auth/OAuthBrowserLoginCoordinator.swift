@@ -45,15 +45,18 @@ final class OAuthBrowserLoginCoordinator {
     /// 마지막 세션. 끝난 뒤에도 다음 시도나 이 객체가 사라질 때까지 붙잡는다(해제 타이밍 크래시 회피).
     @ObservationIgnored private var session: ASWebAuthenticationSession?
     @ObservationIgnored private var redirect: String?
-    /// 시도당 결과는 한 번만 전달한다(리스너와 시트 콜백이 둘 다 올 수 있다).
-    @ObservationIgnored private var finished = true
-    /// 시도마다 증가 — 늦게 도착한 이전 시도의 콜백을 버린다.
-    @ObservationIgnored private var attempt = 0
+    /// 시도당 결과는 한 번만 전달하고(리스너·시트 콜백·시간 초과가 겹칠 수 있다),
+    /// 늦게 도착한 이전 시도의 이벤트는 버린다.
+    @ObservationIgnored private var latch = LoginAttemptLatch()
+    /// 루프백 리스너 수명(로그인 대기 시간 상한). 테스트·디버그용으로만 바꾼다.
+    @ObservationIgnored private let listenerLifetime: Duration
 
     init(provider: AgentProvider,
          pkce: PKCE,
          onCode: @escaping (_ code: String, _ state: String, _ redirect: String) -> Void,
-         onError: @escaping (_ message: String, _ analyticsCode: String) -> Void) {
+         onError: @escaping (_ message: String, _ analyticsCode: String) -> Void,
+         listenerLifetime: Duration = LoopbackCallbackServer.defaultLifetime) {
+        self.listenerLifetime = listenerLifetime
         self.provider = provider
         self.pkce = pkce
         self.onCode = onCode
@@ -64,33 +67,36 @@ final class OAuthBrowserLoginCoordinator {
 
     /// - Parameter ephemeral: true면 Safari에 로그인된 계정을 쓰지 않는다(다른 계정으로 로그인).
     func start(ephemeral: Bool) async {
-        guard finished, !isPresenting else { return }
-        finished = false
+        guard !isPresenting, let current = latch.begin() else { return }
         wasCancelled = false
-        attempt += 1
-        let current = attempt
 
-        let listener = LoopbackCallbackServer(expectedState: pkce.state) { [weak self] code, state in
-            self?.receive(code: code, state: state, attempt: current)
+        let listener = LoopbackCallbackServer(expectedState: pkce.state,
+                                              lifetime: listenerLifetime) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .code(let code, let state): self.receive(code: code, state: state, attempt: current)
+            case .oauthError(let error): self.providerRejected(error: error, attempt: current)
+            case .timedOut: self.timedOut(attempt: current)
+            }
         }
         let port: UInt16
         do {
             port = try await listener.start()
         } catch {
             listener.stop()
-            guard current == attempt else { return }
-            fail(sessionFailedMessage, analyticsCode: "loopback_listen")
+            guard latch.isLive(current) else { return }
+            fail(sessionFailedMessage, analyticsCode: "loopback_listen", attempt: current)
             return
         }
         // 리스너를 띄우는 사이 시트가 닫혔다면(cancel) 이 시도는 버린다.
-        guard current == attempt, !finished else {
+        guard latch.isLive(current) else {
             listener.stop()
             return
         }
         server = listener
         guard let redirect = ProviderAuth.loopbackRedirectURI(provider, port: port) else {
             // 루프백 콜백을 쓰지 않는 provider — AddAgentSheet가 이 경로로 보내지 않는다.
-            fail(sessionFailedMessage, analyticsCode: "unsupported_provider")
+            fail(sessionFailedMessage, analyticsCode: "unsupported_provider", attempt: current)
             return
         }
         self.redirect = redirect
@@ -114,7 +120,7 @@ final class OAuthBrowserLoginCoordinator {
         isPresenting = true
         if !authSession.start() {
             isPresenting = false
-            fail(sessionFailedMessage, analyticsCode: "auth_session_start")
+            fail(sessionFailedMessage, analyticsCode: "auth_session_start", attempt: current)
         }
     }
 
@@ -122,8 +128,7 @@ final class OAuthBrowserLoginCoordinator {
 
     /// 로그인 화면(추가 시트)이 실제로 닫힐 때 — 진행 중인 리스너·시트를 정리하고 결과는 버린다.
     func cancel() {
-        attempt += 1
-        finished = true
+        latch.invalidate()
         if isPresenting {
             session?.cancel()
             isPresenting = false
@@ -133,42 +138,79 @@ final class OAuthBrowserLoginCoordinator {
 
     /// 루프백 리스너가 code를 받았다(302 전송 뒤).
     private func receive(code: String, state: String, attempt: Int) {
-        guard attempt == self.attempt, !finished, let redirect else { return }
-        finished = true
+        guard latch.isLive(attempt), let redirect else { return }
+        _ = latch.finish(attempt)
         // 리스너는 응답을 보낸 뒤 스스로 접힌다 — 여기서 멈추지 않는다.
         server = nil
-        // 보통은 방금 보낸 302로 시트가 곧 스스로 닫힌다. 잠시 뒤에도 떠 있으면 직접 닫는다.
-        if isPresenting {
-            Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                guard attempt == self.attempt, self.isPresenting else { return }
-                self.session?.cancel()
-                self.isPresenting = false
-            }
-        }
+        closeSheetSoon(attempt: attempt)
         onCode(code, state, redirect)
+    }
+
+    /// 보통은 방금 보낸 302로 시트가 곧 스스로 닫힌다. 잠시 뒤에도 떠 있으면 직접 닫는다.
+    private func closeSheetSoon(attempt: Int) {
+        guard isPresenting else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard attempt == self.latch.attempt, self.isPresenting else { return }
+            self.session?.cancel()
+            self.isPresenting = false
+        }
+    }
+
+    /// 인가 서버가 오류로 돌려보냈다(state 검증 통과 — 예: 사용자가 승인 거부). 이 시도를 끝내고 안내한다.
+    private func providerRejected(error: String, attempt: Int) {
+        guard latch.finish(attempt) else { return }
+        server = nil   // 리스너는 302를 보낸 뒤 스스로 접힌다
+        closeSheetSoon(attempt: attempt)
+        let loc = L10n(lang: currentLang())
+        let message = error == "access_denied" ? loc.browserLoginDenied : loc.browserLoginProviderError
+        // 분석에는 분류 코드만(원문 error_description·URL 금지). 기존 서버 분류표 안의 값만 쓴다.
+        onError(message, Self.analyticsCode(forOAuthError: error))
+    }
+
+    /// 로그인 대기 시간이 다 됐다 — 시트를 닫고 다시 시도할 수 있는 상태로 안내한다.
+    private func timedOut(attempt: Int) {
+        guard latch.finish(attempt) else { return }
+        server = nil   // 리스너가 스스로 닫혔다
+        if isPresenting {
+            session?.cancel()   // cancel()은 완료 핸들러를 부르지 않는다
+            isPresenting = false
+        }
+        onError(L10n(lang: currentLang()).browserLoginTimedOut, "timed_out")
+    }
+
+    /// OAuth `error` → 로그인 실패 코드(`LoginFailureCode` 표 안의 값).
+    static func analyticsCode(forOAuthError error: String) -> String {
+        if error == "access_denied" { return "denied" }
+        return LoginFailureCode.oauthError(error) ?? LoginFailureCode.other
     }
 
     /// 인증 시트가 끝났다(콜백 URL 도착·사용자 취소·오류). 프로그램으로 cancel()한 경우엔 오지 않는다.
     private func sessionEnded(callbackURL: URL?, cancelled: Bool, errorCode: Int?, attempt: Int) {
-        guard attempt == self.attempt else { return }
+        guard attempt == latch.attempt else { return }
         isPresenting = false
-        // 리스너가 이미 code를 넘겼으면 할 일이 없다.
-        guard !finished else { return }
+        // 리스너가 이미 결과를 넘겼으면 할 일이 없다.
+        guard latch.isLive(attempt) else { return }
 
         if let callbackURL, let redirect,
            let parsed = LoopbackCallbackServer.parseSessionCallback(callbackURL) {
-            finished = true
+            _ = latch.finish(attempt)
             server = nil
             onCode(parsed.code, parsed.state, redirect)
+        } else if let callbackURL,
+                  let error = LoopbackCallbackServer.parseSessionError(callbackURL, expectedState: pkce.state) {
+            // 리스너보다 시트 콜백이 먼저 왔다 — 리스너는 이미 응답했으니 정리만 한다.
+            stopServer()
+            providerRejected(error: error, attempt: attempt)
         } else if cancelled {
-            finished = true
+            _ = latch.finish(attempt)
             wasCancelled = true
             stopServer()
         } else {
             // 분석에는 에러 코드 정수만 싣는다(원문 메시지 금지).
             // 코드 규칙(`[a-z0-9_]`)에 맞게 부호를 떼고, 코드가 없으면 other로 둔다.
-            fail(sessionFailedMessage, analyticsCode: errorCode.map { "auth_session_\(abs($0))" } ?? LoginFailureCode.other)
+            fail(sessionFailedMessage, analyticsCode: errorCode.map { "auth_session_\(abs($0))" } ?? LoginFailureCode.other,
+                 attempt: attempt)
         }
     }
 
@@ -178,8 +220,8 @@ final class OAuthBrowserLoginCoordinator {
             .browserSessionFailed(manualFallback: ProviderAuth.manualCodeRedirect(provider) != nil)
     }
 
-    private func fail(_ message: String, analyticsCode: String) {
-        finished = true
+    private func fail(_ message: String, analyticsCode: String, attempt: Int) {
+        guard latch.finish(attempt) else { return }
         stopServer()
         onError(message, analyticsCode)
     }
@@ -187,6 +229,38 @@ final class OAuthBrowserLoginCoordinator {
     private func stopServer() {
         server?.stop()
         server = nil
+    }
+}
+
+/// 로그인 시도 하나의 수명(순수 상태 — 테스트 대상).
+/// 시도마다 번호를 새로 주고, 그 시도의 결과(성공·거절·취소·시간 초과·실패)는 처음 하나만 받는다.
+/// 번호가 다른(이전 시도의) 늦은 이벤트는 새 시도를 끝내지 못한다.
+nonisolated struct LoginAttemptLatch: Equatable, Sendable {
+    private(set) var attempt = 0
+    private(set) var finished = true
+
+    /// 새 시도를 시작한다. 진행 중인 시도가 있으면 nil.
+    mutating func begin() -> Int? {
+        guard finished else { return nil }
+        finished = false
+        attempt += 1
+        return attempt
+    }
+
+    /// 이 시도가 아직 결과를 기다리는 중인지.
+    func isLive(_ attempt: Int) -> Bool { attempt == self.attempt && !finished }
+
+    /// 이 시도를 끝낸다. 처음 끝낸 호출만 true(그 호출만 결과를 전달한다).
+    mutating func finish(_ attempt: Int) -> Bool {
+        guard isLive(attempt) else { return false }
+        finished = true
+        return true
+    }
+
+    /// 화면이 닫히는 등 진행 중인 시도를 결과 없이 버린다 — 이후 그 시도의 이벤트는 모두 무시된다.
+    mutating func invalidate() {
+        attempt += 1
+        finished = true
     }
 }
 

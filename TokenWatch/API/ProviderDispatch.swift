@@ -16,6 +16,10 @@ enum UsageError: Error, LocalizedError {
     case http(Int, String)
     case decode(String)
     case noWindows
+    /// provider가 키를 거부·권한 부족으로 돌려보냈고, 사용자가 할 일을 구체적으로 안내해야 하는 경우.
+    /// `message`는 현지화된 안내문(원문 응답 아님), `status`는 분석 분류용 HTTP 코드.
+    /// refresh 개념이 없는 API 키라 `unauthorized`(강제 갱신 경로)로 보내지 않는다.
+    case keyRejected(status: Int, message: String)
 
     var errorDescription: String? {
         let loc = L10n(lang: currentLang())
@@ -25,6 +29,7 @@ enum UsageError: Error, LocalizedError {
         case .http(let code, _): return loc.errHTTP(code)
         case .decode(let m): return loc.errDecode(m)
         case .noWindows: return loc.errNoWindows
+        case .keyRejected(_, let message): return message
         }
     }
 }
@@ -39,6 +44,8 @@ extension FetchErrorReason {
         case UsageError.http(let code, _): self = code >= 500 ? .http5xx : .http4xx
         case UsageError.decode: self = .parse
         case UsageError.noWindows: self = .empty
+        // 401은 인증 거부, 403은 기존과 같은 4xx로 분류한다(분석 계약 유지).
+        case UsageError.keyRejected(let status, _): self = status == 401 ? .auth : .http4xx
         case is OAuthError: self = .auth   // 토큰 refresh 실패 → 재로그인 필요
         case is URLError: self = .network
         default: self = .other
@@ -157,16 +164,21 @@ enum ProviderAuth {
 
     /// 폴링 로그인(`.oauthDeviceFlow`)을 시작한다 — 승인 페이지 정보와, 승인될 때까지 토큰을 기다리는 폴러.
     /// 다른 인증 방식 provider는 AddAgentSheet가 이 경로로 보내지 않는다.
-    static func startPollingLogin(_ provider: AgentProvider) async throws -> PollingLogin {
+    /// - Parameter waker: 앱이 다시 활성화되면 폴링 대기를 깨워 곧바로 한 번 묻게 한다.
+    static func startPollingLogin(_ provider: AgentProvider, waker: PollWaker = PollWaker()) async throws -> PollingLogin {
+        let sleep: @Sendable (Duration) async throws -> Void = { try await waker.sleep(for: $0) }
         switch provider {
         case .copilot:
             let device = try await CopilotDeviceFlow.requestDeviceCode()
             return PollingLogin(userCode: device.userCode, verificationURL: device.verificationURI,
-                                poll: { try await CopilotDeviceFlow.pollForToken(device) })
+                                poll: {
+                                    let tokens = try await CopilotDeviceFlow.pollForToken(device, sleep: sleep)
+                                    return try await CopilotDeviceFlow.identified(tokens)
+                                })
         case .cursor:
             let handshake = CursorAuth.makeHandshake()
             return PollingLogin(userCode: nil, verificationURL: handshake.loginURL,
-                                poll: { try await CursorAuth.completeLogin(handshake) })
+                                poll: { try await CursorAuth.completeLogin(handshake, sleep: sleep) })
         case .claude, .codex, .grok, .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
             throw OAuthError.notAuthenticated
         }
@@ -182,6 +194,17 @@ struct PollingLogin {
     let verificationURL: URL?
     /// 승인될 때까지 기다려 토큰을 돌려준다. 만료·거부 시 throw, 화면 이탈(Task 취소) 시 CancellationError.
     let poll: () async throws -> OAuthTokens
+}
+
+/// 레거시 Copilot 카드의 계정 ID 보강을 실행(프로세스)당 카드별 한 번만 시도한다 —
+/// 실패할 때마다 매 폴링에 GitHub 요청을 하나씩 더 얹지 않으려고.
+actor CopilotIdentityBackfill {
+    static let shared = CopilotIdentityBackfill()
+    private var attempted: Set<UUID> = []
+
+    func shouldTry(_ agentID: UUID) -> Bool {
+        attempted.insert(agentID).inserted
+    }
 }
 
 // MARK: - Usage 디스패치 + 공통 오케스트레이션
@@ -217,13 +240,18 @@ enum ProviderUsage {
             return await rateLimitedSnapshot(agentID: agentID, until: until)
         }
 
+        // 이 조회 전체를 시작 시점의 로그인 세대에 묶는다. 그 사이 같은 카드로 재로그인·삭제되면
+        // 토큰 갱신·plan 저장을 하지 않고 nil(취소와 같음)을 돌려준다 — 옛 결과를 새 로그인에 덮지 않는다.
+        let generation = await TokenStore.shared.generation(for: agentID)
         do {
-            var tokens = try await TokenStore.shared.validTokens(for: agentID, provider: provider)
+            var tokens = try await TokenStore.shared.validTokens(for: agentID, provider: provider,
+                                                                 generation: generation)
             let usage: (windows: [UsageWindow], plan: String?)
             do {
                 usage = try await fetchUsage(provider, tokens: tokens)
             } catch UsageError.unauthorized {
-                tokens = try await TokenStore.shared.forceRefresh(for: agentID, provider: provider)
+                tokens = try await TokenStore.shared.forceRefresh(for: agentID, provider: provider,
+                                                                  generation: generation)
                 usage = try await fetchUsage(provider, tokens: tokens)
             }
             let windows = usage.windows
@@ -237,7 +265,7 @@ enum ProviderUsage {
             // 반영한다. 추가 요청 없이 매 조회에 따라오므로 수동/자동을 가리지 않는다. 없으면 기존 값 유지.
             if let livePlan = usage.plan, livePlan != tokens.plan {
                 tokens.plan = livePlan
-                await TokenStore.shared.updatePlan(livePlan, for: agentID)
+                await TokenStore.shared.updatePlan(livePlan, for: agentID, generation: generation)
             }
 
             // Codex plan 라이브 갱신: id_token(JWT)의 chatgpt_plan_type은 최초 로그인 시점
@@ -247,7 +275,16 @@ enum ProviderUsage {
                let livePlan = try? await CodexAccountClient.fetchPlan(tokens: tokens),
                livePlan != tokens.plan {
                 tokens.plan = livePlan
-                await TokenStore.shared.updatePlan(livePlan, for: agentID)
+                await TokenStore.shared.updatePlan(livePlan, for: agentID, generation: generation)
+            }
+
+            // 이전 버전에서 추가한 Copilot 카드는 계정 ID가 없다. 토큰이 통하는 지금 그 토큰으로 ID를
+            // 확인해 채워 두면, 나중에 같은 계정으로 다시 로그인했을 때 이 카드를 찾을 수 있다.
+            // (토큰 자체가 그 계정의 증거라 추정 병합이 아니다. 실패해도 조회 결과에는 영향 없음.)
+            if provider == .copilot, tokens.stableUserID == nil,
+               await CopilotIdentityBackfill.shared.shouldTry(agentID),
+               let id = try? await CopilotDeviceFlow.fetchUserID(accessToken: tokens.accessToken) {
+                await TokenStore.shared.updateStableUserID(id, for: agentID, generation: generation)
             }
 
             let snapshot = AgentSnapshot(windows: windows, planLabel: tokens.plan,
@@ -260,6 +297,8 @@ enum ProviderUsage {
                 ?? Date().addingTimeInterval(300)
             return await rateLimitedSnapshot(agentID: agentID, until: until)
         } catch is CancellationError {
+            return nil
+        } catch is CredentialSuperseded {
             return nil
         } catch let e as URLError where e.code == .cancelled {
             return nil

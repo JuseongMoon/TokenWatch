@@ -56,22 +56,46 @@ enum CopilotDeviceFlow {
 
     // MARK: Step 3 — access_token 폴링
 
+    /// 폴링 한 번의 요청 — 테스트는 가짜 응답·오류를 넣는다.
+    typealias PollRequest = @Sendable () async throws -> [String: Any]
+    typealias Sleeper = @Sendable (Duration) async throws -> Void
+
     /// 승인될 때까지 interval초 간격으로 폴링한다. 만료/거부 시 throw.
     /// Task 취소(화면 이탈) 시 CancellationError를 던진다.
-    static func pollForToken(_ device: DeviceCode) async throws -> OAuthTokens {
-        var interval = max(device.interval, 1)
-        let deadline = Date().addingTimeInterval(TimeInterval(device.expiresIn))
+    ///
+    /// 일시 네트워크 오류(`PollingNetwork.isTransient`)는 실패로 끝내지 않고 다음 주기에 다시 묻는다 —
+    /// 승인하는 동안 앱이 백그라운드로 갔다 돌아오면 첫 요청이 끊기기 쉽다. 끝내는 조건은
+    /// `expired_token`·`access_denied`·device code 만료(`expires_in`)뿐이다.
+    /// - Parameters:
+    ///   - sleep: 주기 대기. 앱이 다시 활성화되면 깨어나는 `PollWaker.sleep`을 넘길 수 있다.
+    ///   - now: 만료 판정 시계(테스트 주입용).
+    ///   - request: 토큰 요청(테스트 주입용). nil이면 GitHub에 실제로 묻는다.
+    static func pollForToken(_ device: DeviceCode,
+                             sleep: Sleeper? = nil,
+                             now: (@Sendable () -> Date)? = nil,
+                             request: PollRequest? = nil) async throws -> OAuthTokens {
+        let sleep = sleep ?? { try await Task.sleep(for: $0) }
+        let now = now ?? { Date() }
+        let body = form([
+            "client_id": clientID,
+            "device_code": device.deviceCode,
+            "grant_type": grantType,
+        ])
+        let request = request ?? { try await postForm(tokenURL, body: body) }
 
-        while Date() < deadline {
-            try await Task.sleep(for: .seconds(interval))
+        var interval = max(device.interval, 1)
+        let deadline = now().addingTimeInterval(TimeInterval(device.expiresIn))
+
+        while now() < deadline {
+            try await sleep(.seconds(interval))
             try Task.checkCancellation()
 
-            let body = form([
-                "client_id": clientID,
-                "device_code": device.deviceCode,
-                "grant_type": grantType,
-            ])
-            let json = try await postForm(tokenURL, body: body)
+            let json: [String: Any]
+            do {
+                json = try await request()
+            } catch let error as URLError where PollingNetwork.isTransient(error) {
+                continue   // 다음 주기에 다시 묻는다
+            }
 
             if let token = json["access_token"] as? String, !token.isEmpty {
                 // GitHub device flow 토큰은 만료/refresh가 없어 그대로 담는다.
@@ -98,6 +122,64 @@ enum CopilotDeviceFlow {
         throw DeviceFlowError.expired
     }
 
+    // MARK: 계정 식별 (같은 계정 재로그인 판별)
+
+    static let authenticatedUserURL = "https://api.github.com/user"
+
+    /// 발급 토큰으로 GitHub 사용자 숫자 ID를 읽는다(공식 REST `GET /user`, 이 앱이 이미 받는 `read:user`
+    /// 범위로 충분하다 — 추가 권한을 요청하지 않는다). 이 ID는 사용자명·이메일이 바뀌거나 비공개여도
+    /// 그대로라 카드 매칭 키로 쓴다. 표시·분석에는 쓰지 않는다.
+    static func fetchUserID(accessToken: String) async throws -> String {
+        var req = URLRequest(url: URL(string: authenticatedUserURL)!)
+        req.httpMethod = "GET"
+        req.setValue("token \(accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        let (data, response) = try await APISession.shared.data(for: req)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw DeviceFlowError.http(L10n(lang: currentLang()).copilotIdentityFailed,
+                                       code: LoginFailureCode.http(status))
+        }
+        guard let id = parseUserID(data) else {
+            throw DeviceFlowError.http(L10n(lang: currentLang()).copilotIdentityFailed, code: "parse")
+        }
+        return id
+    }
+
+    /// `GET /user` 응답에서 숫자 `id`를 문자열로(순수 함수 — 테스트 대상). 없거나 0 이하면 nil.
+    nonisolated static func parseUserID(_ data: Data) -> String? {
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let number = json["id"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.int64Value > 0, number.doubleValue == Double(number.int64Value)
+        else { return nil }
+        return String(number.int64Value)
+    }
+
+    /// 폴링으로 받은 토큰에 계정 ID를 붙인다. 식별에 실패하면 로그인을 실패로 돌린다 —
+    /// ID 없이 저장하면 같은 계정인지 알 수 없어 중복 카드가 생기기 때문이다(다시 시도하면 된다).
+    /// 승인 직후는 앱이 막 전면으로 돌아온 때라 일시 네트워크 오류가 잦다 — 그런 오류는 짧게
+    /// 몇 번 다시 시도하고(1초, 2초 간격), 계속 실패할 때만 끝낸다.
+    static func identified(_ tokens: OAuthTokens,
+                           sleep: Sleeper? = nil,
+                           fetch: (@Sendable (String) async throws -> String)? = nil) async throws -> OAuthTokens {
+        let sleep = sleep ?? { try await Task.sleep(for: $0) }
+        let fetch = fetch ?? { try await fetchUserID(accessToken: $0) }
+        let maxAttempts = 3
+        var attempt = 1
+        while true {
+            do {
+                var t = tokens
+                t.stableUserID = try await fetch(tokens.accessToken)
+                return t
+            } catch let error as URLError where PollingNetwork.isTransient(error) && attempt < maxAttempts {
+                try await sleep(.seconds(attempt))
+                attempt += 1
+            }
+        }
+    }
+
     // MARK: 내부
 
     private static func postForm(_ urlString: String, body: Data) async throws -> [String: Any] {
@@ -119,10 +201,9 @@ enum CopilotDeviceFlow {
         return (obj as? [String: Any]) ?? [:]
     }
 
-    private static func form(_ params: [String: String]) -> Data {
-        var comp = URLComponents()
-        comp.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
-        return Data((comp.percentEncodedQuery ?? "").utf8)
+    /// 폼 본문 — `+`가 공백으로 바뀌지 않도록 공용 인코더를 쓴다(`FormURLEncoding`).
+    static func form(_ params: [String: String]) -> Data {
+        FormURLEncoding.body(params)
     }
 }
 

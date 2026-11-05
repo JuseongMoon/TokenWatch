@@ -8,7 +8,7 @@
 import Foundation
 import Security
 
-enum Keychain {
+nonisolated enum Keychain {
     /// 우리 앱 전용 서비스 네임스페이스.
     private static let service = "com.ScienceFiction.TokenWatch.oauth"
 

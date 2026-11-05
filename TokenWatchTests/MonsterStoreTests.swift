@@ -181,6 +181,34 @@ struct MonsterStoreTests {
         #expect(s.ledger.saves == 0)
     }
 
+    /// 데모 Codex 주간 게이지(100% 미만)에는 고블린(HP 3)이 나온다. 잡아도 저장·게스트 기록·서버 호출이 없다.
+    @Test func demoGoblinOnCodexWeekIsCatchableAndCountsNothing() async {
+        let s = await makeSetup(demo: true)
+        let codex = Agent(provider: .codex)
+        let week = UsageWindow(label: "Current week", usedPercent: 94,
+                               resetsAt: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000 + 86_400), kind: .weekly)
+        let shown = s.store.encounters(agentID: codex.id, provider: .codex, window: week)
+        #expect(shown.count == 1)
+        #expect(shown.first?.monsterID == "goblin")
+        #expect(shown.first?.source == .random)
+        #expect(shown.first?.maxHP == 3)
+        // 다른 100% 미만 게이지에는 나오지 않는다.
+        #expect(s.store.encounters(agentID: codex.id, provider: .codex, window: partialWindow(s.clock)).isEmpty)
+        #expect(s.store.encounters(agentID: agent.id, provider: .claude,
+                                   window: partialWindow(s.clock, label: "Current week")).isEmpty)
+        let key = shown[0].key
+        #expect(s.store.hit(key: key) == .damaged(remaining: 2))
+        s.clock.ms += 200
+        #expect(s.store.hit(key: key) == .damaged(remaining: 1))
+        s.clock.ms += 200
+        #expect(s.store.hit(key: key) == .defeated)
+        #expect(s.store.encounters(agentID: codex.id, provider: .codex, window: week).first?.state == .defeated)
+        #expect(s.ledger.saves == 0)
+        #expect(s.store.ledger.guest.kills.isEmpty)
+        #expect(s.store.guestKillCount == 0)
+        #expect(s.functions.calls.isEmpty)
+    }
+
     @Test func hitsAreDebouncedAndDefeatCountsForGuest() async {
         let s = await makeSetup()
         let w = fullWindow(s.clock)

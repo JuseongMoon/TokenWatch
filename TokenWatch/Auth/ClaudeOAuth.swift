@@ -12,7 +12,7 @@
 import Foundation
 
 /// 저장되는 토큰 세트.
-struct OAuthTokens: Codable, Sendable {
+nonisolated struct OAuthTokens: Codable, Sendable {
     var accessToken: String
     var refreshToken: String?
     var expiresAt: Date?
@@ -25,6 +25,10 @@ struct OAuthTokens: Codable, Sendable {
     var idToken: String? = nil
     /// Codex 계정 ID (usage 요청의 ChatGPT-Account-Id 헤더). Claude는 미사용.
     var accountId: String? = nil
+    /// provider가 발급한 안정적인 사용자 식별자 — 같은 계정 재로그인 판별 전용(표시에 쓰지 않는다).
+    /// 현재는 Copilot(GitHub 사용자 숫자 ID)만 채운다. `accountId`처럼 provider마다 뜻이 다른
+    /// 값과 섞지 않으려고 따로 둔다. 이전 버전 저장본에는 키가 없어 nil로 읽힌다.
+    var stableUserID: String? = nil
 
     var isExpired: Bool {
         guard let expiresAt else { return false }
@@ -246,9 +250,8 @@ enum ClaudeOAuth {
         }
     }
 
-    private static func form(_ params: [String: String]) -> Data {
-        var comp = URLComponents()
-        comp.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
-        return Data((comp.percentEncodedQuery ?? "").utf8)
+    /// 폼 본문 — `+`가 공백으로 바뀌지 않도록 공용 인코더를 쓴다(`FormURLEncoding`).
+    static func form(_ params: [String: String]) -> Data {
+        FormURLEncoding.body(params)
     }
 }

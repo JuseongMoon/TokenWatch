@@ -323,9 +323,38 @@ struct L10n: Sendable {
         case .kimi:
             return lang == .ko ? "Kimi Code 콘솔에서 이 앱 전용 키를 새로 만들어 붙여넣으세요. 키로 쿼터를 사용할 수도 있습니다."
                                : "Create a new key just for this app in the Kimi Code console. A key can also spend your quota."
-        case .claude, .codex, .copilot, .grok, .cursor, .openrouter, .deepseek, .poe, .elevenlabs:
+        case .openrouter:
+            return lang == .ko ? "계정 전체 크레딧 잔액은 관리 키(Management Key)로만 조회됩니다. 일반 API 키는 거절되니, 설정 > Management Keys에서 만든 키를 붙여넣으세요."
+                               : "Your account's total credit balance can only be read with a Management Key. Regular API keys are refused, so paste a key created under Settings > Management Keys."
+        case .claude, .codex, .copilot, .grok, .cursor, .deepseek, .poe, .elevenlabs:
             return nil
         }
+    }
+    /// OpenRouter `/credits` 403 — 키는 유효하지만 계정 잔액을 읽을 권한이 없다
+    /// (일반 API 키이거나, 워크스페이스 범위 관리 키 등).
+    var errOpenRouterNeedsManagementKey: String {
+        lang == .ko ? "이 키로는 계정 크레딧 잔액을 조회할 수 없습니다(HTTP 403). 일반 API 키가 아닌 관리 키(Management Key)가 필요하며, 워크스페이스 전용 키도 거절될 수 있습니다. 카드를 지우고 계정 범위 관리 키로 다시 추가해 주세요."
+                    : "This key can't read the account credit balance (HTTP 403). A Management Key is required instead of a regular API key, and workspace-only keys may also be refused. Remove this card and add it again with an account-level Management Key."
+    }
+    /// OpenRouter `/credits` 401 — 키 자체가 거부됐다(오타·삭제·만료).
+    var errOpenRouterKeyRejected: String {
+        lang == .ko ? "OpenRouter가 이 키를 거부했습니다(HTTP 401). 키가 삭제·만료됐거나 잘못 입력됐을 수 있습니다. 관리 키를 확인해 다시 추가해 주세요."
+                    : "OpenRouter rejected this key (HTTP 401). It may have been deleted, expired, or mistyped. Check your Management Key and add it again."
+    }
+    /// 로그인 중 네트워크 오류(시스템 오류 원문 대신 보여 준다).
+    var errLoginNetwork: String {
+        lang == .ko ? "네트워크에 연결할 수 없어 로그인을 마치지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요."
+                    : "Couldn't finish signing in because the network is unavailable. Check your connection and try again."
+    }
+    /// 분류되지 않은 로그인 실패(시스템 오류 원문 대신 보여 준다).
+    var errLoginGeneric: String {
+        lang == .ko ? "로그인을 마치지 못했습니다. 다시 시도해 주세요."
+                    : "Couldn't finish signing in. Please try again."
+    }
+    /// Copilot 로그인 뒤 GitHub 계정 확인(`GET /user`)에 실패 — 같은 계정 카드를 찾을 수 없어 추가하지 않는다.
+    var copilotIdentityFailed: String {
+        lang == .ko ? "GitHub 계정을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                    : "Couldn't verify your GitHub account. Please try again in a moment."
     }
     var errStateMismatch: String {
         lang == .ko ? "로그인 응답 검증에 실패했습니다(state 불일치). 다시 시도해 주세요."
@@ -378,6 +407,21 @@ struct L10n: Sendable {
         }
         return lang == .ko ? "로그인 창을 열지 못했습니다. 다시 시도하거나 코드를 직접 입력해 주세요."
                            : "Couldn't open the sign-in window. Try again or enter the code manually."
+    }
+    /// 인가 서버가 `access_denied`로 돌려보냈다(사용자가 승인 거부 등).
+    var browserLoginDenied: String {
+        lang == .ko ? "로그인 승인이 거부되었습니다. 다시 시도할 수 있습니다."
+                    : "Sign-in approval was denied. You can try again."
+    }
+    /// 인가 서버가 다른 OAuth 오류로 돌려보냈다.
+    var browserLoginProviderError: String {
+        lang == .ko ? "로그인 서버가 요청을 거절했습니다. 다시 시도해 주세요."
+                    : "The sign-in server rejected the request. Please try again."
+    }
+    /// 로그인 창에서 승인을 기다리다 시간(10분)이 다 됐다.
+    var browserLoginTimedOut: String {
+        lang == .ko ? "로그인 대기 시간이 지났습니다. 다시 시도해 주세요."
+                    : "Sign-in timed out. Please try again."
     }
     var browserManualHint: String {
         lang == .ko ? "자동으로 연결되지 않나요?" : "Not connecting automatically?"

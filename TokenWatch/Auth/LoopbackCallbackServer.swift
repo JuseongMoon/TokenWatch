@@ -22,6 +22,23 @@
 import Foundation
 import Network
 
+/// 루프백 리스너 한 번의 종료 결과. 리스너당 정확히 한 번만 전달된다.
+nonisolated enum LoopbackOutcome: Equatable, Sendable {
+    /// 정상 콜백(code·state 검증 통과).
+    case code(String, state: String)
+    /// 콜백 경로·state가 맞는 OAuth 오류 리다이렉트(예: 사용자가 승인 거부 → `access_denied`).
+    /// 값은 RFC 6749 `error` 코드뿐이다(`error_description` 원문은 싣지 않는다).
+    case oauthError(String)
+    /// 콜백 없이 리스너 수명이 끝났다.
+    case timedOut
+}
+
+/// 콜백 요청 하나의 해석 결과(순수 함수 결과).
+nonisolated enum LoopbackCallback: Equatable, Sendable {
+    case code(String, state: String)
+    case oauthError(String, state: String)
+}
+
 /// 루프백에 잠깐 떠서 OAuth 콜백 한 건만 받고 사라지는 최소 HTTP 서버.
 @MainActor
 final class LoopbackCallbackServer {
@@ -31,24 +48,35 @@ final class LoopbackCallbackServer {
 
     /// 이 값과 일치하는 state를 가진 콜백만 받아들인다(CSRF 방어).
     private let expectedState: String
-    /// code/state를 받으면 한 번만 호출된다(응답 전송이 끝난 뒤).
-    private let onCode: (String, String) -> Void
+    /// 결과(code·OAuth 오류·시간 초과) 중 하나를 한 번만 받는다(응답 전송이 끝난 뒤).
+    private let onOutcome: (LoopbackOutcome) -> Void
+    /// 리스너 수명 — 지나면 닫고 `.timedOut`을 전달한다. 테스트는 짧게 준다.
+    private let lifetime: Duration
 
     private var v4: NWListener?
     private var v6: NWListener?
     private var connections: [NWConnection] = []
-    /// code 전달 여부 — 브라우저 재시도로 같은 콜백이 두 번 와도 한 번만 넘긴다.
+    /// 결과 전달 여부 — 브라우저 재시도·시간 초과가 겹쳐도 한 번만 넘긴다.
     private var delivered = false
     private var timeoutTask: Task<Void, Never>?
 
-    /// 리스너 수명 상한 — 이 시간이 지나면 스스로 닫는다(리소스 누수 방지).
-    private static let lifetime: Duration = .seconds(600)
+    /// 리스너 수명 상한 기본값 — 이 시간이 지나면 스스로 닫고 시간 초과를 알린다.
+    nonisolated static let defaultLifetime: Duration = .seconds(600)
     /// 요청 헤더 누적 상한. 콜백은 수백 바이트라 이보다 크면 우리 대상이 아니다.
     private static let maxRequestBytes = 16 * 1024
 
-    init(expectedState: String, onCode: @escaping (String, String) -> Void) {
+    init(expectedState: String, lifetime: Duration = LoopbackCallbackServer.defaultLifetime,
+         onOutcome: @escaping (LoopbackOutcome) -> Void) {
         self.expectedState = expectedState
-        self.onCode = onCode
+        self.lifetime = lifetime
+        self.onOutcome = onOutcome
+    }
+
+    /// code만 받는 편의 생성자(오류·시간 초과는 무시한다).
+    convenience init(expectedState: String, onCode: @escaping (String, String) -> Void) {
+        self.init(expectedState: expectedState) { outcome in
+            if case .code(let code, let state) = outcome { onCode(code, state) }
+        }
     }
 
     // MARK: 시작 / 종료
@@ -71,9 +99,12 @@ final class LoopbackCallbackServer {
             }
         }
 
-        timeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.lifetime)
-            self?.stop()
+        timeoutTask = Task { [weak self, lifetime] in
+            do { try await Task.sleep(for: lifetime) } catch { return }   // stop()으로 취소됨
+            guard let self else { return }
+            // 이미 결과를 넘겼으면(성공 직후 등) 시간 초과는 버린다 — 전달은 한 번뿐이다.
+            self.deliver(.timedOut)
+            self.stop()
         }
         return port
     }
@@ -174,30 +205,41 @@ final class LoopbackCallbackServer {
             respond(conn, status: "400 Bad Request", body: "bad request")
             return
         }
-        guard let parsed = Self.parseCallback(target: target, expectedState: expectedState) else {
+        // 경로·state가 맞지 않는 요청(다른 시도·외부 요청)은 404 — 현재 로그인을 끝내지 않는다.
+        guard let parsed = Self.parseCallbackResult(target: target, expectedState: expectedState) else {
             respond(conn, status: "404 Not Found", body: "not found")
             return
         }
 
-        // 302를 먼저 보내고 전송이 끝난 뒤 code를 넘긴다(파일 머리말 참고). 전송이 실패해도
-        // (브라우저가 이미 연결을 닫음 등) code는 넘긴다 — 교환에는 code만 있으면 된다.
-        let location = Self.redirectLocation(code: parsed.code, state: parsed.state)
+        let outcome: LoopbackOutcome
+        let location: String
+        switch parsed {
+        case .code(let code, let state):
+            outcome = .code(code, state: state)
+            location = Self.redirectLocation(code: code, state: state)
+        case .oauthError(let error, let state):
+            outcome = .oauthError(error)
+            location = Self.redirectLocation(error: error, state: state)
+        }
+
+        // 302를 먼저 보내고 전송이 끝난 뒤 결과를 넘긴다(파일 머리말 참고). 전송이 실패해도
+        // (브라우저가 이미 연결을 닫음 등) 결과는 넘긴다 — 교환에는 code만 있으면 된다.
         respond(conn, status: "302 Found", extraHeaders: ["Location: \(location)"], body: "") {
-            self.deliver(code: parsed.code, state: parsed.state)
+            self.deliver(outcome)
         }
         // 응답이 나갈 시간을 준 뒤 리스너를 접는다. 소유자가 참조를 놓아도 실행되도록 강하게 붙잡는다.
-        // 전송 완료 콜백이 끝내 오지 않는 경우에도 여기서 code를 넘긴다(전달은 한 번뿐이다).
+        // 전송 완료 콜백이 끝내 오지 않는 경우에도 여기서 결과를 넘긴다(전달은 한 번뿐이다).
         Task {
             try? await Task.sleep(for: .seconds(1))
-            self.deliver(code: parsed.code, state: parsed.state)
+            self.deliver(outcome)
             self.stop()
         }
     }
 
-    private func deliver(code: String, state: String) {
+    private func deliver(_ outcome: LoopbackOutcome) {
         guard !delivered else { return }
         delivered = true
-        onCode(code, state)
+        onOutcome(outcome)
     }
 
     private func respond(_ conn: NWConnection, status: String, extraHeaders: [String] = [],
@@ -238,15 +280,41 @@ final class LoopbackCallbackServer {
 
     /// 콜백 경로이고 state가 기대값과 같을 때만 (code, state)를 돌려준다.
     nonisolated static func parseCallback(target: String, expectedState: String) -> (code: String, state: String)? {
+        guard case .code(let code, let state)? = parseCallbackResult(target: target, expectedState: expectedState)
+        else { return nil }
+        return (code, state)
+    }
+
+    /// 콜백 경로의 요청을 해석한다.
+    /// - code 콜백: state가 기대값과 같아야만 받는다(CSRF 방어 — 기존과 같다).
+    /// - 오류 콜백(code 없이 `error`): state가 아예 없으면 받아들이고(인가 서버가 오류 리다이렉트에
+    ///   state를 싣지 않는 경우 — xAI 공식 CLI도 오류 콜백의 state를 검증하지 않는다), state가 있는데
+    ///   기대값과 다르면 다른 시도의 응답으로 보고 무시한다.
+    /// 경로가 다르거나 둘 다 해당하지 않으면 nil.
+    nonisolated static func parseCallbackResult(target: String, expectedState: String) -> LoopbackCallback? {
         guard let comp = URLComponents(string: "http://localhost\(target)"),
               comp.path == "/callback"
         else { return nil }
         let items = comp.queryItems ?? []
-        guard let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty,
-              let state = items.first(where: { $0.name == "state" })?.value,
-              state == expectedState
+        let state = items.first(where: { $0.name == "state" })?.value
+        if let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty {
+            guard state == expectedState else { return nil }
+            return .code(code, state: expectedState)
+        }
+        guard let error = sanitizedOAuthError(items.first(where: { $0.name == "error" })?.value) else {
+            return nil
+        }
+        guard state == nil || state == expectedState else { return nil }
+        // 시트로 돌려보내는 리다이렉트에는 우리 state를 실어, 시트 쪽 검증(parseSessionError)과 맞춘다.
+        return .oauthError(error, state: expectedState)
+    }
+
+    /// OAuth `error` 값은 RFC 6749상 출력 가능한 ASCII 토큰이다. 그 형태(`[A-Za-z0-9_.-]`, 64자 이내)만 받는다.
+    nonisolated static func sanitizedOAuthError(_ value: String?) -> String? {
+        guard let value, !value.isEmpty, value.count <= 64,
+              value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_.-".contains($0)) })
         else { return nil }
-        return (code, state)
+        return value
     }
 
     /// 인증 시트를 닫는 리다이렉트 주소. code/state는 퍼센트 인코딩된다.
@@ -259,6 +327,28 @@ final class LoopbackCallbackServer {
             URLQueryItem(name: "state", value: state),
         ]
         return comp.string ?? "\(sessionCallbackScheme)://\(sessionCallbackHost)"
+    }
+
+    /// 오류 콜백을 인증 시트에 돌려보내는 주소 — 시트가 스스로 닫히게 한다.
+    nonisolated static func redirectLocation(error: String, state: String) -> String {
+        var comp = URLComponents()
+        comp.scheme = sessionCallbackScheme
+        comp.host = sessionCallbackHost
+        comp.queryItems = [
+            URLQueryItem(name: "error", value: error),
+            URLQueryItem(name: "state", value: state),
+        ]
+        return comp.string ?? "\(sessionCallbackScheme)://\(sessionCallbackHost)"
+    }
+
+    /// 인증 시트가 돌려준 콜백 URL의 OAuth 오류. `expectedState`와 같을 때만 돌려준다.
+    nonisolated static func parseSessionError(_ url: URL, expectedState: String) -> String? {
+        guard url.scheme == sessionCallbackScheme, url.host == sessionCallbackHost,
+              let comp = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        let items = comp.queryItems ?? []
+        guard items.first(where: { $0.name == "state" })?.value == expectedState else { return nil }
+        return sanitizedOAuthError(items.first(where: { $0.name == "error" })?.value)
     }
 
     /// 인증 시트가 돌려준 콜백 URL에서 code/state를 뽑는다. 우리 콜백 주소가 아니면 nil.

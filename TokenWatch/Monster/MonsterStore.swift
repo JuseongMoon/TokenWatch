@@ -8,7 +8,8 @@
 //  - 주인(owner): 몬스터 동의(약관 v2)를 한 로그인 계정이면 그 uid(서버 판정, 순위 반영),
 //    아니면 게스트(기기 추첨, 비순위). 화면에는 지금 주인의 몬스터만 그린다.
 //  - 출현 요청은 포그라운드 새로고침에서만 한다(백그라운드 갱신은 만료 처리만). 크리터 표시를 끄면 멈춘다.
-//  - 데모 중에는 서버·파일 저장을 하지 않는다. 표본 100% 게이지에는 메모리 전용 표본 몬스터를 그린다.
+//  - 데모 중에는 서버·파일 저장을 하지 않는다. 표본 100% 게이지와 Codex 주간 게이지(고블린)에 메모리 전용 표본 몬스터를
+//    그린다. 데모에서 잡은 몬스터는 게스트 기록·점수에 들어가지 않는다.
 //  - 서버로 보내는 것은 계약 §15의 값뿐이다(provider·창 label·주기·세션 창 여부·리셋 버킷·에이전트 키·플랫폼·앱 버전).
 //    사용률 수치·AI 서비스 계정 정보는 보내지 않는다.
 //
@@ -80,6 +81,8 @@ final class MonsterStore {
     /// 데모 표본 몬스터의 남은 HP와 처치 시각(메모리 전용 — 처치 시각이 있어야 사망 애니메이션이 나온다).
     @ObservationIgnored private var demoHP: [String: Int] = [:]
     @ObservationIgnored private var demoDefeatedAt: [String: Int64] = [:]
+    /// 데모 확률 출현 표본을 처음 그린 시각(행진 출발점).
+    @ObservationIgnored private var demoSpawnedAt: [String: Int64] = [:]
     private var demoTick = 0
 
     private static let configCacheKey = "tokenwatch.monster.config.v1"
@@ -502,7 +505,7 @@ final class MonsterStore {
     /// 이 창에 그릴 몬스터(살아 있는 것, 처치돼 엔젤링이 뜬 것). 다른 주인(게스트↔계정)의 것은 그리지 않는다.
     func encounters(agentID: UUID, provider: AgentProvider, window: UsageWindow) -> [MonsterEncounter] {
         guard env.crittersEnabled() else { return [] }
-        if env.isDemo() { return demoEncounters(agentID: agentID, window: window) }
+        if env.isDemo() { return demoEncounters(agentID: agentID, provider: provider, window: window) }
         let now = env.nowMs()
         let owner = activeOwner
         let keyLabel = MonsterSessionKey.keyLabel(provider: provider, label: window.label)
@@ -524,25 +527,55 @@ final class MonsterStore {
 
     // MARK: 데모
 
-    /// 데모 표본 100% 게이지의 메모리 전용 몬스터(창마다 하나, 결정적 종). 저장·서버 호출 없음.
-    private func demoEncounters(agentID: UUID, window: UsageWindow) -> [MonsterEncounter] {
-        guard MonsterEligibility.isCompleted(window, now: Date()) else { return [] }
-        let key = "demo|\(agentID.uuidString)|\(window.label)"
-        let entry = MonsterDraw.pick(config: .bundledDefault, appVersion: env.appVersion, commonOnly: false,
-                                     roll: MonsterDraw.unitRoll(key))
-        let hp = demoHP[key] ?? entry.hp
+    /// 데모의 확률 출현 표본: Codex 주간 게이지(94%)의 고블린(HP 3). 100% 게이지의 슬라임 옆에서 여러 번 쳐야 잡히는
+    /// 몬스터와 나타난 자리에서 출발하는 행진을 보여 준다. 값은 Android와 같다.
+    private static let demoRandom = (provider: AgentProvider.codex, windowLabel: "Current week",
+                                     monsterID: "goblin", position: 0.35)
+
+    /// 데모 표본 몬스터(메모리 전용 — 저장·서버 호출·점수 없음). 100% 게이지에는 창마다 결정적 종 하나(완료 출현),
+    /// `demoRandom` 게이지에는 고블린(확률 출현)이 나온다.
+    private func demoEncounters(agentID: UUID, provider: AgentProvider, window: UsageWindow) -> [MonsterEncounter] {
+        let now = Date()
         _ = demoTick   // 타격 시 다시 그리게 관찰 대상에 둔다
-        return [MonsterEncounter(
-            key: key, ownerUID: "demo", source: .completion, provider: "", windowLabel: window.label,
+        var shown: [MonsterEncounter] = []
+        if MonsterEligibility.isCompleted(window, now: now) {
+            shown.append(demoEncounter(key: "demo|\(agentID.uuidString)|\(window.label)", source: .completion,
+                                       spawnedAtMs: 0, position: 0.5, agentID: agentID, window: window))
+        }
+        if provider == Self.demoRandom.provider, window.label == Self.demoRandom.windowLabel,
+           MonsterEligibility.isTarget(window, now: now) {
+            let key = "demo|rand|\(agentID.uuidString)|\(window.label)"
+            // 처음 그린 시각을 출현 시각으로 둔다 — 정해 둔 자리에서 행진을 시작한다.
+            let spawned = demoSpawnedAt[key] ?? env.nowMs()
+            demoSpawnedAt[key] = spawned
+            shown.append(demoEncounter(key: key, source: .random, spawnedAtMs: spawned,
+                                       position: Self.demoRandom.position, agentID: agentID, window: window))
+        }
+        return shown
+    }
+
+    private func demoEncounter(key: String, source: MonsterEncounter.Source, spawnedAtMs: Int64, position: Double,
+                               agentID: UUID, window: UsageWindow) -> MonsterEncounter {
+        let entry = demoEntry(key: key)
+        let hp = demoHP[key] ?? entry.hp
+        return MonsterEncounter(
+            key: key, ownerUID: "demo", source: source, provider: "", windowLabel: window.label,
             resetBucketMs: nil, drawAtMs: nil, monsterID: entry.id, maxHP: entry.hp, hp: max(0, hp),
-            state: hp > 0 ? .alive : .defeated, spawnedAtMs: 0, expiresAtMs: .max,
-            defeatedAtMs: demoDefeatedAt[key], agentID: agentID, displayLabel: window.label, position: 0.5)]
+            state: hp > 0 ? .alive : .defeated, spawnedAtMs: spawnedAtMs, expiresAtMs: .max,
+            defeatedAtMs: demoDefeatedAt[key], agentID: agentID, displayLabel: window.label, position: position)
+    }
+
+    /// 데모 몬스터의 종. 확률 출현 표본은 고블린, 100% 게이지는 키로 정한 결정적 종이다.
+    private func demoEntry(key: String) -> MonsterCatalogEntry {
+        let config = MonsterConfig.bundledDefault
+        if key.hasPrefix("demo|rand|"), let entry = config.entry(Self.demoRandom.monsterID) { return entry }
+        return MonsterDraw.pick(config: config, appVersion: env.appVersion, commonOnly: false,
+                                roll: MonsterDraw.unitRoll(key))
     }
 
     private func hitDemo(key: String) -> HitResult {
         guard key.hasPrefix("demo|") else { return .ignored }
-        let entry = MonsterDraw.pick(config: .bundledDefault, appVersion: env.appVersion, commonOnly: false,
-                                     roll: MonsterDraw.unitRoll(key))
+        let entry = demoEntry(key: key)
         let current = demoHP[key] ?? entry.hp
         guard current > 0 else { return .ignored }
         let now = env.nowMs()

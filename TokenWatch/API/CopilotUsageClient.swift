@@ -6,7 +6,8 @@
 //  게이트/갱신/에러 처리는 ProviderUsage(공통 오케스트레이션)가 담당한다.
 //
 //  인증: device flow로 얻은 GitHub OAuth 토큰을 `Authorization: token <t>`로 전달.
-//  응답의 quota_snapshots(premium_interactions/chat …)를 잔여%로 매핑한다.
+//  유료 계정은 quota_snapshots(premium_interactions/chat …)를, Free 계정은
+//  limited_user_quotas(남은 양)/monthly_quotas(월 한도)를 사용률로 매핑한다(`windows(from:)`).
 //
 
 import Foundation
@@ -34,62 +35,96 @@ enum CopilotUsageClient {
         guard (200..<300).contains(status) else {
             throw UsageError.http(status, String(data: data, encoding: .utf8) ?? "")
         }
-        do {
-            let decoded = try JSONDecoder().decode(CopilotUser.self, from: data)
-            return decoded.windows()
-        } catch {
-            throw UsageError.decode(error.localizedDescription)
+        return try windows(from: data)
+    }
+
+    /// 응답 본문 → 사용량 창(순수 함수 — 테스트 대상). 레인(쿼터 키)별로 계산한다(Android와 같은 규칙).
+    ///
+    /// - 순서: premium_interactions → chat → completions → `quota_snapshots`의 그 밖의 키(이름순).
+    ///   라벨: "Premium requests" / "Chat" / "Completions" / 그 밖은 키를 단어 대문자화.
+    /// - `quota_snapshots` 레인: `percent_remaining` 우선, 없으면 remaining/entitlement×100. 사용률 = 100 − 남은 %(0~100).
+    ///   무제한(`unlimited`, entitlement·remaining −1)은 숨기고 Free 값으로도 채우지 않는다.
+    ///   entitlement 0·수치 없는 스냅샷은 측정 불가로 보고 그 자체로는 표시하지 않는다.
+    /// - Free 값(`limited_user_quotas` 남은 양 ÷ `monthly_quotas` 월 한도)은 chat·completions 레인에만,
+    ///   스냅샷에 그 레인이 없거나 측정 불가일 때 쓴다. 한도 ≤ 0이거나 남은 양이 없으면 표시하지 않는다.
+    /// - 리셋: `quota_reset_date`, 없으면 `limited_user_reset_date`(YYYY-MM-DD → 로컬 자정).
+    /// - 쿼터 정보가 전혀 없는 200(구독 종료 계정 등)은 빈 배열 — 호출자가 "표시할 데이터 없음"(noWindows)으로 처리한다.
+    static func windows(from data: Data) throws -> [UsageWindow] {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw UsageError.decode("copilot response is not a JSON object")
         }
-    }
-}
+        let resetsAt = (body["quota_reset_date"] as? String).flatMap { parseResetDate($0) }
+            ?? (body["limited_user_reset_date"] as? String).flatMap { parseResetDate($0) }
+        let snaps = body["quota_snapshots"] as? [String: Any] ?? [:]
+        let limited = body["limited_user_quotas"] as? [String: Any] ?? [:]
+        let monthly = body["monthly_quotas"] as? [String: Any] ?? [:]
+        let freeLanes: Set<String> = ["chat", "completions"]
 
-// MARK: - 응답 모델 + 매핑
-
-private struct CopilotUser: Decodable {
-    let copilot_plan: String?
-    let quota_reset_date: String?
-    let quota_snapshots: [String: Snapshot]?
-
-    struct Snapshot: Decodable {
-        let entitlement: Double?
-        let remaining: Double?
-        let percent_remaining: Double?
-        let unlimited: Bool?
-    }
-
-    /// premium_interactions를 우선 노출하고, 그 외 제한(chat/completions …)은 뒤에 붙인다.
-    /// 무제한(unlimited) 스냅샷은 표시를 생략한다. 리셋은 quota_reset_date(YYYY-MM-DD).
-    func windows() -> [UsageWindow] {
-        guard let snaps = quota_snapshots else { return [] }
-        let resetsAt = quota_reset_date.flatMap { Self.parseResetDate($0) }
-
-        let preferredOrder = ["premium_interactions", "chat", "completions"]
-        let labels: [String: String] = [
-            "premium_interactions": "Premium requests",
-            "chat": "Chat",
-            "completions": "Completions",
-        ]
+        var keys = ["premium_interactions", "chat", "completions"]
+        keys += snaps.keys.filter { !keys.contains($0) }.sorted()
 
         var out: [UsageWindow] = []
-        func add(_ key: String) {
-            guard let s = snaps[key], s.unlimited != true else { return }
-            let percentRemaining: Double
-            if let p = s.percent_remaining {
-                percentRemaining = p
-            } else if let e = s.entitlement, e > 0, let r = s.remaining {
-                percentRemaining = r / e * 100
-            } else {
-                percentRemaining = 100
+        for key in keys {
+            let used: Double?
+            switch snapshotLane(snaps[key]) {
+            case .unlimited:
+                used = nil
+            case .measured(let value):
+                used = value
+            case .unmeasurable:
+                used = freeLanes.contains(key) ? freeUsedPercent(remaining: limited[key], total: monthly[key]) : nil
             }
-            let used = min(max(100 - percentRemaining, 0), 100)
-            let label = labels[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
-            out.append(UsageWindow(label: label, usedPercent: used, resetsAt: resetsAt,
-                                   kind: .weekly, windowSeconds: nil))
+            guard let used else { continue }
+            out.append(UsageWindow(label: label(for: key), usedPercent: min(max(used, 0), 100),
+                                   resetsAt: resetsAt, kind: .weekly, windowSeconds: nil))
         }
-
-        for key in preferredOrder { add(key) }
-        for key in snaps.keys.sorted() where !preferredOrder.contains(key) { add(key) }
         return out
+    }
+
+    private enum SnapshotLane {
+        case measured(Double)   // 사용률(자르기 전)
+        case unlimited          // 숨김, Free로도 채우지 않음
+        case unmeasurable       // 레인 없음·수치 없음·entitlement 0 — Free 레인이면 Free 값으로 채울 수 있다
+    }
+
+    private static func snapshotLane(_ raw: Any?) -> SnapshotLane {
+        guard let snap = raw as? [String: Any] else { return .unmeasurable }
+        let entitlement = number(snap["entitlement"])
+        let remaining = number(snap["remaining"])
+        if (snap["unlimited"] as? Bool) == true || entitlement == -1 || remaining == -1 { return .unlimited }
+        if entitlement == 0 { return .unmeasurable }
+        if let percentRemaining = number(snap["percent_remaining"]) { return .measured(100 - percentRemaining) }
+        if let entitlement, entitlement > 0, let remaining { return .measured(100 - remaining / entitlement * 100) }
+        return .unmeasurable
+    }
+
+    /// Free 레인 사용률 = 100 − 남은 양 ÷ 월 한도 × 100. 한도 ≤ 0이거나 남은 양이 없으면 nil.
+    private static func freeUsedPercent(remaining: Any?, total: Any?) -> Double? {
+        guard let total = number(total), total > 0, let remaining = number(remaining) else { return nil }
+        return 100 - remaining / total * 100
+    }
+
+    /// 표시 라벨(Android와 같은 문자열).
+    static func label(for key: String) -> String {
+        switch key {
+        case "premium_interactions": return "Premium requests"
+        case "chat": return "Chat"
+        case "completions": return "Completions"
+        default: return key.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    /// JSON 숫자 또는 숫자 문자열(GitHub가 월 한도를 문자열로 줄 때가 있다). 불리언·비유한 값은 nil.
+    private static func number(_ raw: Any?) -> Double? {
+        if let n = raw as? NSNumber {
+            guard CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite else { return nil }
+            return n.doubleValue
+        }
+        if let text = raw as? String, let value = Double(text.trimmingCharacters(in: .whitespaces)),
+           value.isFinite {
+            return value
+        }
+        return nil
     }
 
     /// "YYYY-MM-DD"(날짜만) → 그 날 기기 로컬 자정 Date.

@@ -53,8 +53,9 @@ enum CursorAuth {
     // MARK: 로그인 완료
 
     /// 승인될 때까지 폴링해 저장용 자격증명을 만든다(이메일은 `auth/me`로 채운다).
-    static func completeLogin(_ handshake: Handshake) async throws -> OAuthTokens {
-        let accessToken = try await pollForAccessToken(handshake)
+    static func completeLogin(_ handshake: Handshake,
+                              sleep: (@Sendable (Duration) async throws -> Void)? = nil) async throws -> OAuthTokens {
+        let accessToken = try await pollForAccessToken(handshake, sleep: sleep)
         guard let id = userID(fromJWT: accessToken) else {
             throw DeviceFlowError.http(L10n(lang: currentLang()).errParse("Cursor token"), code: "parse")
         }
@@ -73,7 +74,19 @@ enum CursorAuth {
     // MARK: 폴링
 
     /// 대기(404) 동안 백오프하며 기다린다. 승인되면 access token, 거부·경로 없음·연속 오류·시간 초과면 throw.
-    static func pollForAccessToken(_ handshake: Handshake) async throws -> String {
+    ///
+    /// 일시 네트워크 오류(`PollingNetwork.isTransient`)는 연속 오류로 세지 않고 다음 주기에 다시 묻는다 —
+    /// 승인 페이지에 있는 동안 앱이 백그라운드로 갔다 돌아오면 끊기기 쉽다. 그래도 시도 횟수 한도
+    /// (`maxPollAttempts`, 약 20분)는 그대로라 오프라인이 계속되면 시간 초과로 끝난다.
+    /// - Parameters:
+    ///   - sleep: 주기 대기. 앱이 다시 활성화되면 깨어나는 `PollWaker.sleep`을 넘길 수 있다.
+    ///   - send: 요청 전송(테스트 주입용). nil이면 실제로 보낸다.
+    static func pollForAccessToken(_ handshake: Handshake,
+                                   sleep: (@Sendable (Duration) async throws -> Void)? = nil,
+                                   send: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = nil)
+        async throws -> String {
+        let sleep = sleep ?? { try await Task.sleep(for: $0) }
+        let send = send ?? { try await APISession.shared.data(for: $0) }
         var useGET = false
         var checkedPendingBody = false
         var consecutiveErrors = 0
@@ -84,14 +97,18 @@ enum CursorAuth {
             let data: Data
             let status: Int
             do {
-                let (body, response) = try await APISession.shared.data(for: pollRequest(handshake, useGET: useGET))
+                let (body, response) = try await send(pollRequest(handshake, useGET: useGET))
                 data = body
                 status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            } catch let error as URLError where PollingNetwork.isTransient(error) {
+                // 네트워크가 잠시 끊긴 것 — 실패로 세지 않고 다음 주기에 다시 묻는다.
+                try await sleep(.seconds(delay))
+                continue
             } catch let error as URLError where error.code != .cancelled {
                 // 몇 분 동안 도는 폴링이라 한 번 끊겼다고 처음부터 다시 시키지 않는다.
                 consecutiveErrors += 1
                 if consecutiveErrors >= 3 { throw error }
-                try await Task.sleep(for: .seconds(delay))
+                try await sleep(.seconds(delay))
                 continue
             }
 
@@ -102,7 +119,7 @@ enum CursorAuth {
             case .pending:
                 checkedPendingBody = true
                 consecutiveErrors = 0
-                try await Task.sleep(for: .seconds(delay))
+                try await sleep(.seconds(delay))
             case .switchToGET:
                 useGET = true
             case .unavailable:
@@ -116,7 +133,7 @@ enum CursorAuth {
                 if consecutiveErrors >= 3 {
                     throw DeviceFlowError.http("HTTP \(status)", code: LoginFailureCode.http(status))
                 }
-                try await Task.sleep(for: .seconds(delay))
+                try await sleep(.seconds(delay))
             }
         }
         throw DeviceFlowError.timedOut

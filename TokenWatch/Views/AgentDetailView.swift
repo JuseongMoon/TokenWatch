@@ -314,7 +314,7 @@ private struct DetailUsageRow: View {
     @Environment(MonsterStore.self) private var monsterStore: MonsterStore?
 
     private var monsters: [MonsterEncounter] {
-        guard let agent, let monsterStore, window.style == .gauge else { return [] }
+        guard let agent, let monsterStore, window.isGaugeLike else { return [] }
         return monsterStore.encounters(agentID: agent.id, provider: agent.provider, window: window)
     }
     /// 충전형 추정 게이지의 peak 재설정 요청(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
@@ -356,18 +356,27 @@ private struct DetailUsageRow: View {
 
     // 충전형 잔액 게이지(채움=남은 잔액, 역방향) + 잔액 텍스트 + 추정 안내.
     private var creditGaugeBody: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let monsters = monsters
+        let target = monsters.first { $0.isAlive }
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(window.label.uppercased())
                     .font(.term(12, weight: .semibold)).foregroundStyle(Term.cyan)
                 Spacer()
+                if let target, target.maxHP > 1, target.hp < target.maxHP {
+                    MonsterHPHearts(hp: target.hp, maxHP: target.maxHP)
+                }
                 Text("\(window.estimatedTotal ? "~" : "")\(Int(window.remainingPercent.rounded()))% left")
                     .font(.term(12)).foregroundStyle(statusColor)
             }
             TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
                           elapsedFraction: nil, fillsRemaining: true,
                           height: 20, bracketSize: 15,
-                          critterVariant: GaugeCritterVariant(kind: window.kind))
+                          critterVariant: GaugeCritterVariant(kind: window.kind),
+                          monsters: monsters,
+                          monsterHits: monsterStore?.lastHitAt ?? [:],
+                          monsterConfig: monsterStore?.config ?? .bundledDefault)
+                .modifier(MonsterHitTarget(encounter: target, loc: loc) { monsterStore?.attack($0) })
             KVRow(key: "remaining", value: window.valueText ?? "—",
                   valueColor: statusColor, keyWidth: 84)
             if window.estimatedTotal {

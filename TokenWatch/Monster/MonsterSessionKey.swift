@@ -111,15 +111,23 @@ enum MonsterEligibility {
     }
 
     /// 확률 출현 후보. 100%가 된 창도 후보다 — 일찍 다 써도 리셋까지 추첨이 이어진다.
+    /// 충전형 게이지(creditGauge)는 리셋이 없으므로 완료 출현은 없고, 잔액·사용률과 무관하게 확률 출현 후보다
+    /// (최소 사용률은 "리셋 주기 안 첫 사용"을 기다리는 규칙이라 충전형엔 해당하지 않는다. 0원 계정도 후보).
     /// 몬스터가 살아 있는 바·처치 1시간 안의 유령이 있는 바는 호출측(MonsterStore)이 거른다.
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {
-        isTarget(window, now: now) && window.usedPercent >= minUsedPercent
+        if window.style == .creditGauge { return true }
+        return isTarget(window, now: now) && window.usedPercent >= minUsedPercent
     }
 
     /// 같은 AI 계정으로 보이는 에이전트의 표식(기기 안에서만 쓴다). 같은 계정을 여러 번 추가하면 대상 창의
     /// label·리셋 시각·사용률이 똑같으므로 확률 추첨은 그중 하나만 한다. 서로 다른 계정은 숫자가 달라 갈린다.
+    /// 충전형 게이지는 리셋 대신 총액·잔액(센트 단위)으로 가른다.
     static func accountSignature(provider: AgentProvider, windows: [UsageWindow], now: Date) -> String {
         let parts = windows.compactMap { window -> String? in
+            if window.style == .creditGauge {
+                let cents = { (v: Double?) in v.map { String(Int64(($0 * 100).rounded())) } ?? "-" }
+                return "\(window.label)|credit|\(cents(window.balanceTotal))|\(cents(window.balanceRemaining))"
+            }
             guard isTarget(window, now: now), let resetsAt = window.resetsAt else { return nil }
             let reset = MonsterSessionKey.resetBucketMs(
                 MonsterSessionKey.keyResetsAtMs(provider: provider, resetsAt: resetsAt))

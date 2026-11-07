@@ -404,12 +404,21 @@ struct MonsterStoreTests {
 
     @Test func agentWithoutCandidateWindowIsSkipped() async {
         let s = await makeSetup(configPayload: Self.alwaysRandom)
-        let credit = UsageWindow(label: "credits", usedPercent: 40,
-                                 resetsAt: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000 + 86_400),
-                                 kind: .weekly, style: .creditGauge)
-        s.snapshots.list = [(agent, [credit])]                        // 충전형 게이지는 대상이 아니다
+        let balance = UsageWindow(label: "credits", usedPercent: 0, resetsAt: nil, kind: .weekly,
+                                  style: .balance, valueText: "6.50 USD")
+        s.snapshots.list = [(agent, [balance])]                       // 바가 없는 잔액 텍스트는 대상이 아니다
         await s.store.observe(agent: agent, windows: [])
         #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == nil)
+    }
+
+    @Test func zeroCreditGaugeGetsRandomSchedule() async {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let empty = UsageWindow(label: "Credits", usedPercent: 100, resetsAt: nil, kind: .weekly,
+                                style: .creditGauge, valueText: "0.00 credits left",
+                                balanceRemaining: 0, balanceTotal: 0)
+        s.snapshots.list = [(agent, [empty])]                         // 충전 안 한 계정의 빈 바도 확률 출현 후보
+        await s.store.observe(agent: agent, windows: [])
+        #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) != nil)
     }
 
     // MARK: 계정

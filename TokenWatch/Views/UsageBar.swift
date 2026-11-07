@@ -45,7 +45,7 @@ struct UsageBar: View {
 
     /// 이 창에 붙은 몬스터.
     private var monsters: [MonsterEncounter] {
-        guard let agent, let monsterStore, window.style == .gauge else { return [] }
+        guard let agent, let monsterStore, window.isGaugeLike else { return [] }
         return monsterStore.encounters(agentID: agent.id, provider: agent.provider, window: window)
     }
 
@@ -65,8 +65,15 @@ struct UsageBar: View {
 
             switch window.style {
             case .gauge:       gauge
-            case .creditGauge: creditGauge
+            case .creditGauge: creditGauge(monsters)
             case .balance:     balanceValue
+            }
+
+            // 충전형은 금액을 리셋 요약 자리(회색 보조 줄)에 둔다 — 바 오른쪽은 구독 게이지와 같은 9칸.
+            if window.style == .creditGauge {
+                Text(balanceText)
+                    .font(.term(10))
+                    .foregroundStyle(Term.dim)
             }
 
             if window.resetsAt != nil {
@@ -103,17 +110,22 @@ struct UsageBar: View {
         }
     }
 
-    // 충전형 잔액 게이지(채움=남은 잔액, 역방향) + 잔액 텍스트 병기.
-    private var creditGauge: some View {
+    // 충전형 잔액 게이지(채움=남은 잔액, 역방향) + 남은 비율. 몬스터는 확률 출현만 붙는다.
+    // 오른쪽은 `%3d% left`(9칸) — 구독 게이지의 `%3d% used`와 폭이 같아 바 길이가 위아래로 맞는다.
+    private func creditGauge(_ monsters: [MonsterEncounter]) -> some View {
         HStack(spacing: 8) {
             TerminalGauge(usedFraction: usedFraction,
                           fillColor: statusColor,
                           elapsedFraction: nil,
                           fillsRemaining: true,
                           height: 14, bracketSize: 13,
-                          critterVariant: GaugeCritterVariant(kind: window.kind))
-            Text(balanceText)
+                          critterVariant: GaugeCritterVariant(kind: window.kind),
+                          monsters: monsters,
+                          monsterHits: monsterStore?.lastHitAt ?? [:],
+                          monsterConfig: monsterStore?.config ?? .bundledDefault)
+            Text("\(String(format: "%3d", Int(window.remainingPercent.rounded())))% left")
                 .font(.term(12))
+                .monospacedDigit()
                 .foregroundStyle(statusColor)
                 .fixedSize()
         }
@@ -160,6 +172,11 @@ struct UsageBar: View {
                                      kind: .weekly, style: .creditGauge,
                                      valueText: "18.00 USD", balanceRemaining: 18,
                                      estimatedTotal: true))
+        // 충전 이력 없는 계정(총액 0): 빈 트랙. 몬스터가 설 자리가 있다.
+        UsageBar(window: UsageWindow(label: "Credits", usedPercent: 100, resetsAt: nil,
+                                     kind: .weekly, style: .creditGauge,
+                                     valueText: "0.00 credits left",
+                                     balanceRemaining: 0, balanceTotal: 0))
         // 잔액 소진: 빈 트랙 위에서 슬라임이 논다(역방향 소진).
         UsageBar(window: UsageWindow(label: "Balance", usedPercent: 99.7, resetsAt: nil,
                                      kind: .weekly, style: .creditGauge,

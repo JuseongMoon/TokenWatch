@@ -115,6 +115,30 @@ struct MonsterLogicTests {
         #expect(!MonsterEligibility.isRandomCandidate(balance, minUsedPercent: 0, now: now))   // 텍스트 잔액은 바가 없다
     }
 
+    @Test func depletedCreditGaugeGetsAMonthlyCompletionWindow() throws {
+        // 2027-01-15 12:00 KST → 다음 주기 시작은 2027-02-01 00:00 KST(= 2027-01-31 15:00 UTC).
+        let now = Date(timeIntervalSince1970: 1_799_982_000)
+        let start = try #require(MonsterEligibility.nextCreditCycleStart(after: now))
+        #expect(start.timeIntervalSince1970 == 1_801_407_600)
+        // 월말 직전(KST)에도 다음 달 1일이다 — 기기 시간대와 무관.
+        let lastMinute = Date(timeIntervalSince1970: 1_801_407_540)
+        #expect(MonsterEligibility.nextCreditCycleStart(after: lastMinute)?.timeIntervalSince1970 == 1_801_407_600)
+
+        let empty = UsageWindow(label: "Credits", usedPercent: 100, resetsAt: nil, kind: .weekly,
+                                style: .creditGauge, balanceRemaining: 0, balanceTotal: 0)
+        let w = try #require(MonsterEligibility.creditCompletionWindow(empty, now: now))
+        #expect(w.label == "Credits" && w.resetsAt == start)
+        #expect(MonsterSessionKey.periodSec(provider: .openrouter, label: w.label, windowSeconds: w.windowSeconds,
+                                            kind: w.kind) == 31 * 86_400)              // 서버 겹침 기록(28일 미만)을 건너뛴다
+        #expect(MonsterSessionKey.resetBucketMs(MonsterSessionKey.epochMs(start)) == MonsterSessionKey.epochMs(start))
+        // 잔액이 남은 충전형·구독 게이지·잔액 텍스트는 해당 없음.
+        let funded = UsageWindow(label: "Credits", usedPercent: 25, resetsAt: nil, kind: .weekly,
+                                 style: .creditGauge, balanceRemaining: 37.1, balanceTotal: 50)
+        #expect(MonsterEligibility.creditCompletionWindow(funded, now: now) == nil)
+        let gauge = UsageWindow(label: "w", usedPercent: 100, resetsAt: now.addingTimeInterval(3600), kind: .weekly)
+        #expect(MonsterEligibility.creditCompletionWindow(gauge, now: now) == nil)
+    }
+
     @Test func accountSignatureSeparatesDifferentAccounts() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let reset = now.addingTimeInterval(3600)

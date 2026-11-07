@@ -202,8 +202,13 @@ final class MonsterStore {
         let owner = activeOwner
         if let owner, !ledger.mergedUIDs.contains(owner) { await mergeGuestHistoryIfNeeded() }
         let date = Date(timeIntervalSince1970: Double(now) / 1000)
-        for window in windows where MonsterEligibility.isCompleted(window, now: date) {
-            await handleCompletion(agent: agent, window: window, owner: owner, now: now)
+        for window in windows {
+            if MonsterEligibility.isCompleted(window, now: date) {
+                await handleCompletion(agent: agent, window: window, owner: owner, now: now)
+            } else if let credit = MonsterEligibility.creditCompletionWindow(window, now: date) {
+                // 잔액이 바닥난 충전형 바: 월 1회 확정 몬스터(가상 리셋 = 다음 달 1일 KST).
+                await handleCompletion(agent: agent, window: credit, owner: owner, now: now)
+            }
         }
         await handleRandom(owner: owner, now: now)
         await retryPendingDefeats(owner: owner)

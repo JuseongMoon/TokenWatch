@@ -492,7 +492,8 @@ final class AgentStore {
             guard let remaining = window.balanceRemaining else { return window }
             let total: Double
             let estimated: Bool
-            if let apiTotal = window.balanceTotal, apiTotal > 0 {
+            // API 총액이 0이면(충전 이력 없음) 그 자체로 정확한 값이다 — peak 추정(~)으로 넘기지 않는다.
+            if let apiTotal = window.balanceTotal, apiTotal >= 0 {
                 total = apiTotal
                 estimated = false
             } else {
@@ -503,7 +504,7 @@ final class AgentStore {
                 estimated = true
             }
             guard let used = CreditGaugePolicy.usedPercent(remaining: remaining, total: total) else {
-                return window   // total ≤ 0 → balance 텍스트 fallback
+                return window   // 총액을 알 수 없음 → balance 텍스트 fallback
             }
             return window.promotedToCreditGauge(usedPercent: used, estimatedTotal: estimated)
         }
@@ -829,10 +830,11 @@ enum AutoRefreshPolicy {
 
 /// 충전형(선불 크레딧) 잔액을 게이지 사용률로 환산하는 순수 정책 — AgentStore와 단위 테스트가 공유한다.
 enum CreditGaugePolicy {
-    /// 남은 잔액과 총액으로 "소비율(%)"을 낸다. total>0이 아니면 nil(→ balance 텍스트 fallback).
-    /// 예) remaining=487.3, total=500 → 2.54% used. 초과지출(remaining<0)은 100%로 clamp.
+    /// 남은 잔액과 총액으로 "소비율(%)"을 낸다. 예) remaining=487.3, total=500 → 2.54% used.
+    /// 초과지출(remaining<0)은 100%로 clamp. 총액이 0 이하인데 잔액도 없으면(한 번도 충전하지 않은 계정)
+    /// 100% — 빈 게이지로 그려 몬스터가 설 자리를 둔다. 총액을 모르는데 잔액만 있으면 nil(→ balance 텍스트).
     static func usedPercent(remaining: Double, total: Double) -> Double? {
-        guard total > 0 else { return nil }
+        guard total > 0 else { return remaining <= 0 ? 100 : nil }
         let used = (1 - remaining / total) * 100
         return min(100, max(0, used))
     }

@@ -404,12 +404,37 @@ struct MonsterStoreTests {
 
     @Test func agentWithoutCandidateWindowIsSkipped() async {
         let s = await makeSetup(configPayload: Self.alwaysRandom)
-        let credit = UsageWindow(label: "credits", usedPercent: 40,
-                                 resetsAt: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000 + 86_400),
-                                 kind: .weekly, style: .creditGauge)
-        s.snapshots.list = [(agent, [credit])]                        // 충전형 게이지는 대상이 아니다
+        let balance = UsageWindow(label: "credits", usedPercent: 0, resetsAt: nil, kind: .weekly,
+                                  style: .balance, valueText: "6.50 USD")
+        s.snapshots.list = [(agent, [balance])]                       // 바가 없는 잔액 텍스트는 대상이 아니다
         await s.store.observe(agent: agent, windows: [])
         #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) == nil)
+    }
+
+    @Test func depletedCreditGaugeSpawnsAMonthlyCompletionMonster() async {
+        let s = await makeSetup()
+        let empty = UsageWindow(label: "Credits", usedPercent: 100, resetsAt: nil, kind: .weekly,
+                                style: .creditGauge, valueText: "0.00 credits left",
+                                balanceRemaining: 0, balanceTotal: 0)
+        await s.store.observe(agent: agent, windows: [empty])
+        await s.store.observe(agent: agent, windows: [empty])
+        let shown = s.store.encounters(agentID: agent.id, provider: .claude, window: empty)
+        #expect(shown.count == 1 && shown.first?.isAlive == true)        // 바로 잡을 수 있는 몬스터 하나
+        #expect(shown.first?.source == .completion)
+        let reset = MonsterEligibility.nextCreditCycleStart(after: Date(timeIntervalSince1970: Double(s.clock.ms) / 1000))
+        #expect(shown.first?.expiresAtMs == reset.map(MonsterSessionKey.epochMs))   // 그 달 말까지 남는다
+        #expect(s.functions.calls.isEmpty)
+    }
+
+    @Test func creditGaugeGetsRandomSchedule() async {
+        let s = await makeSetup(configPayload: Self.alwaysRandom)
+        let funded = UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil, kind: .weekly,
+                                 style: .creditGauge, valueText: "50.00 credits left",
+                                 balanceRemaining: 50, balanceTotal: 50)
+        s.snapshots.list = [(agent, [funded])]                        // 잔액이 남은 충전형 바도 확률 출현 후보(사용률 무관)
+        // (잔액이 바닥난 바는 월 1회 완료 몬스터가 먼저 서고, 처치 뒤 확률 추첨에 합류한다 — 구독 100% 바와 같다.)
+        await s.store.observe(agent: agent, windows: [])
+        #expect(s.store.ledger.nextDraw(agent: MonsterSessionKey.agentToken(agent.id)) != nil)
     }
 
     // MARK: 계정

@@ -101,7 +101,42 @@ struct MonsterLogicTests {
         #expect(MonsterEligibility.isRandomCandidate(half, minUsedPercent: 0, now: now))
         #expect(!MonsterEligibility.isRandomCandidate(half, minUsedPercent: 50, now: now))
         #expect(MonsterEligibility.isRandomCandidate(full, minUsedPercent: 0, now: now))    // 100% 창도 추첨 후보
-        #expect(!MonsterEligibility.isRandomCandidate(credit, minUsedPercent: 0, now: now))
+        // 충전형 게이지: 완료 출현 대상은 아니지만 잔액·사용률·리셋과 무관하게 확률 출현 후보다.
+        #expect(!MonsterEligibility.isCompleted(credit, now: now))
+        #expect(MonsterEligibility.isRandomCandidate(credit, minUsedPercent: 0, now: now))
+        let emptyCredit = UsageWindow(label: "Credits", usedPercent: 100, resetsAt: nil, kind: .weekly,
+                                      style: .creditGauge, balanceRemaining: 0, balanceTotal: 0)
+        let fullCredit = UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil, kind: .weekly,
+                                     style: .creditGauge, balanceRemaining: 50, balanceTotal: 50)
+        #expect(MonsterEligibility.isRandomCandidate(emptyCredit, minUsedPercent: 1, now: now))   // 0원 계정
+        #expect(MonsterEligibility.isRandomCandidate(fullCredit, minUsedPercent: 1, now: now))    // 충전 직후
+        let balance = UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil, kind: .weekly,
+                                  style: .balance, valueText: "6.50 USD")
+        #expect(!MonsterEligibility.isRandomCandidate(balance, minUsedPercent: 0, now: now))   // 텍스트 잔액은 바가 없다
+    }
+
+    @Test func depletedCreditGaugeGetsAMonthlyCompletionWindow() throws {
+        // 2027-01-15 12:00 KST → 다음 주기 시작은 2027-02-01 00:00 KST(= 2027-01-31 15:00 UTC).
+        let now = Date(timeIntervalSince1970: 1_799_982_000)
+        let start = try #require(MonsterEligibility.nextCreditCycleStart(after: now))
+        #expect(start.timeIntervalSince1970 == 1_801_407_600)
+        // 월말 직전(KST)에도 다음 달 1일이다 — 기기 시간대와 무관.
+        let lastMinute = Date(timeIntervalSince1970: 1_801_407_540)
+        #expect(MonsterEligibility.nextCreditCycleStart(after: lastMinute)?.timeIntervalSince1970 == 1_801_407_600)
+
+        let empty = UsageWindow(label: "Credits", usedPercent: 100, resetsAt: nil, kind: .weekly,
+                                style: .creditGauge, balanceRemaining: 0, balanceTotal: 0)
+        let w = try #require(MonsterEligibility.creditCompletionWindow(empty, now: now))
+        #expect(w.label == "Credits" && w.resetsAt == start)
+        #expect(MonsterSessionKey.periodSec(provider: .openrouter, label: w.label, windowSeconds: w.windowSeconds,
+                                            kind: w.kind) == 31 * 86_400)              // 서버 겹침 기록(28일 미만)을 건너뛴다
+        #expect(MonsterSessionKey.resetBucketMs(MonsterSessionKey.epochMs(start)) == MonsterSessionKey.epochMs(start))
+        // 잔액이 남은 충전형·구독 게이지·잔액 텍스트는 해당 없음.
+        let funded = UsageWindow(label: "Credits", usedPercent: 25, resetsAt: nil, kind: .weekly,
+                                 style: .creditGauge, balanceRemaining: 37.1, balanceTotal: 50)
+        #expect(MonsterEligibility.creditCompletionWindow(funded, now: now) == nil)
+        let gauge = UsageWindow(label: "w", usedPercent: 100, resetsAt: now.addingTimeInterval(3600), kind: .weekly)
+        #expect(MonsterEligibility.creditCompletionWindow(gauge, now: now) == nil)
     }
 
     @Test func accountSignatureSeparatesDifferentAccounts() {
@@ -116,8 +151,16 @@ struct MonsterLogicTests {
         let used = [UsageWindow(label: "s", usedPercent: 55, resetsAt: reset, kind: .session), a[1]]
         #expect(sig(.claude, a) != sig(.claude, used))                                // 사용률이 다르면 다른 계정
         #expect(sig(.claude, a) != sig(.codex, a))                                    // 서비스가 다르면 다른 계정
-        let credit = UsageWindow(label: "c", usedPercent: 30, resetsAt: reset, kind: .weekly, style: .creditGauge)
-        #expect(sig(.claude, a) == sig(.claude, a + [credit]))                        // 대상이 아닌 창은 보지 않는다
+        let balance = UsageWindow(label: "b", usedPercent: 0, resetsAt: nil, kind: .weekly, style: .balance)
+        #expect(sig(.claude, a) == sig(.claude, a + [balance]))                       // 바가 없는 창은 보지 않는다
+        // 충전형은 총액·잔액으로 가른다 — 같은 키를 두 번 추가하면 같고, 잔액이 다르면 다른 계정.
+        let credit = { (rem: Double, total: Double) in
+            UsageWindow(label: "Credits", usedPercent: 0, resetsAt: nil, kind: .weekly, style: .creditGauge,
+                        balanceRemaining: rem, balanceTotal: total)
+        }
+        #expect(sig(.openrouter, [credit(37.1, 50)]) == sig(.openrouter, [credit(37.1, 50)]))
+        #expect(sig(.openrouter, [credit(37.1, 50)]) != sig(.openrouter, [credit(12, 50)]))
+        #expect(sig(.openrouter, [credit(0, 0)]) != sig(.openrouter, []))
     }
 
     // MARK: 설정

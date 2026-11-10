@@ -110,16 +110,48 @@ enum MonsterEligibility {
         isTarget(window, now: now) && window.usedPercent / 100 >= completionThreshold
     }
 
+    /// 잔액이 바닥난 충전형 게이지(0원 계정 포함)의 완료 출현용 가상 창 — 서비스마다 **월 1회** 확정 몬스터.
+    /// 리셋이 없으므로 다음 달 1일 0시(KST)를 리셋으로, 주기를 31일로 보낸다. 서버 정합성 검사(주기·미래 리셋·
+    /// 직전 완료와 주기 90% 간격)를 그대로 통과하고, 주기 28일 이상이라 서버의 리셋 겹침(계정 공유 의심) 기록도
+    /// 건너뛴다 — 하루 주기로 보내면 0원 사용자끼리 같은 자정 버킷으로 묶여 의심 쌍이 쌓인다(서버 변경 없이 합의한 값).
+    /// 몬스터는 그 리셋(월말)까지 남는다. 표시용 창(style·label)은 그대로 두고 리셋·주기만 채운 복사본이다.
+    static func creditCompletionWindow(_ window: UsageWindow, now: Date) -> UsageWindow? {
+        guard window.style == .creditGauge, window.usedPercent / 100 >= completionThreshold,
+              let reset = nextCreditCycleStart(after: now) else { return nil }
+        return UsageWindow(label: window.label, usedPercent: window.usedPercent, resetsAt: reset, kind: .weekly,
+                           windowSeconds: TimeInterval(MonsterSessionKey.monthSeconds), style: window.style,
+                           valueText: window.valueText, balanceRemaining: window.balanceRemaining,
+                           balanceTotal: window.balanceTotal, estimatedTotal: window.estimatedTotal)
+    }
+
+    /// 충전형 완료 주기의 다음 시작 — 다음 달 1일 0시(KST). 기기 시간대와 무관해 사용자·기기마다 같다.
+    static func nextCreditCycleStart(after now: Date) -> Date? {
+        var kst = Calendar(identifier: .gregorian)
+        guard let zone = TimeZone(identifier: "Asia/Seoul") else { return nil }
+        kst.timeZone = zone
+        let month = kst.dateComponents([.year, .month], from: now)
+        guard let start = kst.date(from: month) else { return nil }
+        return kst.date(byAdding: .month, value: 1, to: start)
+    }
+
     /// 확률 출현 후보. 100%가 된 창도 후보다 — 일찍 다 써도 리셋까지 추첨이 이어진다.
+    /// 충전형 게이지(creditGauge)는 리셋이 없으므로 완료 출현은 없고, 잔액·사용률과 무관하게 확률 출현 후보다
+    /// (최소 사용률은 "리셋 주기 안 첫 사용"을 기다리는 규칙이라 충전형엔 해당하지 않는다. 0원 계정도 후보).
     /// 몬스터가 살아 있는 바·처치 1시간 안의 유령이 있는 바는 호출측(MonsterStore)이 거른다.
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {
-        isTarget(window, now: now) && window.usedPercent >= minUsedPercent
+        if window.style == .creditGauge { return true }
+        return isTarget(window, now: now) && window.usedPercent >= minUsedPercent
     }
 
     /// 같은 AI 계정으로 보이는 에이전트의 표식(기기 안에서만 쓴다). 같은 계정을 여러 번 추가하면 대상 창의
     /// label·리셋 시각·사용률이 똑같으므로 확률 추첨은 그중 하나만 한다. 서로 다른 계정은 숫자가 달라 갈린다.
+    /// 충전형 게이지는 리셋 대신 총액·잔액(센트 단위)으로 가른다.
     static func accountSignature(provider: AgentProvider, windows: [UsageWindow], now: Date) -> String {
         let parts = windows.compactMap { window -> String? in
+            if window.style == .creditGauge {
+                let cents = { (v: Double?) in v.map { String(Int64(($0 * 100).rounded())) } ?? "-" }
+                return "\(window.label)|credit|\(cents(window.balanceTotal))|\(cents(window.balanceRemaining))"
+            }
             guard isTarget(window, now: now), let resetsAt = window.resetsAt else { return nil }
             let reset = MonsterSessionKey.resetBucketMs(
                 MonsterSessionKey.keyResetsAtMs(provider: provider, resetsAt: resetsAt))

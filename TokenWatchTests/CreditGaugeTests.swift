@@ -38,9 +38,15 @@ struct CreditGaugeTests {
     }
 
     @Test func usedPercentNilWhenNoTotal() {
-        // 총액을 모르면(0/음수) nil → balance 텍스트 fallback.
+        // 총액을 모르는데 잔액이 있으면 nil → balance 텍스트 fallback.
         #expect(CreditGaugePolicy.usedPercent(remaining: 100, total: 0) == nil)
         #expect(CreditGaugePolicy.usedPercent(remaining: 100, total: -5) == nil)
+    }
+
+    @Test func zeroTotalZeroRemainingIsEmptyGauge() {
+        // 한 번도 충전하지 않은 계정(총액 0·잔액 0)은 빈 게이지(100% used) — 몬스터가 설 자리를 둔다.
+        #expect(CreditGaugePolicy.usedPercent(remaining: 0, total: 0) == 100)
+        #expect(CreditGaugePolicy.usedPercent(remaining: -1, total: 0) == 100)
     }
 
     // MARK: peak 추정 (CreditGaugePolicy.newPeak)

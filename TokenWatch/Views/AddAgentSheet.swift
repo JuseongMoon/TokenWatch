@@ -4,8 +4,7 @@
 //
 //  + 버튼 시트(터미널 스타일): 제공자 선택 → 로그인 → 토큰 교환 → 추가.
 //  로그인 방식은 provider의 authKind로 갈린다:
-//   - oauthBrowser(Claude·Grok): 앱 안 인증 시트 + 루프백 콜백 자동 수신(Claude만 폴백: 코드 붙여넣기)
-//   - oauthCode(Codex): 인앱 WKWebView에서 콜백 가로채기
+//   - oauthBrowser(Claude·Codex·Grok): 앱 안 인증 시트 + 루프백 콜백 자동 수신(Claude만 폴백: 코드 붙여넣기)
 //   - oauthDeviceFlow(Copilot·Cursor): 앱 안 Safari View에서 승인 + 토큰 폴링 / apiKey(그 외)
 //
 
@@ -22,7 +21,6 @@ struct AddAgentSheet: View {
     private enum Phase: Equatable {
         case pickProvider
         case browserLogin(AgentProvider) // oauthBrowser: 인증 시트 + 루프백/코드 입력
-        case login(AgentProvider)        // oauthCode: WKWebView 콜백 code 캡처
         case apiKey(AgentProvider)       // apiKey: 사용자 키 붙여넣기
         case deviceFlow(AgentProvider)   // oauthDeviceFlow: user code 발급 + 폴링
         case exchanging
@@ -88,12 +86,17 @@ struct AddAgentSheet: View {
     private func logAbandonIfNeeded() {
         guard !completed else { return }
         switch phase {
-        case .browserLogin(let p): AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .browserWait))
-        case .login(let p):      AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .authorize))
-        case .apiKey(let p):     AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .apiKeyEntry))
-        case .deviceFlow(let p): AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .devicePoll))
+        case .browserLogin(let p): logAbandon(p, stage: .browserWait)
+        case .apiKey(let p):       logAbandon(p, stage: .apiKeyEntry)
+        case .deviceFlow(let p):   logAbandon(p, stage: .devicePoll)
         case .pickProvider, .exchanging, .failed: break
         }
+    }
+
+    private func logAbandon(_ provider: AgentProvider, stage: LoginStage) {
+        let context = LoginFunnelTracker.shared.abandonContext(for: provider)
+        AnalyticsService.shared.log(.loginAbandon(provider: provider, stage: stage,
+                                                  elapsed: context.elapsed, attempt: context.attempt))
     }
 
     @ViewBuilder
@@ -103,8 +106,6 @@ struct AddAgentSheet: View {
             providerList
         case .browserLogin(let provider):
             browserLoginView(provider)
-        case .login(let provider):
-            loginView(provider)
         case .apiKey(let provider):
             apiKeyView(provider)
         case .deviceFlow(let provider):
@@ -175,25 +176,6 @@ struct AddAgentSheet: View {
         }
     }
 
-    // MARK: 로그인 웹뷰
-
-    private func loginView(_ provider: AgentProvider) -> some View {
-        LoginWebView(
-            provider: provider,
-            startURL: ProviderAuth.authorizeURL(provider, pkce: pkce),
-            onCode: { code, state in
-                phase = .exchanging
-                Task { await exchange(provider: provider, code: code, state: state) }
-            },
-            onError: { message, code in
-                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .authorize, code: code))
-                phase = .failed(message)
-            }
-        )
-        .background(Term.bg)
-        .ignoresSafeArea(edges: .bottom)
-    }
-
     // MARK: 로그인(앱 안 인증 시트 — oauthBrowser)
 
     @ViewBuilder
@@ -237,6 +219,7 @@ struct AddAgentSheet: View {
     /// provider의 authKind에 따라 다음 화면을 고른다.
     private func start(_ provider: AgentProvider) {
         AnalyticsService.shared.log(.loginStart(provider: provider))
+        LoginFunnelTracker.shared.recordStart(provider)
         switch provider.authKind {
         case .oauthBrowser:
             let newPKCE = PKCE()
@@ -244,9 +227,6 @@ struct AddAgentSheet: View {
             browserLogin?.cancel()
             browserLogin = makeBrowserLogin(provider, pkce: newPKCE)
             phase = .browserLogin(provider)
-        case .oauthCode:
-            pkce = PKCE()
-            phase = .login(provider)
         case .apiKey:
             apiKeyText = ""
             phase = .apiKey(provider)

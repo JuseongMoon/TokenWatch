@@ -220,6 +220,7 @@ final class AgentStore {
             // 화면 세대도 올린다. 이전 토큰으로 진행 중인 조회의 결과는 버려지고 새 토큰으로 다시 조회한다.
             loginEpoch[existing.id, default: 0] &+= 1
             AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+            LoginFunnelTracker.shared.recordSuccess(provider)
             // 직전 조회가 20초 안에 있었어도(예: 인증 오류를 본 직후) 새 자격증명으로 반드시 한 번 조회한다.
             let current = agents.first(where: { $0.id == existing.id }) ?? existing
             await refresh(current, manual: false, bypassSpacing: true)
@@ -231,6 +232,7 @@ final class AgentStore {
         agents.append(agent)
         persist()
         AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+        LoginFunnelTracker.shared.recordSuccess(provider)
         AnalyticsService.shared.syncUserProperties(agents: agents)
         // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
         await NotificationManager.shared.requestAuthorizationIfNeeded()

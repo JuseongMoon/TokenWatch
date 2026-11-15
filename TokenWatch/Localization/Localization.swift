@@ -418,6 +418,11 @@ struct L10n: Sendable {
         lang == .ko ? "로그인 서버가 요청을 거절했습니다. 다시 시도해 주세요."
                     : "The sign-in server rejected the request. Please try again."
     }
+    /// 고정 루프백 포트(Codex)를 다른 앱이 쓰고 있다 — 대개 다른 앱에서 기다리는 로그인.
+    var browserPortInUse: String {
+        lang == .ko ? "로그인을 받을 준비를 하지 못했습니다. 다른 앱에서 진행 중인 로그인이 있다면 끝낸 뒤, 잠시 후 다시 시도해 주세요."
+                    : "Couldn't get ready to receive the sign-in. If another app has a sign-in in progress, finish it, then try again in a moment."
+    }
     /// 로그인 창에서 승인을 기다리다 시간(10분)이 다 됐다.
     var browserLoginTimedOut: String {
         lang == .ko ? "로그인 대기 시간이 지났습니다. 다시 시도해 주세요."

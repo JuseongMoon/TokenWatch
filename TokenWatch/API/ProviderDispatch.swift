@@ -75,14 +75,14 @@ func parseRetryAfter(_ value: String?, now: Date = Date()) -> Date? {
 // MARK: - OAuth 디스패치
 
 enum ProviderAuth {
-    // 아래 authorizeURL/parseCallback/exchange/refresh는 OAuth 인가코드 방식
-    // provider(oauthBrowser=Claude·Grok, oauthCode=Codex) 전용이다.
+    // 아래 authorizeURL/exchange/refresh는 OAuth 인가코드 방식
+    // provider(oauthBrowser=Claude·Codex·Grok) 전용이다.
     // apiKey/deviceFlow provider는 AddAgentSheet가 이 경로로 오지 않도록 라우팅한다.
     // switch에 `default:`를 두지 않는다 — 새 provider를 추가하며 여기를 빠뜨리면 컴파일 에러로
     // 드러나야 한다(빠뜨린 채 빌드되면 로그인 크래시나 "로그인 필요"가 조용히 난다).
 
     /// - Parameter redirect: 인증 시트 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
-    ///   (Claude·Grok. Codex는 콜백이 고정이라 무시한다. Grok은 루프백 redirect가 반드시 있어야 한다.)
+    ///   (Claude·Grok. Codex는 redirect가 하나로 고정이라 무시한다. Grok은 루프백 redirect가 반드시 있어야 한다.)
     static func authorizeURL(_ provider: AgentProvider, pkce: PKCE, redirect: String? = nil) -> URL {
         switch provider {
         case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce, redirect: redirect)
@@ -95,21 +95,31 @@ enum ProviderAuth {
         }
     }
 
-    static func parseCallback(_ provider: AgentProvider, _ url: URL) -> (code: String, state: String)? {
-        switch provider {
-        case .claude: return ClaudeOAuth.parseCallback(url)
-        case .codex: return CodexOAuth.parseCallback(url)
-        // Grok 콜백은 루프백 리스너가 직접 파싱한다(웹뷰 가로채기 경로가 아니다).
-        case .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
-        }
-    }
-
     /// 인증 시트 로그인(oauthBrowser)의 루프백 redirect_uri. 루프백 콜백을 쓰지 않는 provider는 nil.
+    /// Codex는 등록된 주소 하나뿐이라 `port`와 무관하게 그 값이다(리스너도 그 포트로 뜬다 — `loopbackPort`).
     static func loopbackRedirectURI(_ provider: AgentProvider, port: UInt16) -> String? {
         switch provider {
         case .claude: return ClaudeOAuth.loopbackRedirectURI(port: port)
+        case .codex: return CodexOAuth.redirectURI
         case .grok: return GrokOAuth.loopbackRedirectURI(port: port)
-        case .codex, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        case .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 루프백 리스너가 반드시 써야 하는 포트. 임의 포트를 받아도 되는 provider는 nil.
+    static func loopbackPort(_ provider: AgentProvider) -> UInt16? {
+        switch provider {
+        case .codex: return CodexOAuth.redirectPort
+        case .claude, .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 루프백 리스너가 콜백을 받는 경로(redirect_uri의 경로와 같아야 한다).
+    static func loopbackCallbackPath(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .codex: return CodexOAuth.callbackPath
+        case .claude, .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
+            return LoopbackCallbackServer.defaultCallbackPath
         }
     }
 

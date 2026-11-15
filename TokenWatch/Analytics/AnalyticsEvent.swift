@@ -12,7 +12,6 @@ import Foundation
 
 /// 로그인 퍼널에서 실패/이탈이 일어난 단계.
 enum LoginStage: String, Sendable {
-    case authorize                          // 웹뷰 인가 페이지 진행 중
     case browserWait = "browser_wait"       // 로그인 창(인증 시트)에서 승인을 기다리는 중
     case codeEntry = "code_entry"           // 인가 코드 직접 입력(붙여넣기) 화면
     case stateMismatch = "state_mismatch"   // CSRF state 불일치
@@ -84,7 +83,8 @@ enum AnalyticsEvent {
     case loginStart(provider: AgentProvider)
     case loginSuccess(provider: AgentProvider, agentsTotal: Int)
     case loginFail(provider: AgentProvider, stage: LoginStage, code: String)
-    case loginAbandon(provider: AgentProvider, stage: LoginStage)
+    /// `elapsed`·`attempt`는 `LoginFunnelTracker`가 정한다(Android와 같은 의미). 둘 다 문자열로 보낸다.
+    case loginAbandon(provider: AgentProvider, stage: LoginStage, elapsed: LoginElapsedBucket, attempt: Int)
     /// 설치 후 1회 — 첫 에이전트의 첫 정상 스냅샷 표시(진짜 "aha" 시점). GA4 키 이벤트.
     case activationComplete(provider: AgentProvider)
     // 데모 퍼널
@@ -188,8 +188,9 @@ enum AnalyticsEvent {
         case .loginFail(let p, let stage, let code):
             return ["provider": p.rawValue, "auth_kind": Self.authKindTag(p),
                     "stage": stage.rawValue, "code": LoginFailureCode.sanitized(code)]
-        case .loginAbandon(let p, let stage):
-            return ["provider": p.rawValue, "stage": stage.rawValue]
+        case .loginAbandon(let p, let stage, let elapsed, let attempt):
+            return ["provider": p.rawValue, "stage": stage.rawValue,
+                    "elapsed": elapsed.rawValue, "attempt": String(min(max(attempt, 1), 3))]
         case .activationComplete(let p):
             return ["provider": p.rawValue]
         case .demoStart(let source):
@@ -256,7 +257,6 @@ enum AnalyticsEvent {
     /// `auth_kind` 값. 로그인 실패 진단 보고(LoginFailureReporter)도 같은 값을 쓴다.
     static func authKindTag(_ provider: AgentProvider) -> String {
         switch provider.authKind {
-        case .oauthCode: return "oauth"
         case .oauthBrowser: return "oauth_browser"
         case .oauthDeviceFlow: return "device"
         case .apiKey: return "api_key"

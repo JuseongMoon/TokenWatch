@@ -84,11 +84,6 @@ struct LoginFailureCodeTests {
         #expect(LoginFailureCode.from(jsonError) == "parse")
     }
 
-    @Test func 웹뷰_실패는_부호_없는_NSError_코드() {
-        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
-        #expect(LoginFailureCode.webview(error) == "webview_1009")
-    }
-
     // MARK: 정규화
 
     @Test func 정규화는_규칙에_맞는_코드만_남긴다() {
@@ -96,7 +91,7 @@ struct LoginFailureCodeTests {
         #expect(LoginFailureCode.sanitized("OAuthError") == "oautherror")
         #expect(LoginFailureCode.sanitized("") == "other")
         #expect(LoginFailureCode.sanitized(String(repeating: "a", count: 60)).count == 40)
-        for code in ["http_401", "invalid_grant", "webview_1009", "network_offline", "keychain_save"] {
+        for code in ["http_401", "invalid_grant", "network_offline", "keychain_save", LoginFailureCode.loopbackPortInUse] {
             #expect(isValidCode(LoginFailureCode.sanitized(code)))
             #expect(LoginFailureCode.sanitized(code) == code)
         }

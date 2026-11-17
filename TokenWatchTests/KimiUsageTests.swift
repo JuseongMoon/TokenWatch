@@ -127,7 +127,6 @@ struct KimiUsageTests {
         #expect(KimiUsageClient.hosts == ["api.kimi.com", "api.kimi.ai"])
         #expect(KimiUsageClient.usagesURL(host: "api.kimi.ai").absoluteString
                 == "https://api.kimi.ai/coding/v1/usages")
-        #expect(L10n(lang: .ko).apiKeyHint(provider: .kimi) != nil)
-        #expect(L10n(lang: .en).apiKeyHint(provider: .openrouter) == nil)
+        #expect(L10n(lang: .ko).apiKeyGuide(provider: .kimi) != nil)
     }
 }

@@ -22,14 +22,16 @@ enum LoginStage: String, Sendable {
 }
 
 /// usage 조회 실패의 기계 판독 사유. 원문(현지화된) 에러 메시지 대신 이 값만 전송한다.
+/// Android와 같은 의미로 분류한다(분류 규칙은 `FetchErrorReason(classifying:)`).
 enum FetchErrorReason: String, Sendable {
-    case auth                               // 인증 만료/refresh 실패 → 재로그인 필요
+    case auth                               // 로그인 없음·refresh 거부(400/401) → 재로그인 필요
     case rateLimit = "rate_limit"
     case http4xx = "http_4xx"
     case http5xx = "http_5xx"
     case network
     case parse
     case empty                              // 200이지만 창 0개 — 스키마 변경 신호
+    case credential                         // 기기 보안 저장소(Keychain)를 일시적으로 읽지 못함 — 자격증명은 그대로
     case other
 }
 

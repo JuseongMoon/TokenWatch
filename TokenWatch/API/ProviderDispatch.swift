@@ -46,9 +46,45 @@ extension FetchErrorReason {
         case UsageError.noWindows: self = .empty
         // 401은 인증 거부, 403은 기존과 같은 4xx로 분류한다(분석 계약 유지).
         case UsageError.keyRejected(let status, _): self = status == 401 ? .auth : .http4xx
-        case is OAuthError: self = .auth   // 토큰 refresh 실패 → 재로그인 필요
+        case let e as OAuthError: self = FetchErrorReason(oauth: e)
+        case is CredentialUnavailable: self = .credential
         case is URLError: self = .network
         default: self = .other
+        }
+    }
+
+    /// 토큰 갱신(·교환) 오류는 원인별로 나눈다 — 통째로 `auth`로 보면 업체 장애(429·5xx)나
+    /// 응답 형식 변경까지 재로그인 문제로 잘못 읽는다.
+    /// - 로그인 없음·refresh 거부(`refreshRevoked`)·400/401 거부 → `auth`
+    /// - 429 → `rate_limit`, 5xx → `http_5xx`, 그 밖의 4xx → `http_4xx`, 응답 해석 실패 → `parse`
+    init(oauth error: OAuthError) {
+        switch error {
+        case .notAuthenticated, .refreshRevoked:
+            self = .auth
+        case .refreshFailed(_, let code), .exchangeFailed(_, let code):
+            self = FetchErrorReason(tokenFailureCode: code)
+        }
+    }
+
+    /// 토큰 엔드포인트 실패에 실린 `LoginFailureCode` 값 → 사유.
+    /// `http(status:body:)`는 본문의 OAuth `error`가 특정 사유면 상태 코드 대신 그 이름을 싣는데,
+    /// 그 사유들(`invalid_grant`·`invalid_client`·`redirect_mismatch`)은 토큰 엔드포인트의 400/401 거부다.
+    init(tokenFailureCode code: String?) {
+        switch code {
+        case "invalid_grant", "invalid_client", "redirect_mismatch":
+            self = .auth
+        case "parse":
+            self = .parse
+        case let code? where code.hasPrefix("http_"):
+            switch Int(code.dropFirst("http_".count)) {
+            case 400, 401: self = .auth
+            case 429: self = .rateLimit
+            case let status? where (500...599).contains(status): self = .http5xx
+            case let status? where (400...499).contains(status): self = .http4xx
+            default: self = .other
+            }
+        default:
+            self = .other
         }
     }
 }
@@ -312,6 +348,12 @@ enum ProviderUsage {
             return nil
         } catch let e as URLError where e.code == .cancelled {
             return nil
+        } catch is CredentialUnavailable {
+            // 저장소를 잠시 읽지 못했을 뿐 자격증명은 그대로다 — "로그인 필요"로 안내하지 않는다.
+            // 자동 재시도를 약속하지 않는다(다음 조회 주기나 사용자 새로고침에서 다시 읽는다).
+            return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
+                                 error: L10n(lang: currentLang()).errCredentialUnavailable,
+                                 errorReason: .credential)
         } catch {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,

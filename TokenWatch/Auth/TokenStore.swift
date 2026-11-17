@@ -27,12 +27,25 @@ import Foundation
 /// 에러가 아니라 취소에 가깝다(표시 상태를 건드리지 않는다).
 nonisolated struct CredentialSuperseded: Error, Equatable {}
 
+/// 기기 보안 저장소(Keychain)를 지금은 읽을 수 없다 — 자격증명은 그대로 있다(재로그인 대상 아님).
+/// 조회 실패 사유는 `credential`로 분류하고(카드 문구는 `ProviderUsage.fetchSnapshot`이 붙인다),
+/// 토큰을 지우거나 "로그인 필요"로 바꾸지 않는다.
+nonisolated struct CredentialUnavailable: Error, Equatable {}
+
 /// 자격증명 저장소 경계. 앱은 Keychain, 테스트는 메모리 구현을 쓴다.
 nonisolated protocol CredentialStorage: Sendable {
     func read(_ agentID: UUID) -> OAuthTokens?
+    /// `read`와 같되, 저장소를 지금 읽을 수 없으면 nil(없음) 대신 `CredentialUnavailable`을 던진다.
+    /// 사용량 조회 경로(`validTokens`·`forceRefresh`·갱신)가 쓴다.
+    func readChecked(_ agentID: UUID) throws -> OAuthTokens?
     /// 저장 성공 여부.
     func write(_ tokens: OAuthTokens, for agentID: UUID) -> Bool
     func remove(_ agentID: UUID)
+}
+
+extension CredentialStorage {
+    /// 읽기 실패를 구분하지 못하는 저장소는 `read`와 같다.
+    func readChecked(_ agentID: UUID) throws -> OAuthTokens? { read(agentID) }
 }
 
 /// 기기 Keychain 저장소(`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
@@ -41,6 +54,14 @@ nonisolated struct KeychainCredentialStorage: CredentialStorage {
 
     func read(_ agentID: UUID) -> OAuthTokens? {
         Keychain.json(OAuthTokens.self, account: account(for: agentID))
+    }
+
+    func readChecked(_ agentID: UUID) throws -> OAuthTokens? {
+        switch Keychain.lookup(account: account(for: agentID)) {
+        case .found(let data): return try? JSONDecoder().decode(OAuthTokens.self, from: data)
+        case .missing: return nil
+        case .unavailable: throw CredentialUnavailable()
+        }
     }
 
     func write(_ tokens: OAuthTokens, for agentID: UUID) -> Bool {
@@ -108,6 +129,12 @@ actor TokenStore {
         storage.read(agentID)
     }
 
+    /// 사용량 조회 경로의 읽기 — 저장소를 지금 읽을 수 없으면 "로그인 없음"이 아니라
+    /// `CredentialUnavailable`을 던진다(토큰은 지우지 않는다).
+    private func checkedTokens(for agentID: UUID) throws -> OAuthTokens? {
+        try storage.readChecked(agentID)
+    }
+
     func delete(for agentID: UUID) {
         bumpGeneration(agentID)
         storage.remove(agentID)
@@ -137,7 +164,7 @@ actor TokenStore {
     func validTokens(for agentID: UUID, provider: AgentProvider,
                      generation: UInt64? = nil) async throws -> OAuthTokens {
         try ensureGeneration(generation, for: agentID)
-        guard let tokens = tokens(for: agentID) else { throw OAuthError.notAuthenticated }
+        guard let tokens = try checkedTokens(for: agentID) else { throw OAuthError.notAuthenticated }
         guard tokens.isExpired else { return tokens }
         guard tokens.refreshToken != nil else { throw OAuthError.notAuthenticated }
         return try await refreshShared(for: agentID, provider: provider)
@@ -147,7 +174,7 @@ actor TokenStore {
     func forceRefresh(for agentID: UUID, provider: AgentProvider,
                       generation: UInt64? = nil) async throws -> OAuthTokens {
         try ensureGeneration(generation, for: agentID)
-        guard let tokens = tokens(for: agentID), tokens.refreshToken != nil else {
+        guard let tokens = try checkedTokens(for: agentID), tokens.refreshToken != nil else {
             throw OAuthError.notAuthenticated
         }
         return try await refreshShared(for: agentID, provider: provider)
@@ -175,7 +202,7 @@ actor TokenStore {
             // 갱신 직전에 최신 저장본을 다시 읽는다(앞선 갱신이 방금 로테이션했을 수 있다).
             // 실행 유예를 잡는 사이 세대가 바뀌었으면 이 갱신은 시작하지 않는다.
             guard self.generation(for: agentID) == gen else { throw CredentialSuperseded() }
-            guard let current = self.tokens(for: agentID), let usedRefresh = current.refreshToken else {
+            guard let current = try self.checkedTokens(for: agentID), let usedRefresh = current.refreshToken else {
                 throw OAuthError.notAuthenticated
             }
             do {

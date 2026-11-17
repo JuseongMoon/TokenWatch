@@ -314,19 +314,36 @@ struct L10n: Sendable {
     func errTokenExchange(_ m: String) -> String { lang == .ko ? "토큰 교환 실패: \(m)" : "Token exchange failed: \(m)" }
     func errTokenRefresh(_ m: String) -> String { lang == .ko ? "토큰 갱신 실패: \(m)" : "Token refresh failed: \(m)" }
     var errNotAuthenticated: String { lang == .ko ? "로그인이 필요합니다." : "Login required." }
+    /// 기기 보안 저장소(Keychain)를 지금은 읽을 수 없다 — 자격증명은 그대로라 재로그인을 권하지 않는다.
+    var errCredentialUnavailable: String {
+        lang == .ko ? "기기 보안 저장소를 잠시 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
+                    : "Couldn't read this device's secure storage just now. Please try again in a moment."
+    }
     var errInvalidAPIKey: String {
         lang == .ko ? "API 키가 올바르지 않습니다. 키를 다시 확인해 주세요." : "That API key isn't valid. Please check it and try again."
     }
     /// API 키 입력 화면에 provider별로 덧붙이는 안내 한 줄. 없으면 nil.
-    func apiKeyHint(provider: AgentProvider) -> String? {
+    /// API 키 입력 화면 첫머리(입력란 위)의 서비스별 안내 — 어디서 어떤 키를 만드는지.
+    /// API 키 방식이 아닌 provider는 nil.
+    func apiKeyGuide(provider: AgentProvider) -> String? {
         switch provider {
         case .kimi:
-            return lang == .ko ? "Kimi Code 콘솔에서 이 앱 전용 키를 새로 만들어 붙여넣으세요. 키로 쿼터를 사용할 수도 있습니다."
-                               : "Create a new key just for this app in the Kimi Code console. A key can also spend your quota."
+            return lang == .ko ? "Kimi Code 콘솔에서 이 앱 전용 API 키를 새로 만들어 붙여넣으세요. 이 키로 쿼터를 사용할 수도 있습니다."
+                               : "Create a new API key just for this app in the Kimi Code console and paste it here. A key can also spend your quota."
         case .openrouter:
-            return lang == .ko ? "계정 전체 크레딧 잔액은 관리 키(Management Key)로만 조회됩니다. 일반 API 키는 거절되니, 설정 > Management Keys에서 만든 키를 붙여넣으세요."
-                               : "Your account's total credit balance can only be read with a Management Key. Regular API keys are refused, so paste a key created under Settings > Management Keys."
-        case .claude, .codex, .copilot, .grok, .cursor, .deepseek, .poe, .elevenlabs:
+            // 계정 전체 크레딧 잔액(/credits)은 관리 키로만 조회된다 — 입력하기 전에 알린다.
+            return lang == .ko ? "일반 API 키가 아니라 관리 키(Management Key)가 필요합니다. OpenRouter 설정 > Management Keys에서 만든 키를 붙여넣으세요."
+                               : "This needs a Management Key, not a regular API key. Paste a key created under Settings > Management Keys in OpenRouter."
+        case .deepseek:
+            return lang == .ko ? "DeepSeek 플랫폼의 API keys 페이지에서 키를 만들어 붙여넣으세요."
+                               : "Create a key on the DeepSeek Platform's API keys page and paste it here."
+        case .poe:
+            return lang == .ko ? "Poe의 API key 페이지에서 키를 복사해 붙여넣으세요."
+                               : "Copy your key from Poe's API key page and paste it here."
+        case .elevenlabs:
+            return lang == .ko ? "ElevenLabs 설정의 API Keys에서 키를 만들어 붙여넣으세요."
+                               : "Create a key under API Keys in your ElevenLabs settings and paste it here."
+        case .claude, .codex, .copilot, .grok, .cursor:
             return nil
         }
     }
@@ -390,6 +407,12 @@ struct L10n: Sendable {
                     : "Sign in with your \(provider) account and approve the connection. The sign-in window opens inside the app and closes automatically once you approve."
     }
     var browserSheetOpen: String { lang == .ko ? "[ 로그인 ]" : "[ sign in ]" }
+    /// Claude [로그인] 버튼 위 안내 — 다음 화면(Anthropic 로그인·권한 동의)과 이 연결의 쓰임새.
+    /// Android와 바이트 단위로 같은 문구다(바꿀 때는 양쪽을 함께 고친다).
+    var claudeLoginNotice: String {
+        lang == .ko ? "다음 화면에서 Anthropic 로그인과 권한 동의를 진행합니다. TokenWatch는 이 연결을 계정 이메일·조직 이름 표시와 남은 사용량·리셋 시간 조회에만 쓰며, 메시지를 보내지 않습니다. 로그인 토큰은 이 기기의 보안 저장소에만 저장되고 개발자 서버로 보내지 않습니다."
+                    : "Next, you'll sign in to Anthropic and review the permission request. TokenWatch uses this connection only to show your account email and organization name and to read your remaining usage and reset times. It never sends messages. Your sign-in token is stored only in this device's secure storage and is never sent to our servers."
+    }
     var browserOtherAccountHint: String {
         lang == .ko ? "이미 로그인돼 있으면 바로 승인 화면이 열립니다. 다른 계정을 추가하려면 아래 버튼을 쓰세요."
                     : "If you're already signed in, the approval screen opens right away. To add a different account, use the button below."

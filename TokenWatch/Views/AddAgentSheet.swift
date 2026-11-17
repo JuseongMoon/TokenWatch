@@ -249,20 +249,34 @@ struct AddAgentSheet: View {
                 }
                 .font(.term(13))
 
-                // SecureField: 키를 마스킹해 앱 스위처 스냅샷(디스크 저장)에도 평문이 남지 않는다.
-                SecureField("", text: $apiKeyText,
-                            prompt: Text("api key…").foregroundColor(Term.dim))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .font(.term(14))
-                    .foregroundStyle(Term.fg)
-                    .tint(Term.green)
-                    .padding(12)
-                    .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+                // 어디서 어떤 키를 만드는지 — 입력하기 전에 보여 준다(OpenRouter는 관리 키 필요를 여기서 알린다).
+                if let guide = loc.apiKeyGuide(provider: provider) {
+                    Text(guide)
+                        .font(.term(12)).foregroundStyle(Term.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-                if let hint = loc.apiKeyHint(provider: provider) {
-                    Text(hint)
-                        .font(.term(12)).foregroundStyle(Term.dim)
+                HStack(spacing: 10) {
+                    // SecureField: 키를 마스킹해 앱 스위처 스냅샷(디스크 저장)에도 평문이 남지 않는다.
+                    SecureField("", text: $apiKeyText,
+                                prompt: Text("api key…").foregroundColor(Term.dim))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .font(.term(14))
+                        .foregroundStyle(Term.fg)
+                        .tint(Term.green)
+                        .padding(12)
+                        .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+
+                    // 시스템 붙여넣기 버튼 — 사용자가 누를 때만 클립보드를 읽는다(화면이 스스로 읽지 않는다).
+                    // 붙여넣은 값도 위 보안 입력란에 들어가 마스킹된다.
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let first = strings.first else { return }
+                        apiKeyText = first.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.roundedRectangle)
+                    .tint(Term.green)
                 }
 
                 if let url = provider.apiKeyURL {
@@ -283,6 +297,7 @@ struct AddAgentSheet: View {
                 TerminalButton(title: "[ ADD ]", color: Term.green) {
                     let key = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !key.isEmpty else { return }
+                    apiKeyText = ""   // 제출한 키를 화면 상태에 남기지 않는다
                     phase = .exchanging
                     Task { await addWithAPIKey(provider: provider, key: key) }
                 }
@@ -472,6 +487,18 @@ private struct BrowserLoginView: View {
     @ViewBuilder private var introSection: some View {
         Text(loc.browserSheetIntro(provider: provider.displayName))
             .font(.term(13)).foregroundStyle(Term.fg)
+
+        // Claude: [로그인] 버튼 위에서 다음 화면(Anthropic 로그인·권한 동의)과 이 연결의 쓰임새를 먼저 알린다.
+        // 새 단계를 끼우지 않고 같은 화면에 둔다.
+        if provider == .claude {
+            TerminalBox(title: "NOTE", titleColor: Term.yellow,
+                        borderColor: Term.dim.opacity(0.5), contentPadding: 12) {
+                Text(loc.claudeLoginNotice)
+                    .font(.term(12))
+                    .foregroundStyle(Term.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
 
         if login.isPresenting {
             HStack(spacing: 8) {

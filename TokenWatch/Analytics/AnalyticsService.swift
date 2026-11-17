@@ -39,6 +39,10 @@ final class AnalyticsService {
             ? true : UserDefaults.standard.bool(forKey: Self.enabledKey)
     }
 
+    /// 지금 이벤트가 실제로 수집되는지(구성됨 + 옵트인). 데모 게이트는 포함하지 않는다(호출자가 따로 본다).
+    /// 조회 오류 전이 원장(`FetchOutcomeLedger`)이 "수집이 꺼진 동안의 결과"를 가려내는 데 쓴다.
+    var isCollecting: Bool { configured && isEnabled }
+
     /// 앱 시작 시 1회(AgentStore 생성 전에). plist가 있으면 Firebase를 **항상** 구성하고
     /// (앱 계정 로그인이 DEBUG·옵트아웃과 무관하게 동작해야 한다), 수집 상태를 게이트와 일치시킨다.
     func configure() {

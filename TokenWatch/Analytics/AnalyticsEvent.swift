@@ -93,7 +93,8 @@ enum AnalyticsEvent {
     case demoStart(source: DemoSource)
     case demoEnd
     // 참여
-    case screenView(ScreenName, provider: AgentProvider? = nil)
+    /// `source`는 계정 추가 화면(`add_agent`)에만 싣는다 — 어디서 들어왔는지.
+    case screenView(ScreenName, provider: AgentProvider? = nil, source: AddAgentSource? = nil)
     case refreshManual(source: RefreshSource)
     case settingChange(setting: String, value: String)
     case notificationOpen(kind: NotificationKind)
@@ -135,6 +136,13 @@ enum AnalyticsEvent {
     enum DemoSource: String, Sendable {
         case emptyList = "empty_list"
         case settings
+    }
+
+    /// 계정 추가 화면에 들어온 경로(`screen_view`의 `source`).
+    enum AddAgentSource: String, Sendable {
+        case emptyState = "empty_state"   // 에이전트가 없는 첫 화면의 연결 버튼
+        case demo                         // 데모 중 연결 버튼(데모를 끝내고 연다)
+        case list                         // 그 밖의 기존 진입(목록 아래 [+ ADD AGENT])
     }
 
     enum RefreshSource: String, Sendable {
@@ -199,10 +207,11 @@ enum AnalyticsEvent {
             return ["source": source.rawValue]
         case .demoEnd:
             return [:]
-        case .screenView(let screen, let provider):
+        case .screenView(let screen, let provider, let source):
             var params: [String: Any] = ["screen_name": screen.rawValue,
                                          "screen_class": screen.screenClass]
             if let provider { params["provider"] = provider.rawValue }
+            if let source { params["source"] = source.rawValue }
             return params
         case .refreshManual(let source):
             return ["source": source.rawValue]

@@ -15,6 +15,13 @@ struct AddAgentSheet: View {
     @Environment(AgentStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
+    /// 이 화면에 들어온 경로 — `screen_view(add_agent)`의 `source`로 보낸다.
+    let source: AnalyticsEvent.AddAgentSource
+
+    init(source: AnalyticsEvent.AddAgentSource = .list) {
+        self.source = source
+    }
+
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
@@ -71,7 +78,7 @@ struct AddAgentSheet: View {
             }
         }
         .tint(Term.green)
-        .onAppear { AnalyticsService.shared.log(.screenView(.addAgent)) }
+        .onAppear { AnalyticsService.shared.log(.screenView(.addAgent, source: source)) }
         .onDisappear {
             // 시스템 시트(인증 시트·Safari View)가 위를 덮을 때 불린 onDisappear는 이탈이 아니다.
             guard browserLogin?.isPresenting != true, !InAppSafari.isPresenting else { return }

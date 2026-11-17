@@ -82,6 +82,16 @@ struct L10n: Sendable {
         lang == .ko ? "표본 데이터입니다. 실제 사용량이 아닙니다."
                     : "Sample data — not your real usage."
     }
+    /// 데모 중 카드 목록 위 안내 — 내 계정 연결을 권한다.
+    var demoConnectMessage: String {
+        lang == .ko ? "데모 화면입니다. 내 계정을 연결하면 실제 사용량이 표시됩니다."
+                    : "This is a demo. Connect your own account to see your real usage."
+    }
+    /// 에이전트가 없는 첫 화면의 안내(연결 버튼 위).
+    var emptyStateMessage: String {
+        lang == .ko ? "아직 연결한 계정이 없습니다. 쓰고 있는 AI 서비스를 연결하면 남은 사용량이 여기에 표시됩니다."
+                    : "No accounts connected yet. Connect the AI services you use to see your remaining usage here."
+    }
     var a11yRunDemo: String  { lang == .ko ? "데모 실행" : "Run demo" }
     var a11yExitDemo: String { lang == .ko ? "데모 종료" : "Exit demo" }
 

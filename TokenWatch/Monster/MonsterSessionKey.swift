@@ -135,7 +135,8 @@ enum MonsterEligibility {
     }
 
     /// 확률 출현 후보. 100%가 된 창도 후보다 — 일찍 다 써도 리셋까지 추첨이 이어진다.
-    /// 충전형 게이지(creditGauge)는 리셋이 없으므로 완료 출현은 없고, 잔액·사용률과 무관하게 확률 출현 후보다
+    /// 충전형 게이지(creditGauge)는 리셋이 없어 리셋 기반 완료가 없다 — 완료 출현은 바닥났을 때 `creditCompletionWindow`로만
+    /// 생긴다. 확률 출현에는 잔액·사용률과 무관하게 후보다
     /// (최소 사용률은 "리셋 주기 안 첫 사용"을 기다리는 규칙이라 충전형엔 해당하지 않는다. 0원 계정도 후보).
     /// 몬스터가 살아 있는 바·처치 1시간 안의 유령이 있는 바는 호출측(MonsterStore)이 거른다.
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {

@@ -97,7 +97,7 @@ enum MonsterSessionKey {
 
 /// 몬스터가 붙을 수 있는 창인지(§8-1). 사용률 수치는 기기 밖으로 나가지 않는다.
 enum MonsterEligibility {
-    /// 완료 판정 기준 — 게이지 크리터와 같은 값.
+    /// 완료 판정 기준 — 표시 반올림상 "100%"가 되는 지점(99.5%)과 맞춘다.
     static let completionThreshold = 0.995
 
     /// 대상 창: 구독 게이지이고 미래 리셋이 있다(충전형·잔액은 제외).

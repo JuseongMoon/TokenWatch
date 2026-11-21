@@ -4,6 +4,7 @@
 //
 //  상세 화면(터미널 스타일): ACCOUNT · USAGE · STATUS 罫선 박스 + [ LOGOUT ].
 //  사용량은 큰 게이지 + 잔여/리셋/페이스/소진예상.
+//  게이지 위에 몬스터는 그리지 않는다 — 몬스터는 목록 카드에서만 보이고 잡는다.
 //
 
 import SwiftUI
@@ -162,7 +163,7 @@ struct AgentDetailView: View {
                         legend
                         ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                             if index > 0 { hDivider }
-                            DetailUsageRow(window: window, agent: agent, loc: loc,
+                            DetailUsageRow(window: window, loc: loc,
                                            onRequestResetPeak: window.estimatedTotal ? {
                                                pendingPeakReset = window
                                            } : nil)
@@ -308,15 +309,7 @@ struct AgentDetailView: View {
 /// 상세 화면의 창 1개: 라벨 + 큰 게이지 + 잔여/리셋/페이스/소진예상.
 private struct DetailUsageRow: View {
     let window: UsageWindow
-    /// 몬스터(V2)를 찾는 데 쓴다.
-    var agent: Agent? = nil
     let loc: L10n
-    @Environment(MonsterStore.self) private var monsterStore: MonsterStore?
-
-    private var monsters: [MonsterEncounter] {
-        guard let agent, let monsterStore, window.isGaugeLike else { return [] }
-        return monsterStore.encounters(agentID: agent.id, provider: agent.provider, window: window)
-    }
     /// 충전형 추정 게이지의 peak 재설정 요청(estimatedTotal일 때만 주입). nil이면 버튼 미표시.
     /// 확인 다이얼로그는 화면 전체를 덮어야 해서 상위 AgentDetailView가 띄운다.
     var onRequestResetPeak: (() -> Void)? = nil
@@ -356,27 +349,17 @@ private struct DetailUsageRow: View {
 
     // 충전형 잔액 게이지(채움=남은 잔액, 역방향) + 잔액 텍스트 + 추정 안내.
     private var creditGaugeBody: some View {
-        let monsters = monsters
-        let target = monsters.first { $0.isAlive }
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(window.label.uppercased())
                     .font(.term(12, weight: .semibold)).foregroundStyle(Term.cyan)
                 Spacer()
-                if let target, target.maxHP > 1, target.hp < target.maxHP {
-                    MonsterHPHearts(hp: target.hp, maxHP: target.maxHP)
-                }
                 Text("\(window.estimatedTotal ? "~" : "")\(Int(window.remainingPercent.rounded()))% left")
                     .font(.term(12)).foregroundStyle(statusColor)
             }
             TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
                           elapsedFraction: nil, fillsRemaining: true,
-                          height: 20, bracketSize: 15,
-                          critterVariant: GaugeCritterVariant(kind: window.kind),
-                          monsters: monsters,
-                          monsterHits: monsterStore?.lastHitAt ?? [:],
-                          monsterConfig: monsterStore?.config ?? .bundledDefault)
-                .modifier(MonsterHitTarget(encounter: target, loc: loc) { monsterStore?.attack($0) })
+                          height: 20, bracketSize: 15)
             KVRow(key: "remaining", value: window.valueText ?? "—",
                   valueColor: statusColor, keyWidth: 84)
             if window.estimatedTotal {
@@ -414,16 +397,11 @@ private struct DetailUsageRow: View {
     }
 
     private var gaugeBody: some View {
-        let monsters = monsters
-        let target = monsters.first { $0.isAlive }
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(window.label.uppercased())
                     .font(.term(12, weight: .semibold)).foregroundStyle(Term.cyan)
                 Spacer()
-                if let target, target.maxHP > 1, target.hp < target.maxHP {
-                    MonsterHPHearts(hp: target.hp, maxHP: target.maxHP)
-                }
                 Text("\(Int(window.usedPercent.rounded()))% used")
                     .font(.term(12)).foregroundStyle(statusColor)
             }
@@ -435,12 +413,7 @@ private struct DetailUsageRow: View {
                     TerminalGauge(usedFraction: usedFraction, fillColor: statusColor,
                                   elapsedFraction: markerFraction(at: now),
                                   markerPaused: markerPaused(at: now),
-                                  height: 20, bracketSize: 15,
-                                  critterVariant: GaugeCritterVariant(kind: window.kind),
-                                  monsters: monsters,
-                                  monsterHits: monsterStore?.lastHitAt ?? [:],
-                                  monsterConfig: monsterStore?.config ?? .bundledDefault)
-                        .modifier(MonsterHitTarget(encounter: target, loc: loc) { monsterStore?.attack($0) })
+                                  height: 20, bracketSize: 15)
 
                     KVRow(key: "remaining",
                           value: "\(Int(window.remainingPercent.rounded()))%",

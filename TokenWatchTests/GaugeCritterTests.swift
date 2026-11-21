@@ -2,7 +2,7 @@
 //  GaugeCritterTests.swift
 //  TokenWatchTests
 //
-//  100% 게이지 슬라임 행진의 순수 로직 검증:
+//  게이지 위 몬스터 행진의 순수 로직 검증:
 //  GaugeCritter.frameIndex/offsetX — 호핑 리듬·랩어라운드·경계, 그리고
 //  PixelSprite.slime 비트맵 무결성(프레임 크기·팔레트 값)을 결정적으로 확인한다.
 //
@@ -102,40 +102,6 @@ struct GaugeCritterTests {
             #expect(x < 250)
         }
         #expect(GaugeCritter.offsetX(tick: 5, startTick: 0, startX: 30, hop: 0, spriteWidth: 20, barWidth: 100) == -20)
-    }
-
-    // MARK: 등장/소멸 8단계 페이드
-
-    @Test func steppedOpacityQuantizesToEighths() {
-        #expect(GaugeCritter.steppedOpacity(0) == 0)
-        #expect(GaugeCritter.steppedOpacity(1) == 1)
-        #expect(GaugeCritter.steppedOpacity(0.5) == 0.5)     // 4/8
-        #expect(GaugeCritter.steppedOpacity(0.1) == 0.0)     // floor(0.8)/8 = 0
-        #expect(GaugeCritter.steppedOpacity(0.2) == 0.125)   // floor(1.6)/8 = 1/8
-        #expect(GaugeCritter.steppedOpacity(0.99) == 0.875)  // floor(7.92)/8 = 7/8
-    }
-
-    @Test func steppedOpacityWalksEightSteps() {
-        // 0→1 진행 동안 나타나는 불투명도 값은 0,1/8,…,7/8,1 의 9개(=8단계)뿐.
-        var levels = Set<Double>()
-        for i in 0...100 { levels.insert(GaugeCritter.steppedOpacity(Double(i) / 100)) }
-        #expect(levels.count == 9)
-        #expect(levels.contains(0))
-        #expect(levels.contains(1))
-    }
-
-    @Test func steppedOpacityClampsOutOfRange() {
-        #expect(GaugeCritter.steppedOpacity(-0.5) == 0)
-        #expect(GaugeCritter.steppedOpacity(1.5) == 1)
-    }
-
-    // MARK: 등장 조건
-
-    @Test func thresholdMatchesDisplayRounding() {
-        // 표시상 "100% used"로 반올림되는 지점(99.5%)과 같은 기준을 쓴다.
-        #expect(GaugeCritter.threshold == 0.995)
-        #expect(0.994 < GaugeCritter.threshold)
-        #expect(1.0 >= GaugeCritter.threshold)
     }
 
     // MARK: 슬라임 비트맵 무결성

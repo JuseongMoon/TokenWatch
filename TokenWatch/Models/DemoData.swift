@@ -39,7 +39,7 @@ enum DemoData {
         let day: TimeInterval = 24 * hour
 
         // Claude — 세션은 시간보다 빠르게 소비 중(↑ ahead), 주간은 여유.
-        // Opus 주간은 완전 소진(100%)으로 두어 게이지 위 슬라임이 행진하는 모습을 보여준다.
+        // Opus 주간은 완전 소진(100%)으로 두어 게이지 위 몬스터(완료 출현 표본)가 행진하는 모습을 보여준다.
         let claude = AgentSnapshot(
             windows: [
                 UsageWindow(label: "Current session", usedPercent: 68,
@@ -134,9 +134,9 @@ enum DemoData {
 
         switch window.style {
         case .gauge:
-            // 이미 소진된 창(100%)은 그대로 둔다 — 슬라임이 계속 행진한다.
+            // 이미 소진된 창(100%)은 그대로 둔다 — 완료 출현 표본 몬스터가 계속 행진한다.
             // 아직 여유가 있는 창은 99%까지만 올린다: 데모를 오래 켜둬도 모든 게이지가
-            // 100%로 수렴해 슬라임 천지가 되지 않고, "빨강 경고" 게이지가 계속 보인다.
+            // 100%로 수렴해 몬스터 천지가 되지 않고, "빨강 경고" 게이지가 계속 보인다.
             guard window.usedPercent < 99 else { return window }
             let next = min(99, window.usedPercent + Double.random(in: 0.2...1.1))
             return replacing(window, usedPercent: next, resetsAt: window.resetsAt)

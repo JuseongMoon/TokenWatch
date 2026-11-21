@@ -3,7 +3,7 @@
 //  TokenWatch
 //
 //  2프레임 픽셀아트 스프라이트: 정수 격자 비트맵 + 값→색 팔레트, 그리고 Canvas 렌더러.
-//  100% 소진 게이지 위를 행진하는 크리터(슬라임 등)의 그림 리소스.
+//  게이지 위를 행진하는 몬스터(슬라임 등)와 아바타의 그림 리소스.
 //  PixelHeart와 같은 방식으로 격자 한 칸을 작은 사각형으로 그린다.
 //
 
@@ -89,13 +89,13 @@ struct PixelSpriteView: View {
 }
 
 /// 제자리에서 프레임을 주기적으로 토글하는 스프라이트 뷰(설정 미리보기 등).
-/// 이동 없이 착지↔도약만 반복한다. GaugeCritter와 같은 TimelineView 무상태 패턴.
+/// 이동 없이 착지↔도약만 반복한다. GaugeMonsterLayer와 같은 TimelineView 무상태 패턴.
 struct AnimatedPixelSpriteView: View {
     let sprite: PixelSprite
     let cell: CGFloat
     /// nil이면 팔레트 색, 값이 있으면 실루엣 단색.
     var flatColor: Color? = nil
-    /// 프레임 토글 주기(초). 게이지 슬라임 기본 주기(0.25 부근)와 유사한 기본값.
+    /// 프레임 토글 주기(초). 게이지 몬스터 행진 주기(0.25 부근)와 유사한 기본값.
     var tick: Double = 0.25
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

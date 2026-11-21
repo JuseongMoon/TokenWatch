@@ -7,6 +7,8 @@
 //  - 트랙(░) = 도트 해치 패턴, 채움(█) = 상태색 solid 블록(연속), 둘 다 Canvas 렌더.
 //  - 마커(╎, 현재 시각) = 그 위 오버레이 세로선으로 정확한 위치 표시.
 //  - 양 끝 `[` `]`만 실제 문자로 둔다.
+//  - 몬스터(V2) = 맨 위 오버레이(`GaugeMonsterLayer`). 바 위에는 넘겨받은 몬스터(잡을 수 있는 것)만 그리고,
+//    장식용 크리터는 두지 않는다 — 100%여도 몬스터가 없으면 아무것도 그리지 않는다.
 //
 
 import SwiftUI
@@ -21,21 +23,21 @@ struct TerminalGauge: View {
     /// 마커가 "멈춤"(업무시간 밖) 상태인지 — true면 흐릿하게(꺼진 듯) 그려 정지 느낌을 준다.
     var markerPaused: Bool = false
     /// 채움 방향. false(기본)=구독형(채움=사용량). true=충전형(채움=남은 잔액, 역방향).
-    /// usedFraction엔 두 경우 모두 "소비율"이 들어오므로, 슬라임 트리거(used≥0.995)는 동일하게 동작한다.
+    /// usedFraction엔 두 경우 모두 "소비율"이 들어오고, 채움 폭만 뒤집힌다.
     var fillsRemaining: Bool = false
     /// 그래픽 바의 높이.
     var height: CGFloat = 14
     /// 양 끝 대괄호 폰트 크기.
     var bracketSize: CGFloat = 13
-    /// 소진 게이지 위 슬라임 변종 — 창 종류에 따라 색·속도가 다르다. 기본은 weekly(기존 초록).
+    /// 창 종류(세션/그 밖) — 몬스터 행진 속도와, 그림을 못 찾은 몬스터의 대체 슬라임 색에 쓴다.
     var critterVariant: GaugeCritterVariant = .weekly
-    /// 이 창의 몬스터(V2). 완료 출현 몬스터가 있으면 슬라임 행진 대신 몬스터를 그린다.
+    /// 이 창의 몬스터(V2). 바 위에는 이 목록만 그린다 — 비어 있으면 아무것도 그리지 않는다.
     var monsters: [MonsterEncounter] = []
     var monsterHits: [String: Date] = [:]
     var monsterConfig: MonsterConfig = .bundledDefault
 
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
-    /// 소진 게이지 위 픽셀 슬라임 표시 여부(설정 DISPLAY). 기본 켜짐.
+    /// 게이지 위 몬스터 표시 여부(설정 DISPLAY). 기본 켜짐.
     @AppStorage("tokenwatch.gaugeCritter") private var gaugeCritter = true
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
@@ -43,10 +45,6 @@ struct TerminalGauge: View {
     private var elapsed: Double? { elapsedFraction.map { min(1, max(0, $0)) } }
     /// 실제 채움 폭 비율 — 구독형은 사용량, 충전형은 남은 잔액.
     private var fill: Double { Self.fillFraction(used: used, fillsRemaining: fillsRemaining) }
-    /// 슬라임 표시 조건 — 설정 on & 소진(≈100%) & 이 바에 몬스터가 없을 때. 이 값이 바뀔 때만 등장/소멸 페이드가 돈다.
-    private var showCritter: Bool {
-        gaugeCritter && used >= GaugeCritter.threshold && monsters.isEmpty
-    }
 
     /// 채움 비율(0...1). 구독형은 사용량(used), 충전형(fillsRemaining)은 남은 잔액(1−used)을 그린다.
     /// (뷰 밖 순수 함수 — 방향 반전 로직을 단위 테스트로 고정한다.)
@@ -86,14 +84,6 @@ struct TerminalGauge: View {
                         .position(x: min(w - 1, max(1, w * elapsed)), y: geo.size.height / 2)
                         .shadow(color: .black.opacity(markerPaused ? 0 : 0.5), radius: markerPaused ? 0 : 1.5)
                 }
-                Group {                                              // 소진: 슬라임 행진
-                    if showCritter {
-                        GaugeCritter(barSize: geo.size, variant: critterVariant)
-                            .transition(.steppedFade)                // 등장/소멸 8단계 페이드
-                    }
-                }
-                // 스코프를 슬라임에만 한정 → 리셋 시 채움 바가 함께 애니메이션되지 않는다.
-                .animation(GaugeCritter.fadeAnimation, value: showCritter)
                 if gaugeCritter, !monsters.isEmpty {                 // 몬스터(V2)
                     GaugeMonsterLayer(barSize: geo.size, encounters: monsters,
                                       sessionWindow: critterVariant == .session,
@@ -105,104 +95,37 @@ struct TerminalGauge: View {
     }
 }
 
-/// 게이지 위 슬라임 변종 — 창 종류에 따라 색과 애니메이션 속도가 다르다.
-/// - weekly: 가장 긴 세션(주간). 기존 초록 슬라임, 약간 느리게.
-/// - session: 일반 세션. 하늘색 슬라임, 약간 빠르게(초록의 약 1.3배 속도).
+/// 게이지 창 종류 — 몬스터 행진 속도가 다르다.
+/// - weekly: 가장 긴 세션(주간)과 그 밖의 창. 약간 느리게.
+/// - session: 일반 세션. 약간 빠르게(weekly의 약 1.3배 속도).
 enum GaugeCritterVariant {
     case weekly
     case session
 
-    /// 창 종류 매핑 — session만 하늘색(빠름), 나머지(주간/충전형 등)는 기존 초록.
+    /// 창 종류 매핑 — session만 빠르게, 나머지(주간/충전형 등)는 weekly.
     init(kind: WindowKind) { self = (kind == .session) ? .session : .weekly }
 
-    var sprite: PixelSprite {
-        switch self {
-        case .weekly:  return .slime
-        case .session: return .slimeSky
-        }
-    }
-
-    /// 기본 프레임/전진 주기(초). 값이 작을수록 빠르다. 기존 0.25 기준을 기하평균으로 벌려
-    /// session(하늘색)이 weekly(초록)보다 약 1.3배 빠르게: 0.285 / 0.219 ≈ 1.30.
+    /// 기본 프레임/전진 주기(초). 값이 작을수록 빠르다. 0.25 기준을 기하평균으로 벌려
+    /// session이 weekly보다 약 1.3배 빠르게: 0.285 / 0.219 ≈ 1.30.
     var baseTick: Double {
         switch self {
-        case .weekly:  return 0.285   // 초록: 기준보다 살짝 느림
-        case .session: return 0.219   // 하늘색: 기준보다 살짝 빠름
+        case .weekly:  return 0.285   // 기준보다 살짝 느림
+        case .session: return 0.219   // 기준보다 살짝 빠름
         }
     }
 }
 
-/// 100% 소진된 바를 무대 삼아 행진하는 픽셀 크리터(슬라임).
+/// 게이지 위 몬스터 행진의 산수(순수 함수 — 단위 테스트 대상). 그리기는 `GaugeMonsterLayer`가 한다.
 /// 도약 프레임에 한 걸음 전진하고 착지 프레임에 제자리에서 눌린다 — 통통 튀는 호핑.
-/// TimelineView 기반 무상태: 시각에서 위치·프레임을 순수 계산한다(BlinkingCursor와 같은 패턴).
-struct GaugeCritter: View {
-    let barSize: CGSize
-    var variant: GaugeCritterVariant = .weekly
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// 등장(스폰) 시 1회 뽑는 개별 속도 배율(±5% → 슬라임 간 최대 ~10% 속도차). 무상태 뷰라
-    /// @State 기본값이 슬라임이 새로 나타날 때마다 새로 추첨된다 → 제각각 통통 튄다.
-    @State private var speedFactor = Double.random(in: 0.95...1.05)
-
-    /// 슬라임 등장 사용률(0...1). 표시 반올림상 100%가 되는 지점과 맞춘다.
-    static let threshold = 0.995
+enum GaugeCritter {
     /// 도약 한 번에 전진하는 스프라이트 픽셀 칸 수.
     static let hopCells = 4
-
-    private var sprite: PixelSprite { variant.sprite }
-    /// 이 슬라임의 프레임/전진 주기(초) — 변종 기본값에 스폰 시 속도 지터를 적용(빠를수록 짧다).
-    private var period: Double { variant.baseTick / speedFactor }
-
-    /// 픽셀 한 칸 pt — 스프라이트가 바 안에서 위아래 1pt씩 여유를 갖는 크기.
-    private var cell: CGFloat { max(0, barSize.height - 2) / CGFloat(sprite.rows) }
-
-    var body: some View {
-        if reduceMotion {
-            place(frameIndex: 0, x: barSize.width * 0.6)     // 모션 최소화: 제자리 슬라임
-        } else {
-            TimelineView(.periodic(from: .now, by: period)) { context in
-                let tick = Int(context.date.timeIntervalSinceReferenceDate / period)
-                let x = Self.offsetX(tick: tick,
-                                     hop: cell * CGFloat(Self.hopCells),
-                                     spriteWidth: cell * CGFloat(sprite.cols),
-                                     barWidth: barSize.width)
-                place(frameIndex: Self.frameIndex(tick: tick), x: x)
-            }
-        }
-    }
-
-    /// 스프라이트를 바 안 왼끝 기준 x 위치에 바닥 정렬로 놓고, 바 밖으로 나가는 부분은 자른다.
-    private func place(frameIndex: Int, x: CGFloat) -> some View {
-        PixelSpriteView(sprite: sprite, frameIndex: frameIndex, cell: cell)
-            .offset(x: x, y: barSize.height - 1 - cell * CGFloat(sprite.rows))
-            .frame(width: barSize.width, height: barSize.height, alignment: .topLeading)
-            .clipped()
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-
-    // MARK: 행진 산수(순수 함수 — 단위 테스트 대상)
 
     /// 짝수 틱 = 착지(0), 홀수 틱 = 도약(1).
     static func frameIndex(tick: Int) -> Int { abs(tick) % 2 }
 
-    // MARK: 등장/소멸 페이드(맨 처음 생길 때·리셋으로 사라질 때)
-
-    /// 페이드 단계 수. 불투명도를 이 칸 수만큼 계단식으로만 밟는다.
-    static let opacitySteps = 8
-    /// 등장/소멸 페이드 시간. 8단계가 고르게 밟히도록 리니어로 재생한다.
-    static let fadeAnimation: Animation = .linear(duration: 0.6)
-
-    /// 진행도 t(0...1)를 opacitySteps단계로 양자화한 불투명도.
-    /// 리니어가 아니라 뚝뚝 끊기는 계단(0, 1/8, …, 7/8, 1)만 나타난다.
-    static func steppedOpacity(_ t: Double) -> Double {
-        let clamped = min(1, max(0, t))
-        return (clamped * Double(opacitySteps)).rounded(.down) / Double(opacitySteps)
-    }
-
-    /// 도약 틱에만 한 걸음 나아간 x(스프라이트 왼끝). 완전히 숨은 왼쪽 밖(-spriteWidth)에서
-    /// 출발해 오른끝을 다 지나면 다시 왼쪽 밖에서 재등장(랩어라운드).
+    /// 완료 출현 몬스터(와 그 엔젤링)의 행진: 도약 틱에만 한 걸음 나아간 x(스프라이트 왼끝).
+    /// 완전히 숨은 왼쪽 밖(-spriteWidth)에서 출발해 오른끝을 다 지나면 다시 왼쪽 밖에서 재등장(랩어라운드).
     static func offsetX(tick: Int, hop: CGFloat, spriteWidth: CGFloat, barWidth: CGFloat) -> CGFloat {
         guard hop > 0, barWidth > 0 else { return -spriteWidth }
         let hopsPerCross = Int(((barWidth + spriteWidth) / hop).rounded(.up))
@@ -210,7 +133,7 @@ struct GaugeCritter: View {
         return CGFloat(hopIndex) * hop - spriteWidth
     }
 
-    /// 중간에 나온 크리터(확률 출현 몬스터)의 행진: `startTick`에 `startX`(hop 격자로 맞춤)에서 출발해
+    /// 중간에 나온 몬스터(확률 출현)의 행진: `startTick`에 `startX`(hop 격자로 맞춤)에서 출발해
     /// 위와 같은 리듬(홀수 틱에 전진)으로 걷고, 오른끝을 지나면 왼쪽 밖에서 재등장한다.
     /// 출발 틱보다 이른 틱(시계 차)은 출발점에 둔다. 출발 틱 기준이라 시계 기준점과 무관하다.
     static func offsetX(tick: Int, startTick: Int, startX: CGFloat, hop: CGFloat,
@@ -221,27 +144,6 @@ struct GaugeCritter: View {
         let hops = (max(tick, startTick) + 1) / 2 - (startTick + 1) / 2
         let hopIndex = ((startHop + hops) % hopsPerCross + hopsPerCross) % hopsPerCross
         return CGFloat(hopIndex) * hop - spriteWidth
-    }
-}
-
-/// 불투명도를 8단계로 양자화해 적용하는 애니메이터블 모디파이어.
-/// 진행도(animatableData)는 SwiftUI가 연속 보간하지만, 화면 불투명도는 계단만 밟는다.
-private struct SteppedOpacityModifier: ViewModifier, Animatable {
-    var progress: Double     // 0...1 — 애니메이션이 연속 보간
-    var animatableData: Double {
-        get { progress }
-        set { progress = newValue }
-    }
-    func body(content: Content) -> some View {
-        content.opacity(GaugeCritter.steppedOpacity(progress))
-    }
-}
-
-private extension AnyTransition {
-    /// 등장(0→1)·소멸(1→0) 시 불투명도가 8단계로 뚝뚝 끊겨 나타나고 사라지는 페이드.
-    static var steppedFade: AnyTransition {
-        .modifier(active: SteppedOpacityModifier(progress: 0),
-                  identity: SteppedOpacityModifier(progress: 1))
     }
 }
 

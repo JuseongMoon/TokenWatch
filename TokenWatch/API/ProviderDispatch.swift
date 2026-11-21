@@ -349,8 +349,9 @@ enum ProviderUsage {
         } catch let e as URLError where e.code == .cancelled {
             return nil
         } catch is CredentialUnavailable {
-            // 저장소를 잠시 읽지 못했을 뿐 자격증명은 그대로다 — "로그인 필요"로 안내하지 않는다.
-            // 자동 재시도를 약속하지 않는다(다음 조회 주기나 사용자 새로고침에서 다시 읽는다).
+            // 저장소를 잠시 읽지 못했거나, 회전 토큰을 아직 저장하지 못해 메모리에만 있는데 갱신이 필요한 경우다
+            // (TokenStore가 저장될 때까지 갱신하지 않는다). 어느 쪽이든 자격증명은 그대로다 — "로그인 필요"로 안내하지 않는다.
+            // 자동 재시도를 약속하지 않는다(다음 조회 주기나 사용자 새로고침에서 다시 읽고 저장을 다시 시도한다).
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: L10n(lang: currentLang()).errCredentialUnavailable,
                                  errorReason: .credential)

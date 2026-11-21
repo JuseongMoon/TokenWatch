@@ -20,6 +20,13 @@
 //     세대가 바뀐 갱신 결과는 버리고 호출자에게 `CredentialSuperseded`를 던진다(옛 토큰을 돌려주지 않는다).
 //     로테이션 저장(persist)과 plan 갱신은 같은 세대 안의 변경이라 세대를 올리지 않는다.
 //
+//  ⚠️ 저장하지 못한 회전 토큰 — 두 번 다 저장에 실패한 회전 토큰은 버리지 않고 메모리(`unsaved`)에
+//     그 세대 기준으로 들고 있는다. 옛 refresh token은 이미 서버가 무효화했을 수 있어 이 사본만 살아 있다.
+//     모든 읽기가 저장본보다 이 토큰을 먼저 쓰고, 읽을 때마다 다시 저장을 시도해 성공하면 지운다.
+//     메모리에만 있는 동안에는 갱신하지 않는다(다시 회전하면 저장본에는 여전히 쓸 수 있는 토큰이 없다) —
+//     갱신이 필요한 조회는 `CredentialUnavailable`로 실패한다. 새 로그인·삭제(세대 변경) 때 지운다.
+//     메모리 한정이라 저장되기 전에 앱 프로세스가 끝나면 재로그인이 필요할 수 있다.
+//
 
 import Foundation
 
@@ -28,6 +35,7 @@ import Foundation
 nonisolated struct CredentialSuperseded: Error, Equatable {}
 
 /// 기기 보안 저장소(Keychain)를 지금은 읽을 수 없다 — 자격증명은 그대로 있다(재로그인 대상 아님).
+/// 회전 토큰을 아직 저장하지 못해 메모리에만 있는데 갱신이 필요한 경우에도 던진다(`TokenStore` 머리 주석).
 /// 조회 실패 사유는 `credential`로 분류하고(카드 문구는 `ProviderUsage.fetchSnapshot`이 붙인다),
 /// 토큰을 지우거나 "로그인 필요"로 바꾸지 않는다.
 nonisolated struct CredentialUnavailable: Error, Equatable {}
@@ -86,6 +94,8 @@ actor TokenStore {
     /// agentID별 로그인 세대. 새 로그인 저장·삭제 때만 오른다. 메모리 한정 —
     /// 진행 중인 갱신도 프로세스 안에만 있으므로 재시작을 넘길 필요가 없다.
     private var generations: [UUID: UInt64] = [:]
+    /// 저장하지 못한 회전 토큰(그 세대 기준). 저장본보다 먼저 읽고, 저장에 성공하거나 세대가 바뀌면 지운다.
+    private var unsaved: [UUID: (generation: UInt64, tokens: OAuthTokens)] = [:]
 
     init(storage: CredentialStorage = KeychainCredentialStorage(),
          refresher: @escaping Refresher = { try await ProviderAuth.refresh($0, $1) }) {
@@ -109,34 +119,55 @@ actor TokenStore {
     // MARK: 저장 / 로드
 
     /// 같은 세대 안의 저장(로테이션 결과 등). 새 로그인은 `replaceLogin`을 쓴다.
-    /// 저장 성공 여부를 돌려준다.
+    /// 저장 성공 여부를 돌려준다. 저장 못 한 회전 토큰이 있으면: 저장에 성공하면 그 메모리 값을 지우고,
+    /// 실패하면 메모리 값을 이 변경으로 바꾼다(plan 등 같은 세대의 변경도 잃지 않게).
     @discardableResult
     func save(_ tokens: OAuthTokens, for agentID: UUID) -> Bool {
-        storage.write(tokens, for: agentID)
+        let saved = storage.write(tokens, for: agentID)
+        if saved {
+            unsaved[agentID] = nil
+        } else if unsaved[agentID] != nil {
+            unsaved[agentID] = (generation(for: agentID), tokens)
+        }
+        return saved
     }
 
     /// 새 로그인(최초 추가·같은 계정 재로그인)의 토큰 저장. 저장에 성공했을 때만 세대를 올려
-    /// 진행 중인 이전 세대의 갱신·조회 결과가 이 토큰을 덮거나 지우지 못하게 한다.
+    /// 진행 중인 이전 세대의 갱신·조회 결과가 이 토큰을 덮거나 지우지 못하게 한다(저장 못 한 이전 회전 토큰도 버린다).
     /// 저장에 실패하면 세대를 그대로 둔다(기존 자격증명의 정상 갱신을 불필요하게 무효화하지 않는다).
     @discardableResult
     func replaceLogin(_ tokens: OAuthTokens, for agentID: UUID) -> Bool {
         guard storage.write(tokens, for: agentID) else { return false }
+        unsaved[agentID] = nil
         bumpGeneration(agentID)
         return true
     }
 
     func tokens(for agentID: UUID) -> OAuthTokens? {
-        storage.read(agentID)
+        heldTokens(for: agentID) ?? storage.read(agentID)
     }
 
     /// 사용량 조회 경로의 읽기 — 저장소를 지금 읽을 수 없으면 "로그인 없음"이 아니라
     /// `CredentialUnavailable`을 던진다(토큰은 지우지 않는다).
     private func checkedTokens(for agentID: UUID) throws -> OAuthTokens? {
-        try storage.readChecked(agentID)
+        if let held = heldTokens(for: agentID) { return held }
+        return try storage.readChecked(agentID)
+    }
+
+    /// 저장 못 한 회전 토큰(현재 세대) — 있으면 저장을 다시 시도하고(성공하면 메모리 값을 지운다) 그 토큰을 돌려준다.
+    private func heldTokens(for agentID: UUID) -> OAuthTokens? {
+        guard let held = unsaved[agentID] else { return nil }
+        guard held.generation == generation(for: agentID) else {
+            unsaved[agentID] = nil   // 이전 세대의 토큰은 쓰지도 저장하지도 않는다
+            return nil
+        }
+        if storage.write(held.tokens, for: agentID) { unsaved[agentID] = nil }
+        return held.tokens
     }
 
     func delete(for agentID: UUID) {
         bumpGeneration(agentID)
+        unsaved[agentID] = nil
         storage.remove(agentID)
         refreshTasks[agentID]?.task.cancel()
         refreshTasks[agentID] = nil
@@ -205,6 +236,9 @@ actor TokenStore {
             guard let current = try self.checkedTokens(for: agentID), let usedRefresh = current.refreshToken else {
                 throw OAuthError.notAuthenticated
             }
+            // 쓸 수 있는 refresh token이 아직 메모리에만 있다(위 읽기의 재저장도 실패) — 다시 회전해도
+            // 저장본에 쓸 수 있는 토큰이 없기는 마찬가지라, 저장될 때까지 갱신하지 않는다.
+            guard self.unsaved[agentID] == nil else { throw CredentialUnavailable() }
             do {
                 let new = try await refresher(provider, current)
                 // 응답을 기다리는 사이 새 로그인·삭제가 있었다 — 그 자격증명을 덮지 않는다.
@@ -229,10 +263,11 @@ actor TokenStore {
         return try await task.value
     }
 
-    /// 로테이션된 토큰 저장 — 실패하면 한 번 더 시도한다. 여기서 놓치면 자격증명이 죽는다.
+    /// 로테이션된 토큰 저장 — 실패하면 한 번 더 시도한다. 둘 다 실패하면 이 세대의 메모리(`unsaved`)에 들고 있다가
+    /// 다음 접근 때마다 다시 저장한다. 호출자에게는 새 토큰을 그대로 돌려준다(여기서 버리면 자격증명이 죽는다).
     private func persist(_ tokens: OAuthTokens, for agentID: UUID) {
-        if save(tokens, for: agentID) { return }
-        _ = save(tokens, for: agentID)
+        if save(tokens, for: agentID) || save(tokens, for: agentID) { return }
+        unsaved[agentID] = (generation(for: agentID), tokens)
     }
 
     /// 서버가 거부한 refresh token을 저장본에서 제거(access token은 남겨둔다 — 만료 전까지는

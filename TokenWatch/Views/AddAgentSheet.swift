@@ -4,8 +4,7 @@
 //
 //  + 버튼 시트(터미널 스타일): 제공자 선택 → 로그인 → 토큰 교환 → 추가.
 //  로그인 방식은 provider의 authKind로 갈린다:
-//   - oauthBrowser(Claude·Grok): 앱 안 인증 시트 + 루프백 콜백 자동 수신(Claude만 폴백: 코드 붙여넣기)
-//   - oauthCode(Codex): 인앱 WKWebView에서 콜백 가로채기
+//   - oauthBrowser(Claude·Codex·Grok): 앱 안 인증 시트 + 루프백 콜백 자동 수신(Claude만 폴백: 코드 붙여넣기)
 //   - oauthDeviceFlow(Copilot·Cursor): 앱 안 Safari View에서 승인 + 토큰 폴링 / apiKey(그 외)
 //
 
@@ -16,13 +15,19 @@ struct AddAgentSheet: View {
     @Environment(AgentStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
+    /// 이 화면에 들어온 경로 — `screen_view(add_agent)`의 `source`로 보낸다.
+    let source: AnalyticsEvent.AddAgentSource
+
+    init(source: AnalyticsEvent.AddAgentSource = .list) {
+        self.source = source
+    }
+
     @AppStorage(appLanguageStorageKey) private var appLanguage: AppLanguage = .system
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     private enum Phase: Equatable {
         case pickProvider
         case browserLogin(AgentProvider) // oauthBrowser: 인증 시트 + 루프백/코드 입력
-        case login(AgentProvider)        // oauthCode: WKWebView 콜백 code 캡처
         case apiKey(AgentProvider)       // apiKey: 사용자 키 붙여넣기
         case deviceFlow(AgentProvider)   // oauthDeviceFlow: user code 발급 + 폴링
         case exchanging
@@ -73,7 +78,7 @@ struct AddAgentSheet: View {
             }
         }
         .tint(Term.green)
-        .onAppear { AnalyticsService.shared.log(.screenView(.addAgent)) }
+        .onAppear { AnalyticsService.shared.log(.screenView(.addAgent, source: source)) }
         .onDisappear {
             // 시스템 시트(인증 시트·Safari View)가 위를 덮을 때 불린 onDisappear는 이탈이 아니다.
             guard browserLogin?.isPresenting != true, !InAppSafari.isPresenting else { return }
@@ -88,12 +93,17 @@ struct AddAgentSheet: View {
     private func logAbandonIfNeeded() {
         guard !completed else { return }
         switch phase {
-        case .browserLogin(let p): AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .browserWait))
-        case .login(let p):      AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .authorize))
-        case .apiKey(let p):     AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .apiKeyEntry))
-        case .deviceFlow(let p): AnalyticsService.shared.log(.loginAbandon(provider: p, stage: .devicePoll))
+        case .browserLogin(let p): logAbandon(p, stage: .browserWait)
+        case .apiKey(let p):       logAbandon(p, stage: .apiKeyEntry)
+        case .deviceFlow(let p):   logAbandon(p, stage: .devicePoll)
         case .pickProvider, .exchanging, .failed: break
         }
+    }
+
+    private func logAbandon(_ provider: AgentProvider, stage: LoginStage) {
+        let context = LoginFunnelTracker.shared.abandonContext(for: provider)
+        AnalyticsService.shared.log(.loginAbandon(provider: provider, stage: stage,
+                                                  elapsed: context.elapsed, attempt: context.attempt))
     }
 
     @ViewBuilder
@@ -103,8 +113,6 @@ struct AddAgentSheet: View {
             providerList
         case .browserLogin(let provider):
             browserLoginView(provider)
-        case .login(let provider):
-            loginView(provider)
         case .apiKey(let provider):
             apiKeyView(provider)
         case .deviceFlow(let provider):
@@ -175,25 +183,6 @@ struct AddAgentSheet: View {
         }
     }
 
-    // MARK: 로그인 웹뷰
-
-    private func loginView(_ provider: AgentProvider) -> some View {
-        LoginWebView(
-            provider: provider,
-            startURL: ProviderAuth.authorizeURL(provider, pkce: pkce),
-            onCode: { code, state in
-                phase = .exchanging
-                Task { await exchange(provider: provider, code: code, state: state) }
-            },
-            onError: { message, code in
-                AnalyticsService.shared.log(.loginFail(provider: provider, stage: .authorize, code: code))
-                phase = .failed(message)
-            }
-        )
-        .background(Term.bg)
-        .ignoresSafeArea(edges: .bottom)
-    }
-
     // MARK: 로그인(앱 안 인증 시트 — oauthBrowser)
 
     @ViewBuilder
@@ -237,6 +226,7 @@ struct AddAgentSheet: View {
     /// provider의 authKind에 따라 다음 화면을 고른다.
     private func start(_ provider: AgentProvider) {
         AnalyticsService.shared.log(.loginStart(provider: provider))
+        LoginFunnelTracker.shared.recordStart(provider)
         switch provider.authKind {
         case .oauthBrowser:
             let newPKCE = PKCE()
@@ -244,9 +234,6 @@ struct AddAgentSheet: View {
             browserLogin?.cancel()
             browserLogin = makeBrowserLogin(provider, pkce: newPKCE)
             phase = .browserLogin(provider)
-        case .oauthCode:
-            pkce = PKCE()
-            phase = .login(provider)
         case .apiKey:
             apiKeyText = ""
             phase = .apiKey(provider)
@@ -269,20 +256,34 @@ struct AddAgentSheet: View {
                 }
                 .font(.term(13))
 
-                // SecureField: 키를 마스킹해 앱 스위처 스냅샷(디스크 저장)에도 평문이 남지 않는다.
-                SecureField("", text: $apiKeyText,
-                            prompt: Text("api key…").foregroundColor(Term.dim))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .font(.term(14))
-                    .foregroundStyle(Term.fg)
-                    .tint(Term.green)
-                    .padding(12)
-                    .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+                // 어디서 어떤 키를 만드는지 — 입력하기 전에 보여 준다(OpenRouter는 관리 키 필요를 여기서 알린다).
+                if let guide = loc.apiKeyGuide(provider: provider) {
+                    Text(guide)
+                        .font(.term(12)).foregroundStyle(Term.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-                if let hint = loc.apiKeyHint(provider: provider) {
-                    Text(hint)
-                        .font(.term(12)).foregroundStyle(Term.dim)
+                HStack(spacing: 10) {
+                    // SecureField: 키를 마스킹해 앱 스위처 스냅샷(디스크 저장)에도 평문이 남지 않는다.
+                    SecureField("", text: $apiKeyText,
+                                prompt: Text("api key…").foregroundColor(Term.dim))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .font(.term(14))
+                        .foregroundStyle(Term.fg)
+                        .tint(Term.green)
+                        .padding(12)
+                        .overlay(Rectangle().stroke(Term.dim.opacity(0.5), lineWidth: 1))
+
+                    // 시스템 붙여넣기 버튼 — 사용자가 누를 때만 클립보드를 읽는다(화면이 스스로 읽지 않는다).
+                    // 붙여넣은 값도 위 보안 입력란에 들어가 마스킹된다.
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let first = strings.first else { return }
+                        apiKeyText = first.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.roundedRectangle)
+                    .tint(Term.green)
                 }
 
                 if let url = provider.apiKeyURL {
@@ -303,6 +304,7 @@ struct AddAgentSheet: View {
                 TerminalButton(title: "[ ADD ]", color: Term.green) {
                     let key = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !key.isEmpty else { return }
+                    apiKeyText = ""   // 제출한 키를 화면 상태에 남기지 않는다
                     phase = .exchanging
                     Task { await addWithAPIKey(provider: provider, key: key) }
                 }
@@ -492,6 +494,18 @@ private struct BrowserLoginView: View {
     @ViewBuilder private var introSection: some View {
         Text(loc.browserSheetIntro(provider: provider.displayName))
             .font(.term(13)).foregroundStyle(Term.fg)
+
+        // Claude: [로그인] 버튼 위에서 다음 화면(Anthropic 로그인·권한 동의)과 이 연결의 쓰임새를 먼저 알린다.
+        // 새 단계를 끼우지 않고 같은 화면에 둔다.
+        if provider == .claude {
+            TerminalBox(title: "NOTE", titleColor: Term.yellow,
+                        borderColor: Term.dim.opacity(0.5), contentPadding: 12) {
+                Text(loc.claudeLoginNotice)
+                    .font(.term(12))
+                    .foregroundStyle(Term.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
 
         if login.isPresenting {
             HStack(spacing: 8) {

@@ -24,6 +24,20 @@ final class MemoryCredentialStorage: CredentialStorage, @unchecked Sendable {
 
     func read(_ agentID: UUID) -> OAuthTokens? { lock.withLock { items[agentID] } }
 
+    private var _readsUnavailable = false
+    /// true면 사용량 조회 경로의 읽기(`readChecked`)가 "저장소를 지금 읽을 수 없음"으로 실패한다.
+    var readsUnavailable: Bool {
+        get { lock.withLock { _readsUnavailable } }
+        set { lock.withLock { _readsUnavailable = newValue } }
+    }
+
+    func readChecked(_ agentID: UUID) throws -> OAuthTokens? {
+        try lock.withLock {
+            if _readsUnavailable { throw CredentialUnavailable() }
+            return items[agentID]
+        }
+    }
+
     func write(_ tokens: OAuthTokens, for agentID: UUID) -> Bool {
         lock.withLock {
             guard !_failWrites else { return false }

@@ -16,9 +16,9 @@
 //  | malformed / unavailable | Cursor auth/poll: 200인데 토큰 없음 / 폴링 경로 자체가 사라짐 |
 //  | denied / expired / timed_out | 폴링 로그인 거부 / 코드 만료 / 승인 대기 시간 초과 |
 //  | network_offline / network_timeout / network_other | URLError 분류 |
-//  | webview_<n> | 로그인 웹뷰 탐색 실패(NSError 코드 절댓값, 예: webview_1009) |
 //  | state_mismatch / code_parse / keychain_save | 앱 내부 단계 실패 |
 //  | loopback_listen / unsupported_provider / auth_session_start / auth_session_<n> | 인증 시트 흐름 |
+//  | loopback_port_in_use | 인증 시트 흐름의 고정 루프백 포트(Codex 1455)를 다른 앱이 쓰고 있다(stage `browser_wait`) |
 //  | other | 위 어디에도 해당하지 않는 에러 |
 //
 
@@ -26,6 +26,8 @@ import Foundation
 
 enum LoginFailureCode {
     static let other = "other"
+    /// 고정 루프백 포트(Codex 1455)를 다른 앱이 쓰고 있다.
+    static let loopbackPortInUse = "loopback_port_in_use"
 
     // MARK: 에러 → 코드
 
@@ -107,13 +109,6 @@ enum LoginFailureCode {
         default:
             return nil
         }
-    }
-
-    // MARK: 웹뷰
-
-    /// 로그인 웹뷰 탐색 실패. 음수 NSURLError 코드는 절댓값으로 쓴다(`-1009` → `webview_1009`).
-    static func webview(_ error: Error) -> String {
-        "webview_\(abs((error as NSError).code))"
     }
 
     // MARK: 정규화

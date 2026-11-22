@@ -2,9 +2,10 @@
 //  GaugeMonsterLayer.swift
 //  TokenWatch
 //
-//  게이지 바 위 몬스터(V2). 슬라임 크리터처럼 바를 가로질러 행진한다 — 완료 출현은 바 왼쪽 밖에서,
+//  게이지 바 위 몬스터(V2). 바 위에 그리는 것은 이 몬스터뿐이다(장식용 크리터 없음). 바를 가로질러 행진한다 — 완료 출현은 바 왼쪽 밖에서,
 //  확률 출현은 나타난 자리에서 출발한다. 타격하면 위에서 검이 꽂히고, 처치되면 원래 그림이 흑백톤이 되고 머리 위에 엔젤링이 뜬다.
-//  터치는 이 레이어가 아니라 게이지 줄 전체(UsageBar·DetailUsageRow)가 받는다 — 스프라이트 위치로 판정하지 않는다.
+//  터치는 이 레이어가 아니라 목록 카드의 게이지 줄 전체(UsageBar)가 받는다 — 스프라이트 위치로 판정하지 않는다.
+//  상세 화면(AgentDetailView)에는 몬스터를 그리지 않는다.
 //
 
 import SwiftUI
@@ -60,7 +61,7 @@ struct GaugeMonsterLayer: View {
         e.source == .completion ? tickPeriod : tickPeriod / MonsterDraw.marchSpeed(key: e.key)
     }
 
-    /// 그 순간의 행진 위치. 완료 출현은 슬라임 행진 그대로, 확률 출현은 출현 시각에 제자리(`restX`)에서 출발한다.
+    /// 그 순간의 행진 위치. 완료 출현은 바 왼쪽 밖에서 출발하는 행진, 확률 출현은 출현 시각에 제자리(`restX`)에서 출발한다.
     private func marchX(_ e: MonsterEncounter, at date: Date, period: Double, restX: CGFloat,
                         hop: CGFloat, width: CGFloat) -> CGFloat {
         let tick = Int(date.timeIntervalSinceReferenceDate / period)

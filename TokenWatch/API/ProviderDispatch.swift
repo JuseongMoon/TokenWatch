@@ -46,9 +46,45 @@ extension FetchErrorReason {
         case UsageError.noWindows: self = .empty
         // 401은 인증 거부, 403은 기존과 같은 4xx로 분류한다(분석 계약 유지).
         case UsageError.keyRejected(let status, _): self = status == 401 ? .auth : .http4xx
-        case is OAuthError: self = .auth   // 토큰 refresh 실패 → 재로그인 필요
+        case let e as OAuthError: self = FetchErrorReason(oauth: e)
+        case is CredentialUnavailable: self = .credential
         case is URLError: self = .network
         default: self = .other
+        }
+    }
+
+    /// 토큰 갱신(·교환) 오류는 원인별로 나눈다 — 통째로 `auth`로 보면 업체 장애(429·5xx)나
+    /// 응답 형식 변경까지 재로그인 문제로 잘못 읽는다.
+    /// - 로그인 없음·refresh 거부(`refreshRevoked`)·400/401 거부 → `auth`
+    /// - 429 → `rate_limit`, 5xx → `http_5xx`, 그 밖의 4xx → `http_4xx`, 응답 해석 실패 → `parse`
+    init(oauth error: OAuthError) {
+        switch error {
+        case .notAuthenticated, .refreshRevoked:
+            self = .auth
+        case .refreshFailed(_, let code), .exchangeFailed(_, let code):
+            self = FetchErrorReason(tokenFailureCode: code)
+        }
+    }
+
+    /// 토큰 엔드포인트 실패에 실린 `LoginFailureCode` 값 → 사유.
+    /// `http(status:body:)`는 본문의 OAuth `error`가 특정 사유면 상태 코드 대신 그 이름을 싣는데,
+    /// 그 사유들(`invalid_grant`·`invalid_client`·`redirect_mismatch`)은 토큰 엔드포인트의 400/401 거부다.
+    init(tokenFailureCode code: String?) {
+        switch code {
+        case "invalid_grant", "invalid_client", "redirect_mismatch":
+            self = .auth
+        case "parse":
+            self = .parse
+        case let code? where code.hasPrefix("http_"):
+            switch Int(code.dropFirst("http_".count)) {
+            case 400, 401: self = .auth
+            case 429: self = .rateLimit
+            case let status? where (500...599).contains(status): self = .http5xx
+            case let status? where (400...499).contains(status): self = .http4xx
+            default: self = .other
+            }
+        default:
+            self = .other
         }
     }
 }
@@ -75,14 +111,14 @@ func parseRetryAfter(_ value: String?, now: Date = Date()) -> Date? {
 // MARK: - OAuth 디스패치
 
 enum ProviderAuth {
-    // 아래 authorizeURL/parseCallback/exchange/refresh는 OAuth 인가코드 방식
-    // provider(oauthBrowser=Claude·Grok, oauthCode=Codex) 전용이다.
+    // 아래 authorizeURL/exchange/refresh는 OAuth 인가코드 방식
+    // provider(oauthBrowser=Claude·Codex·Grok) 전용이다.
     // apiKey/deviceFlow provider는 AddAgentSheet가 이 경로로 오지 않도록 라우팅한다.
     // switch에 `default:`를 두지 않는다 — 새 provider를 추가하며 여기를 빠뜨리면 컴파일 에러로
     // 드러나야 한다(빠뜨린 채 빌드되면 로그인 크래시나 "로그인 필요"가 조용히 난다).
 
     /// - Parameter redirect: 인증 시트 로그인에서 루프백 콜백을 쓸 때만 넘긴다.
-    ///   (Claude·Grok. Codex는 콜백이 고정이라 무시한다. Grok은 루프백 redirect가 반드시 있어야 한다.)
+    ///   (Claude·Grok. Codex는 redirect가 하나로 고정이라 무시한다. Grok은 루프백 redirect가 반드시 있어야 한다.)
     static func authorizeURL(_ provider: AgentProvider, pkce: PKCE, redirect: String? = nil) -> URL {
         switch provider {
         case .claude: return ClaudeOAuth.authorizeURL(pkce: pkce, redirect: redirect)
@@ -95,21 +131,31 @@ enum ProviderAuth {
         }
     }
 
-    static func parseCallback(_ provider: AgentProvider, _ url: URL) -> (code: String, state: String)? {
-        switch provider {
-        case .claude: return ClaudeOAuth.parseCallback(url)
-        case .codex: return CodexOAuth.parseCallback(url)
-        // Grok 콜백은 루프백 리스너가 직접 파싱한다(웹뷰 가로채기 경로가 아니다).
-        case .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
-        }
-    }
-
     /// 인증 시트 로그인(oauthBrowser)의 루프백 redirect_uri. 루프백 콜백을 쓰지 않는 provider는 nil.
+    /// Codex는 등록된 주소 하나뿐이라 `port`와 무관하게 그 값이다(리스너도 그 포트로 뜬다 — `loopbackPort`).
     static func loopbackRedirectURI(_ provider: AgentProvider, port: UInt16) -> String? {
         switch provider {
         case .claude: return ClaudeOAuth.loopbackRedirectURI(port: port)
+        case .codex: return CodexOAuth.redirectURI
         case .grok: return GrokOAuth.loopbackRedirectURI(port: port)
-        case .codex, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        case .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 루프백 리스너가 반드시 써야 하는 포트. 임의 포트를 받아도 되는 provider는 nil.
+    static func loopbackPort(_ provider: AgentProvider) -> UInt16? {
+        switch provider {
+        case .codex: return CodexOAuth.redirectPort
+        case .claude, .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs: return nil
+        }
+    }
+
+    /// 루프백 리스너가 콜백을 받는 경로(redirect_uri의 경로와 같아야 한다).
+    static func loopbackCallbackPath(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .codex: return CodexOAuth.callbackPath
+        case .claude, .grok, .copilot, .cursor, .kimi, .openrouter, .deepseek, .poe, .elevenlabs:
+            return LoopbackCallbackServer.defaultCallbackPath
         }
     }
 
@@ -302,6 +348,12 @@ enum ProviderUsage {
             return nil
         } catch let e as URLError where e.code == .cancelled {
             return nil
+        } catch is CredentialUnavailable {
+            // 저장소를 잠시 읽지 못했을 뿐 자격증명은 그대로다 — "로그인 필요"로 안내하지 않는다.
+            // 자동 재시도를 약속하지 않는다(다음 조회 주기나 사용자 새로고침에서 다시 읽는다).
+            return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
+                                 error: L10n(lang: currentLang()).errCredentialUnavailable,
+                                 errorReason: .credential)
         } catch {
             return AgentSnapshot(windows: [], planLabel: nil, fetchedAt: Date(),
                                  error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,

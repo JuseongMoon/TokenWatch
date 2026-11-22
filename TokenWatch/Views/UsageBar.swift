@@ -177,7 +177,7 @@ struct UsageBar: View {
                                      kind: .weekly, style: .creditGauge,
                                      valueText: "0.00 credits left",
                                      balanceRemaining: 0, balanceTotal: 0))
-        // 잔액 소진: 빈 트랙 위에서 슬라임이 논다(역방향 소진).
+        // 잔액 소진: 빈 트랙(역방향 소진). 몬스터는 출현했을 때만 그린다.
         UsageBar(window: UsageWindow(label: "Balance", usedPercent: 99.7, resetsAt: nil,
                                      kind: .weekly, style: .creditGauge,
                                      valueText: "1.50 credits left",

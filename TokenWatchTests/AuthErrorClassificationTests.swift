@@ -169,8 +169,8 @@ struct AuthErrorClassificationTests {
 
     @Test func OpenRouter_키_입력_안내와_발급_링크가_관리_키를_가리킨다() {
         let ko = L10n(lang: .ko), en = L10n(lang: .en)
-        #expect(ko.apiKeyHint(provider: .openrouter)?.contains("관리 키") == true)
-        #expect(en.apiKeyHint(provider: .openrouter)?.contains("Management Key") == true)
+        #expect(ko.apiKeyGuide(provider: .openrouter)?.contains("관리 키") == true)
+        #expect(en.apiKeyGuide(provider: .openrouter)?.contains("Management Key") == true)
         #expect(ko.errOpenRouterNeedsManagementKey.contains("관리 키"))
         #expect(en.errOpenRouterNeedsManagementKey.contains("Management Key"))
         #expect(ko.errOpenRouterNeedsManagementKey != en.errOpenRouterNeedsManagementKey)

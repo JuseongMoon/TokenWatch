@@ -27,6 +27,8 @@ struct ContentView: View {
     private var loc: L10n { L10n(lang: appLanguage.resolved) }
 
     @State private var showingAdd = false
+    /// 추가 시트를 연 경로(`screen_view(add_agent)`의 `source`). 시트를 열기 직전에 정한다.
+    @State private var addSource: AnalyticsEvent.AddAgentSource = .list
     @State private var showingSettings = false
     @State private var showingAnnouncements = false
     @State private var showingGuild = false
@@ -61,7 +63,7 @@ struct ContentView: View {
             }
             #endif
             .sheet(isPresented: $showingAdd) {
-                AddAgentSheet().environment(store)
+                AddAgentSheet(source: addSource).environment(store)
             }
             .sheet(isPresented: $showingSettings) {
                 SettingsSheet().environment(store)
@@ -326,6 +328,19 @@ struct ContentView: View {
         if scenePhase == .active { store.startAutoRefresh(interval: refreshInterval) }
     }
 
+    /// 계정 추가 시트를 연다. `source`는 들어온 경로(분석).
+    private func openAdd(_ source: AnalyticsEvent.AddAgentSource) {
+        addSource = source
+        showingAdd = true
+    }
+
+    /// 데모 중 연결 버튼: 데모를 끝내고(기존 종료 처리 그대로 — `demo_end`) 곧바로 추가 시트를 연다.
+    /// 데모를 끝낸 뒤 열므로 추가 화면의 `screen_view`는 데모 게이트에 걸리지 않고 기록된다.
+    private func connectFromDemo() {
+        exitDemo()
+        openAdd(.demo)
+    }
+
     private var appVersion: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
@@ -337,8 +352,12 @@ struct ContentView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                if store.agents.isEmpty {
-                    emptyHint
+                if store.isDemo {
+                    // 데모 중 카드 목록 위: 내 계정 연결을 권한다(스토어 스크린샷 촬영 중에는 숨긴다).
+                    if !shotMode { demoConnectCell }
+                } else if store.agents.isEmpty {
+                    // 실제 에이전트가 없는 첫 화면: 계정 연결이 주된 행동, 데모는 보조.
+                    emptyState
                 }
                 ForEach(Array(store.agents.enumerated()), id: \.element.id) { index, agent in
                     ZStack(alignment: .topTrailing) {
@@ -368,11 +387,11 @@ struct ContentView: View {
                     }
                 }
                 if store.isDemo {
-                    // 데모 중에는 로그인 진입점을 감춘다 — 표본 목록에 실계정을 섞지 않기 위함.
+                    // 데모 중에는 목록 아래 추가 셀을 감춘다 — 표본 목록에 실계정을 섞지 않기 위함.
+                    // (연결은 위 안내의 버튼이 데모를 끝낸 뒤 연다.)
                     exitDemoCell
-                } else {
-                    AddAgentCell { showingAdd = true }
-                    if store.agents.isEmpty { demoCell }
+                } else if !store.agents.isEmpty {
+                    AddAgentCell { openAdd(.list) }
                 }
             }
             .padding(16)
@@ -420,18 +439,55 @@ struct ContentView: View {
         .accessibilityLabel(label)
     }
 
-    /// 아직 로그인한 에이전트가 없을 때만 뜨는 데모 진입 셀. 계정 없이도 앱이 무엇을
-    /// 보여주는지 바로 확인할 수 있게 한다.
-    private var demoCell: some View {
-        VStack(spacing: 6) {
-            TerminalButton(title: "[ ▶ RUN DEMO ]", color: Term.yellow,
-                           dashedBorder: true) { enterDemo() }
-                .accessibilityLabel(loc.a11yRunDemo)
-            Text(loc.demoHint)
+    /// 실제 에이전트가 없는 첫 화면(데모 아님). 계정 연결을 가장 눈에 띄는 행동으로 두고,
+    /// 데모는 그 아래 작은 보조 진입점으로 둔다(계정 없이도 앱이 무엇을 보여주는지 확인할 수 있게).
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(loc.emptyStateMessage)
+                .font(.term(13))
+                .foregroundStyle(Term.fg)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TerminalButton(title: "[ + ADD AGENT ]", color: Term.green) { openAdd(.emptyState) }
+
+            Text("  tokens are stored only on this device")
                 .font(.term(11))
-                .foregroundStyle(Term.dim)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+                .foregroundStyle(Term.dim.opacity(0.7))
+
+            // 보조: 데모(작은 글자 버튼 + 한 줄 설명).
+            VStack(spacing: 4) {
+                Button { enterDemo() } label: {
+                    Text("[ ▶ RUN DEMO ]")
+                        .font(.term(12, weight: .semibold))
+                        .foregroundStyle(Term.yellow)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(loc.a11yRunDemo)
+                Text(loc.demoHint)
+                    .font(.term(11))
+                    .foregroundStyle(Term.dim)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 20)
+    }
+
+    /// 데모 중 카드 목록 위에 서는 연결 안내. 누르면 데모를 끝내고 곧바로 계정 추가 시트를 연다.
+    private var demoConnectCell: some View {
+        TerminalBox(borderColor: Term.yellow.opacity(0.5), contentPadding: 12) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(loc.demoConnectMessage)
+                    .font(.term(12))
+                    .foregroundStyle(Term.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+                TerminalButton(title: "[ + ADD MY AGENT ]", color: Term.green) { connectFromDemo() }
+            }
         }
     }
 
@@ -449,20 +505,6 @@ struct ContentView: View {
         }
     }
 
-    private var emptyHint: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text("$ tap").foregroundStyle(Term.dim)
-                Text("[+ ADD AGENT]").foregroundStyle(Term.green)
-                Text("below to login").foregroundStyle(Term.dim)
-            }
-            Text("  tokens are stored only on this device")
-                .foregroundStyle(Term.dim.opacity(0.7))
-        }
-        .font(.term(12))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 20)
-    }
 }
 
 #Preview {

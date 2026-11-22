@@ -97,7 +97,7 @@ enum MonsterSessionKey {
 
 /// 몬스터가 붙을 수 있는 창인지(§8-1). 사용률 수치는 기기 밖으로 나가지 않는다.
 enum MonsterEligibility {
-    /// 완료 판정 기준 — 게이지 크리터와 같은 값.
+    /// 완료 판정 기준 — 표시 반올림상 "100%"가 되는 지점(99.5%)과 맞춘다.
     static let completionThreshold = 0.995
 
     /// 대상 창: 구독 게이지이고 미래 리셋이 있다(충전형·잔액은 제외).
@@ -135,7 +135,8 @@ enum MonsterEligibility {
     }
 
     /// 확률 출현 후보. 100%가 된 창도 후보다 — 일찍 다 써도 리셋까지 추첨이 이어진다.
-    /// 충전형 게이지(creditGauge)는 리셋이 없으므로 완료 출현은 없고, 잔액·사용률과 무관하게 확률 출현 후보다
+    /// 충전형 게이지(creditGauge)는 리셋이 없어 리셋 기반 완료가 없다 — 완료 출현은 바닥났을 때 `creditCompletionWindow`로만
+    /// 생긴다. 확률 출현에는 잔액·사용률과 무관하게 후보다
     /// (최소 사용률은 "리셋 주기 안 첫 사용"을 기다리는 규칙이라 충전형엔 해당하지 않는다. 0원 계정도 후보).
     /// 몬스터가 살아 있는 바·처치 1시간 안의 유령이 있는 바는 호출측(MonsterStore)이 거른다.
     static func isRandomCandidate(_ window: UsageWindow, minUsedPercent: Double, now: Date) -> Bool {

@@ -55,11 +55,11 @@ struct DemoModeTests {
         }
     }
 
-    /// 소진(100%) 게이지가 하나는 있다 — 데모에서 게이지 위 슬라임이 반드시 보이게 하는 전제.
+    /// 소진(100%) 게이지가 하나는 있다 — 데모에서 게이지 위 완료 출현 표본 몬스터가 반드시 보이게 하는 전제.
     @Test func demoHasAnExhaustedGauge() {
         let exhausted = DemoData.snapshots(now: now).values
             .flatMap(\.windows)
-            .filter { $0.usedPercent / 100 >= GaugeCritter.threshold }
+            .filter { $0.usedPercent / 100 >= MonsterEligibility.completionThreshold }
         #expect(!exhausted.isEmpty)
     }
 
@@ -68,7 +68,7 @@ struct DemoModeTests {
     @Test func demoHasARedGaugeThatIsNotExhausted() {
         let windows = DemoData.snapshots(now: now).values.flatMap(\.windows)
         let red = windows.filter {
-            $0.usedPercent / 100 < GaugeCritter.threshold
+            $0.usedPercent / 100 < MonsterEligibility.completionThreshold
                 && Term.statusColor(remainingPercent: 100 - $0.usedPercent) == Term.red
         }
         #expect(!red.isEmpty)
@@ -77,16 +77,16 @@ struct DemoModeTests {
     }
 
     /// 틱을 오래 돌려도 데모는 "소진 1개 + 빨강(미소진) 1개" 구도를 유지한다 —
-    /// 모든 게이지가 100%로 수렴해 슬라임 천지가 되지 않는다.
+    /// 모든 게이지가 100%로 수렴해 몬스터 천지가 되지 않는다.
     @Test func longRunKeepsBothExhaustedAndRedGauges() {
         var snapshots = DemoData.snapshots(now: now)
         for i in 1...200 {
             snapshots = DemoData.advanced(snapshots, now: now.addingTimeInterval(Double(i)))
         }
         let windows = snapshots.values.flatMap(\.windows).filter { $0.style == .gauge }
-        #expect(windows.contains { $0.usedPercent / 100 >= GaugeCritter.threshold })
+        #expect(windows.contains { $0.usedPercent / 100 >= MonsterEligibility.completionThreshold })
         #expect(windows.contains {
-            $0.usedPercent / 100 < GaugeCritter.threshold
+            $0.usedPercent / 100 < MonsterEligibility.completionThreshold
                 && Term.statusColor(remainingPercent: 100 - $0.usedPercent) == Term.red
         })
     }

@@ -7,12 +7,13 @@
 //
 //  구조: 앱이 루프백 리스너(`LoopbackCallbackServer`)를 띄우고, 앱 위에 뜨는 시스템 인증
 //  시트(ASWebAuthenticationSession — Safari 엔진)에서 authorize를 연다. 승인되면 인가 서버가
-//  루프백 주소(예: `http://localhost:PORT/callback`)로 보내고, 리스너가 302로 `tokenwatch://login-complete`에
+//  루프백 주소(예: `http://localhost:PORT/callback`, Codex는 고정 `http://localhost:1455/auth/callback`)로 보내고, 리스너가 302로 `tokenwatch://login-complete`에
 //  보내면 시트가 스스로 닫힌다. 리스너 전달과 시트 콜백 중 먼저 온 것 하나만 쓴다.
 //
 //  왜 외부 Safari가 아닌가: 앱 밖 기본 브라우저로 로그인시키면 App Store 가이드라인 4로 거절된다.
 //  왜 WKWebView가 아닌가: claude.ai의 Google 로그인은 `window.open` 팝업이라 WKWebView에서는
 //  "로그인 중 오류"만 뜬다. 인증 시트 안에서는 팝업이 정상 동작한다(실기기 확인 2026-09-14).
+//  임베디드 웹뷰 인가는 RFC 8252가 금하고 Google은 `disallowed_useragent`로 막는다 — Codex도 이 경로로 옮겼다.
 //  Apple 로그인은 팝업이 아니라 페이지 리다이렉트다.
 //
 //  왜 뷰 밖에 두는가: 시스템 시트가 화면을 덮거나 phase 전환으로 로그인 화면이 사라질 때
@@ -71,6 +72,8 @@ final class OAuthBrowserLoginCoordinator {
         wasCancelled = false
 
         let listener = LoopbackCallbackServer(expectedState: pkce.state,
+                                              port: ProviderAuth.loopbackPort(provider),
+                                              callbackPath: ProviderAuth.loopbackCallbackPath(provider),
                                               lifetime: listenerLifetime) { [weak self] outcome in
             guard let self else { return }
             switch outcome {
@@ -82,6 +85,13 @@ final class OAuthBrowserLoginCoordinator {
         let port: UInt16
         do {
             port = try await listener.start()
+        } catch LoopbackListenError.portInUse {
+            // 등록된 고정 포트(Codex 1455)를 다른 앱이 쥐고 있다 — 대신 쓸 포트가 없다.
+            listener.stop()
+            guard latch.isLive(current) else { return }
+            fail(L10n(lang: currentLang()).browserPortInUse, analyticsCode: LoginFailureCode.loopbackPortInUse,
+                 attempt: current)
+            return
         } catch {
             listener.stop()
             guard latch.isLive(current) else { return }

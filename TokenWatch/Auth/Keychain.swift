@@ -30,7 +30,17 @@ nonisolated enum Keychain {
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
-    static func data(account: String) -> Data? {
+    /// 읽기 결과. "항목 없음"과 "지금은 읽을 수 없음"을 구분한다.
+    enum Lookup {
+        case found(Data)
+        /// 항목이 없다(또는 아래 `unavailable`이 아닌 이유로 읽지 못했다 — 기존과 같이 없음으로 본다).
+        case missing
+        /// 기기 데이터 보호 때문에 지금은 읽을 수 없다(`errSecInteractionNotAllowed` — 재시동 뒤 첫 잠금 해제 전 등).
+        /// 항목은 그대로 있으니 없음으로 다루면 안 된다.
+        case unavailable
+    }
+
+    static func lookup(account: String) -> Lookup {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -39,8 +49,26 @@ nonisolated enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return lookup(status: status, result: result)
+    }
+
+    /// `SecItemCopyMatching` 결과 → `Lookup`(순수 함수 — 테스트 대상).
+    static func lookup(status: OSStatus, result: AnyObject?) -> Lookup {
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data else { return .missing }
+            return .found(data)
+        case errSecInteractionNotAllowed:
+            return .unavailable
+        default:
+            return .missing
+        }
+    }
+
+    static func data(account: String) -> Data? {
+        if case .found(let data) = lookup(account: account) { return data }
+        return nil
     }
 
     static func delete(account: String) {

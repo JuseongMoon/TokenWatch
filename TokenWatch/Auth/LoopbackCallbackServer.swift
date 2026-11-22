@@ -8,6 +8,8 @@
 //  그래서 앱 안의 인증 시트(ASWebAuthenticationSession)에서 authorize를 열고, 인가 서버가
 //  리다이렉트하는 `http://localhost:<포트>/callback`을 앱이 직접 받아 code를 얻는다.
 //  (Claude Code CLI의 기본 로그인 흐름과 같은 구조다.) 흐름 전체는 `OAuthBrowserLoginCoordinator`가 맡는다.
+//  포트는 보통 임의로 받지만, redirect_uri가 한 주소로만 등록된 provider(Codex: `localhost:1455/auth/callback`)는
+//  그 포트·경로로 띄운다. 그 포트를 다른 앱이 쥐고 있으면 대신 쓸 포트가 없어 `LoopbackListenError.portInUse`로 끝난다.
 //
 //  응답은 `302 Found` → `tokenwatch://login-complete?code=…&state=…`이다. 인증 시트는 콜백
 //  스킴으로 가는 리다이렉트를 보면 스스로 닫히므로, 이 응답이 브라우저에 닿아야 로그인 창이 닫힌다.
@@ -39,6 +41,12 @@ nonisolated enum LoopbackCallback: Equatable, Sendable {
     case oauthError(String, state: String)
 }
 
+/// 리스너를 띄우지 못한 이유 중 사용자에게 따로 안내할 것.
+nonisolated enum LoopbackListenError: Error, Equatable {
+    /// 고정 포트(Codex 1455)를 다른 앱이 쓰고 있다 — 다른 앱에서 기다리는 로그인 등.
+    case portInUse
+}
+
 /// 루프백에 잠깐 떠서 OAuth 콜백 한 건만 받고 사라지는 최소 HTTP 서버.
 @MainActor
 final class LoopbackCallbackServer {
@@ -52,6 +60,10 @@ final class LoopbackCallbackServer {
     private let onOutcome: (LoopbackOutcome) -> Void
     /// 리스너 수명 — 지나면 닫고 `.timedOut`을 전달한다. 테스트는 짧게 준다.
     private let lifetime: Duration
+    /// 띄울 포트. nil이면 임의 포트.
+    private let fixedPort: UInt16?
+    /// 콜백을 받는 유일한 경로.
+    private let callbackPath: String
 
     private var v4: NWListener?
     private var v6: NWListener?
@@ -62,12 +74,21 @@ final class LoopbackCallbackServer {
 
     /// 리스너 수명 상한 기본값 — 이 시간이 지나면 스스로 닫고 시간 초과를 알린다.
     nonisolated static let defaultLifetime: Duration = .seconds(600)
+    /// 콜백 경로 기본값(Claude·Grok).
+    nonisolated static let defaultCallbackPath = "/callback"
     /// 요청 헤더 누적 상한. 콜백은 수백 바이트라 이보다 크면 우리 대상이 아니다.
     private static let maxRequestBytes = 16 * 1024
 
-    init(expectedState: String, lifetime: Duration = LoopbackCallbackServer.defaultLifetime,
+    /// - Parameters:
+    ///   - port: 고정 포트. nil이면 임의 포트를 받는다.
+    ///   - callbackPath: 콜백을 받을 경로(예: `/callback`, Codex는 `/auth/callback`).
+    init(expectedState: String, port: UInt16? = nil,
+         callbackPath: String = LoopbackCallbackServer.defaultCallbackPath,
+         lifetime: Duration = LoopbackCallbackServer.defaultLifetime,
          onOutcome: @escaping (LoopbackOutcome) -> Void) {
         self.expectedState = expectedState
+        self.fixedPort = port
+        self.callbackPath = callbackPath
         self.lifetime = lifetime
         self.onOutcome = onOutcome
     }
@@ -81,21 +102,41 @@ final class LoopbackCallbackServer {
 
     // MARK: 시작 / 종료
 
-    /// 임의 포트로 루프백 리스너를 띄우고 실제 포트를 돌려준다.
+    /// 루프백 리스너(고정 포트 또는 임의 포트)를 띄우고 실제 포트를 돌려준다.
+    /// 고정 포트를 다른 앱이 쓰고 있으면 `LoopbackListenError.portInUse`를 던진다(이때 아무것도 남지 않는다).
     func start() async throws -> UInt16 {
-        let listener = try Self.makeListener(host: .ipv4(.loopback), port: .any)
-        v4 = listener
-        let port = try await Self.startAndWaitReady(listener) { [weak self] conn in
-            self?.accept(conn)
+        let requested = fixedPort.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any
+        let port: UInt16
+        do {
+            let listener = try Self.makeListener(host: .ipv4(.loopback), port: requested)
+            v4 = listener
+            port = try await Self.startAndWaitReady(listener) { [weak self] conn in
+                self?.accept(conn)
+            }
+        } catch {
+            stop()
+            if fixedPort != nil, Self.isAddressInUse(error) { throw LoopbackListenError.portInUse }
+            throw error
         }
 
         // 브라우저가 `localhost`를 ::1로 먼저 시도할 수 있다. 같은 포트로 IPv6도 열어
-        // 둔다(실패해도 IPv4로 폴백되므로 best-effort).
+        // 둔다(IPv6를 쓸 수 없으면 브라우저가 IPv4로 폴백하므로 best-effort).
+        // 단 고정 포트의 ::1 쪽을 다른 앱이 쥐고 있으면 `localhost`가 ::1로 풀릴 때 콜백이 그 앱으로 간다 —
+        // 그때는 포트 점유로 끝낸다.
         if let v6Listener = try? Self.makeListener(host: .ipv6(.loopback),
                                                    port: NWEndpoint.Port(rawValue: port) ?? .any) {
             v6 = v6Listener
-            _ = try? await Self.startAndWaitReady(v6Listener) { [weak self] conn in
-                self?.accept(conn)
+            do {
+                _ = try await Self.startAndWaitReady(v6Listener) { [weak self] conn in
+                    self?.accept(conn)
+                }
+            } catch {
+                if fixedPort != nil, Self.isAddressInUse(error) {
+                    stop()
+                    throw LoopbackListenError.portInUse
+                }
+                v6Listener.cancel()
+                v6 = nil
             }
         }
 
@@ -118,8 +159,17 @@ final class LoopbackCallbackServer {
         connections.removeAll()
     }
 
+    /// 포트가 이미 쓰이는 중이라 바인딩하지 못했는지(`EADDRINUSE`).
+    nonisolated static func isAddressInUse(_ error: Error) -> Bool {
+        if case .posix(let code)? = error as? NWError { return code == .EADDRINUSE }
+        if let posix = error as? POSIXError { return posix.code == .EADDRINUSE }
+        return false
+    }
+
     private static func makeListener(host: NWEndpoint.Host, port: NWEndpoint.Port) throws -> NWListener {
         let params = NWParameters.tcp
+        // 방금 콜백을 처리한 고정 포트는 그 연결이 TIME_WAIT로 남아 곧바로 다시 바인딩하지 못한다 — 재사용을 허용한다.
+        // 이 설정으로도 다른 리스너가 이미 쥔 포트는 공유되지 않는다(EADDRINUSE로 실패한다, macOS에서 확인).
         params.allowLocalEndpointReuse = true
         // 루프백에만 바인딩 — 같은 네트워크의 다른 기기에서는 접근할 수 없다.
         params.requiredLocalEndpoint = .hostPort(host: host, port: port)
@@ -206,7 +256,8 @@ final class LoopbackCallbackServer {
             return
         }
         // 경로·state가 맞지 않는 요청(다른 시도·외부 요청)은 404 — 현재 로그인을 끝내지 않는다.
-        guard let parsed = Self.parseCallbackResult(target: target, expectedState: expectedState) else {
+        guard let parsed = Self.parseCallbackResult(target: target, expectedState: expectedState,
+                                                    callbackPath: callbackPath) else {
             respond(conn, status: "404 Not Found", body: "not found")
             return
         }
@@ -279,21 +330,24 @@ final class LoopbackCallbackServer {
     }
 
     /// 콜백 경로이고 state가 기대값과 같을 때만 (code, state)를 돌려준다.
-    nonisolated static func parseCallback(target: String, expectedState: String) -> (code: String, state: String)? {
-        guard case .code(let code, let state)? = parseCallbackResult(target: target, expectedState: expectedState)
+    nonisolated static func parseCallback(target: String, expectedState: String,
+                                          callbackPath: String = defaultCallbackPath) -> (code: String, state: String)? {
+        guard case .code(let code, let state)? = parseCallbackResult(target: target, expectedState: expectedState,
+                                                                     callbackPath: callbackPath)
         else { return nil }
         return (code, state)
     }
 
-    /// 콜백 경로의 요청을 해석한다.
+    /// 콜백 경로(`callbackPath`)의 요청을 해석한다.
     /// - code 콜백: state가 기대값과 같아야만 받는다(CSRF 방어 — 기존과 같다).
     /// - 오류 콜백(code 없이 `error`): state가 아예 없으면 받아들이고(인가 서버가 오류 리다이렉트에
     ///   state를 싣지 않는 경우 — xAI 공식 CLI도 오류 콜백의 state를 검증하지 않는다), state가 있는데
     ///   기대값과 다르면 다른 시도의 응답으로 보고 무시한다.
     /// 경로가 다르거나 둘 다 해당하지 않으면 nil.
-    nonisolated static func parseCallbackResult(target: String, expectedState: String) -> LoopbackCallback? {
+    nonisolated static func parseCallbackResult(target: String, expectedState: String,
+                                                callbackPath: String = defaultCallbackPath) -> LoopbackCallback? {
         guard let comp = URLComponents(string: "http://localhost\(target)"),
-              comp.path == "/callback"
+              comp.path == callbackPath
         else { return nil }
         let items = comp.queryItems ?? []
         let state = items.first(where: { $0.name == "state" })?.value

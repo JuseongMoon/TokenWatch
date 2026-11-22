@@ -98,6 +98,9 @@ final class AgentStore {
     @ObservationIgnored private let tokenStore: TokenStore
     @ObservationIgnored private let fetchSnapshot: SnapshotFetcher
     @ObservationIgnored private let copilotIdentity: CopilotIdentityResolver
+    /// 카드별 마지막 조회 결과(기기 저장) — 조회 오류·복구 이벤트를 상태 전이에만 보낸다.
+    @ObservationIgnored private let fetchOutcomes: FetchOutcomeLedger
+    @ObservationIgnored private let fetchOutcomeAnalytics: FetchOutcomeAnalytics
 
     /// 카드별 로그인 세대(화면 상태용). 같은 카드로 재로그인하거나 카드를 지우면 오른다.
     /// 조회는 시작할 때의 값을 기억했다가, 끝났을 때 값이 바뀌었으면 결과를 화면에 반영하지 않는다 —
@@ -107,9 +110,12 @@ final class AgentStore {
     init(defaults: UserDefaults = .standard,
          tokenStore: TokenStore = .shared,
          fetchSnapshot: SnapshotFetcher? = nil,
-         copilotIdentity: CopilotIdentityResolver? = nil) {
+         copilotIdentity: CopilotIdentityResolver? = nil,
+         fetchOutcomeAnalytics: FetchOutcomeAnalytics? = nil) {
         self.defaults = defaults
         self.tokenStore = tokenStore
+        self.fetchOutcomes = FetchOutcomeLedger(defaults: defaults)
+        self.fetchOutcomeAnalytics = fetchOutcomeAnalytics ?? .live
         self.fetchSnapshot = fetchSnapshot ?? { provider, agentID, manual in
             await ProviderUsage.fetchSnapshot(provider, for: agentID, manual: manual)
         }
@@ -166,6 +172,7 @@ final class AgentStore {
         if prunedPeaks.count != creditPeaks.count { creditPeaks = prunedPeaks; saveCreditPeaks(prunedPeaks) }
         let prunedBaseline = resetBaseline.filter { key in !prefixes.contains { key.key.hasPrefix($0) } }
         if prunedBaseline.count != resetBaseline.count { resetBaseline = prunedBaseline; saveResetBaseline() }
+        fetchOutcomes.remove(droppedIDs)
         for id in droppedIDs {
             Task { [tokenStore] in await tokenStore.delete(for: id) }
             Task { await NotificationManager.shared.removePending(forAgentID: id) }
@@ -220,6 +227,7 @@ final class AgentStore {
             // 화면 세대도 올린다. 이전 토큰으로 진행 중인 조회의 결과는 버려지고 새 토큰으로 다시 조회한다.
             loginEpoch[existing.id, default: 0] &+= 1
             AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+            LoginFunnelTracker.shared.recordSuccess(provider)
             // 직전 조회가 20초 안에 있었어도(예: 인증 오류를 본 직후) 새 자격증명으로 반드시 한 번 조회한다.
             let current = agents.first(where: { $0.id == existing.id }) ?? existing
             await refresh(current, manual: false, bypassSpacing: true)
@@ -231,6 +239,7 @@ final class AgentStore {
         agents.append(agent)
         persist()
         AnalyticsService.shared.log(.loginSuccess(provider: provider, agentsTotal: agents.count))
+        LoginFunnelTracker.shared.recordSuccess(provider)
         AnalyticsService.shared.syncUserProperties(agents: agents)
         // 최초 에이전트 추가 시 조용한(provisional) 알림 권한을 요청한다.
         await NotificationManager.shared.requestAuthorizationIfNeeded()
@@ -288,6 +297,8 @@ final class AgentStore {
         // 리셋 감지 baseline도 함께 정리(고아 키 방지).
         let prunedBaseline = resetBaseline.filter { !$0.key.hasPrefix(prefix) }
         if prunedBaseline.count != resetBaseline.count { resetBaseline = prunedBaseline; saveResetBaseline() }
+        // 조회 결과 전이 상태도 정리(같은 ID가 다시 쓰일 일은 없지만 고아 값을 남기지 않는다).
+        fetchOutcomes.remove([agent.id])
         persist()
         Task { [tokenStore] in await tokenStore.delete(for: agent.id) }
         // 이 에이전트에 걸려 있던 예약 리셋 알림도 제거.
@@ -326,6 +337,9 @@ final class AgentStore {
     func enterDemo() {
         guard !isDemo else { return }
         stopAutoRefresh()
+        // 조회 결과 전이 상태를 모두 "기준 모름"으로 표시한다 — 데모를 나온 뒤 첫 결과는 기준만 잡아
+        // 같은 오류를 다시 보내지 않는다. 데모 중에는 읽기·저장·기록을 하지 않는다.
+        fetchOutcomes.markAllPaused(agents.map(\.id))
         backupAgents = agents
         backupSnapshots = snapshots
         backupServiceStatus = serviceStatus
@@ -408,9 +422,6 @@ final class AgentStore {
         // 저장하므로, 캐시로 돌아온 스냅샷도 매번 여기서 승격해야 표시가 일관된다.
         snapshot.windows = promoteCreditWindows(snapshot.windows, agentID: agent.id)
 
-        // 분석용 직전 상태 — 정상↔에러 "전이"에만 이벤트를 내 폴링 반복 범람을 막는다.
-        let prevHadError = snapshots[agent.id]?.error != nil
-
         // last-good 유지: 이번 결과가 에러 + 빈 windows인데 이전에 표시하던
         // windows가 있으면, 링/바가 사라지지 않도록 이전 windows를 유지하고
         // 에러만 덧입힌다.
@@ -424,14 +435,20 @@ final class AgentStore {
             snapshots[agent.id] = snapshot
         }
 
-        // 정상→에러 전이는 오류를, 에러→정상 전이는 복구를 기록한다(운영 알람·MTTR용).
-        if snapshot.error != nil {
-            if !prevHadError {
-                AnalyticsService.shared.log(.usageFetchError(provider: agent.provider,
-                                                             reason: snapshot.errorReason ?? .other))
+        // 정상→오류(또는 사유 변경)는 오류를, 오류→정상은 복구를 기록한다(운영 알람·MTTR용).
+        // 직전 결과는 메모리가 아니라 기기에 저장한 값과 비교한다 — 앱을 다시 띄워도 같은 오류를 또 보내지 않는다.
+        // 이 블록은 위 세대 확인으로 결과가 채택된 뒤에만 오고, 읽기→비교→저장 사이에 await가 없다.
+        // 데모 중에는(데모 진입 전에 시작한 실제 조회가 늦게 끝난 경우 포함) 읽기·저장·기록을 하지 않는다.
+        if !isDemo,
+           let transition = fetchOutcomes.record(snapshot.error == nil ? nil : (snapshot.errorReason ?? .other),
+                                                 for: agent.id,
+                                                 collecting: fetchOutcomeAnalytics.isCollecting()) {
+            switch transition {
+            case .error(let reason):
+                fetchOutcomeAnalytics.log(.usageFetchError(provider: agent.provider, reason: reason))
+            case .recover:
+                fetchOutcomeAnalytics.log(.usageFetchRecover(provider: agent.provider))
             }
-        } else if prevHadError {
-            AnalyticsService.shared.log(.usageFetchRecover(provider: agent.provider))
         }
 
         // 활성화 완료(설치 후 1회): 첫 에이전트의 첫 정상 스냅샷 — GA4 키 이벤트.

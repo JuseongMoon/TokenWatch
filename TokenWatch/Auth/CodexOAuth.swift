@@ -4,11 +4,11 @@
 //
 //  Codex(OpenAI/ChatGPT) OAuth (PKCE) 로그인 / 토큰 교환 / 갱신.
 //
-//  ⚠️ authorize·token 파라미터는 Codex CLI의 OAuth 흐름을 기반으로 재현했다
-//     (client_id·refresh는 TokenBar agent_usage.rs에서 확인). redirect는
-//     Codex CLI와 동일한 로컬 콜백을 쓰되, iOS에선 WKWebView가 그 URL로
-//     네비게이트하기 직전에 가로채 code를 얻는다(실제 로컬 서버 없음).
-//     정확한 파라미터는 실제 로그인으로 검증하며 아래 상수만 조정하면 된다.
+//  authorize·token 파라미터는 Codex CLI의 OAuth 흐름과 같다(client_id·refresh는 TokenBar agent_usage.rs에서 확인).
+//  로그인은 Claude·Grok처럼 앱 안 인증 시트 + 루프백 리스너로 한다(`OAuthBrowserLoginCoordinator`).
+//  이 client는 redirect가 `http://localhost:1455/auth/callback` 하나로만 등록돼 있어, 리스너는 반드시
+//  그 포트·경로로 뜨고 authorize·교환 모두 그 주소를 그대로 보낸다. 코드 붙여넣기 폴백은 없다
+//  (code는 그 주소로만 온다). 저장된 자격증명과 refresh는 웹뷰 로그인 시절과 같다.
 //
 
 import Foundation
@@ -18,9 +18,11 @@ enum CodexOAuth {
     static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
     static let authorizeURL = "https://auth.openai.com/oauth/authorize"
     static let tokenURL = "https://auth.openai.com/oauth/token"
+    /// 등록된 루프백 포트·경로 — 바꾸면 인가 서버가 redirect를 거부한다.
+    static let redirectPort: UInt16 = 1455
+    static let callbackPath = "/auth/callback"
     static let redirectURI = "http://localhost:1455/auth/callback"
     static let scopes = ["openid", "profile", "email", "offline_access"]
-    static let callbackPrefix = "http://localhost:1455/auth/callback"
 
     // MARK: authorize URL
 
@@ -38,16 +40,6 @@ enum CodexOAuth {
             .init(name: "state", value: pkce.state),
         ]
         return comp.url!
-    }
-
-    static func parseCallback(_ url: URL) -> (code: String, state: String)? {
-        guard url.absoluteString.hasPrefix(callbackPrefix),
-              let comp = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        else { return nil }
-        let items = comp.queryItems ?? []
-        guard let code = items.first(where: { $0.name == "code" })?.value else { return nil }
-        let state = items.first(where: { $0.name == "state" })?.value ?? ""
-        return (code, state)
     }
 
     // MARK: 토큰 교환 / 갱신

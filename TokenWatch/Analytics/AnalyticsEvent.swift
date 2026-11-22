@@ -12,7 +12,6 @@ import Foundation
 
 /// 로그인 퍼널에서 실패/이탈이 일어난 단계.
 enum LoginStage: String, Sendable {
-    case authorize                          // 웹뷰 인가 페이지 진행 중
     case browserWait = "browser_wait"       // 로그인 창(인증 시트)에서 승인을 기다리는 중
     case codeEntry = "code_entry"           // 인가 코드 직접 입력(붙여넣기) 화면
     case stateMismatch = "state_mismatch"   // CSRF state 불일치
@@ -23,14 +22,16 @@ enum LoginStage: String, Sendable {
 }
 
 /// usage 조회 실패의 기계 판독 사유. 원문(현지화된) 에러 메시지 대신 이 값만 전송한다.
+/// Android와 같은 의미로 분류한다(분류 규칙은 `FetchErrorReason(classifying:)`).
 enum FetchErrorReason: String, Sendable {
-    case auth                               // 인증 만료/refresh 실패 → 재로그인 필요
+    case auth                               // 로그인 없음·refresh 거부(400/401) → 재로그인 필요
     case rateLimit = "rate_limit"
     case http4xx = "http_4xx"
     case http5xx = "http_5xx"
     case network
     case parse
     case empty                              // 200이지만 창 0개 — 스키마 변경 신호
+    case credential                         // 기기 보안 저장소(Keychain)를 일시적으로 읽지 못함 — 자격증명은 그대로
     case other
 }
 
@@ -84,14 +85,16 @@ enum AnalyticsEvent {
     case loginStart(provider: AgentProvider)
     case loginSuccess(provider: AgentProvider, agentsTotal: Int)
     case loginFail(provider: AgentProvider, stage: LoginStage, code: String)
-    case loginAbandon(provider: AgentProvider, stage: LoginStage)
+    /// `elapsed`·`attempt`는 `LoginFunnelTracker`가 정한다(Android와 같은 의미). 둘 다 문자열로 보낸다.
+    case loginAbandon(provider: AgentProvider, stage: LoginStage, elapsed: LoginElapsedBucket, attempt: Int)
     /// 설치 후 1회 — 첫 에이전트의 첫 정상 스냅샷 표시(진짜 "aha" 시점). GA4 키 이벤트.
     case activationComplete(provider: AgentProvider)
     // 데모 퍼널
     case demoStart(source: DemoSource)
     case demoEnd
     // 참여
-    case screenView(ScreenName, provider: AgentProvider? = nil)
+    /// `source`는 계정 추가 화면(`add_agent`)에만 싣는다 — 어디서 들어왔는지.
+    case screenView(ScreenName, provider: AgentProvider? = nil, source: AddAgentSource? = nil)
     case refreshManual(source: RefreshSource)
     case settingChange(setting: String, value: String)
     case notificationOpen(kind: NotificationKind)
@@ -133,6 +136,13 @@ enum AnalyticsEvent {
     enum DemoSource: String, Sendable {
         case emptyList = "empty_list"
         case settings
+    }
+
+    /// 계정 추가 화면에 들어온 경로(`screen_view`의 `source`).
+    enum AddAgentSource: String, Sendable {
+        case emptyState = "empty_state"   // 에이전트가 없는 첫 화면의 연결 버튼
+        case demo                         // 데모 중 연결 버튼(데모를 끝내고 연다)
+        case list                         // 그 밖의 기존 진입(목록 아래 [+ ADD AGENT])
     }
 
     enum RefreshSource: String, Sendable {
@@ -188,18 +198,20 @@ enum AnalyticsEvent {
         case .loginFail(let p, let stage, let code):
             return ["provider": p.rawValue, "auth_kind": Self.authKindTag(p),
                     "stage": stage.rawValue, "code": LoginFailureCode.sanitized(code)]
-        case .loginAbandon(let p, let stage):
-            return ["provider": p.rawValue, "stage": stage.rawValue]
+        case .loginAbandon(let p, let stage, let elapsed, let attempt):
+            return ["provider": p.rawValue, "stage": stage.rawValue,
+                    "elapsed": elapsed.rawValue, "attempt": String(min(max(attempt, 1), 3))]
         case .activationComplete(let p):
             return ["provider": p.rawValue]
         case .demoStart(let source):
             return ["source": source.rawValue]
         case .demoEnd:
             return [:]
-        case .screenView(let screen, let provider):
+        case .screenView(let screen, let provider, let source):
             var params: [String: Any] = ["screen_name": screen.rawValue,
                                          "screen_class": screen.screenClass]
             if let provider { params["provider"] = provider.rawValue }
+            if let source { params["source"] = source.rawValue }
             return params
         case .refreshManual(let source):
             return ["source": source.rawValue]
@@ -256,7 +268,6 @@ enum AnalyticsEvent {
     /// `auth_kind` 값. 로그인 실패 진단 보고(LoginFailureReporter)도 같은 값을 쓴다.
     static func authKindTag(_ provider: AgentProvider) -> String {
         switch provider.authKind {
-        case .oauthCode: return "oauth"
         case .oauthBrowser: return "oauth_browser"
         case .oauthDeviceFlow: return "device"
         case .apiKey: return "api_key"

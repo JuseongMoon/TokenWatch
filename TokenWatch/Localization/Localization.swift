@@ -363,10 +363,16 @@ struct L10n: Sendable {
         lang == .ko ? "이 키로는 계정 크레딧 잔액을 조회할 수 없습니다(HTTP 403). 일반 API 키가 아닌 관리 키(Management Key)가 필요하며, 워크스페이스 전용 키도 거절될 수 있습니다. 카드를 지우고 계정 범위 관리 키로 다시 추가해 주세요."
                     : "This key can't read the account credit balance (HTTP 403). A Management Key is required instead of a regular API key, and workspace-only keys may also be refused. Remove this card and add it again with an account-level Management Key."
     }
-    /// OpenRouter `/credits` 401 — 키 자체가 거부됐다(오타·삭제·만료).
+    /// OpenRouter `/credits` 401 — 키 자체가 거부됐다(오타·삭제·만료). 아래 `errAPIKeyRejected`와 같은 틀에 관리 키를 안내한다.
     var errOpenRouterKeyRejected: String {
-        lang == .ko ? "OpenRouter가 이 키를 거부했습니다(HTTP 401). 키가 삭제·만료됐거나 잘못 입력됐을 수 있습니다. 관리 키를 확인해 다시 추가해 주세요."
-                    : "OpenRouter rejected this key (HTTP 401). It may have been deleted, expired, or mistyped. Check your Management Key and add it again."
+        lang == .ko ? "OpenRouter에서 키를 거부했습니다(HTTP 401). 키가 만료되거나 삭제되지 않았는지 확인한 뒤, 이 카드를 지우고 관리 키로 다시 추가해 주세요."
+                    : "OpenRouter rejected the key (HTTP 401). Check that it has not expired or been deleted, then remove this card and add it again with a management key."
+    }
+    /// API 키 서비스(Kimi·DeepSeek·Poe·ElevenLabs)가 키를 거부했다(HTTP 401). `name`은 앱에 표시하는 서비스 이름.
+    /// 키를 다시 넣으면 같은 카드가 아니라 새 카드가 생기므로 "이 카드를 지우고 다시 추가"로 안내한다.
+    func errAPIKeyRejected(_ name: String) -> String {
+        lang == .ko ? "\(name)에서 키를 거부했습니다(HTTP 401). 키가 만료되거나 삭제되지 않았는지 확인한 뒤, 이 카드를 지우고 새 키로 다시 추가해 주세요."
+                    : "\(name) rejected the key (HTTP 401). Check that it has not expired or been deleted, then remove this card and add it again with a new key."
     }
     /// 로그인 중 네트워크 오류(시스템 오류 원문 대신 보여 준다).
     var errLoginNetwork: String {

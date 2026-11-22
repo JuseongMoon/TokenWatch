@@ -23,20 +23,27 @@ enum ElevenLabsUsageClient {
 
         let (data, response) = try await APISession.shared.data(for: req)
         let http = response as? HTTPURLResponse
-        let status = http?.statusCode ?? 0
-        // 잘못된/누락된 API 키.
-        if status == 401 { throw UsageError.unauthorized }
-        if status == 429 {
-            throw UsageError.rateLimited(parseRetryAfter(http?.value(forHTTPHeaderField: "Retry-After")))
-        }
-        guard (200..<300).contains(status) else {
-            throw UsageError.http(status, String(data: data, encoding: .utf8) ?? "")
+        if let error = statusError(http?.statusCode ?? 0,
+                                   retryAfter: http?.value(forHTTPHeaderField: "Retry-After"), body: data) {
+            throw error
         }
         do {
             let decoded = try JSONDecoder().decode(ElevenLabsSubscription.self, from: data)
             return decoded.windows()
         } catch {
             throw UsageError.decode(error.localizedDescription)
+        }
+    }
+
+    /// 비정상 상태 코드 → 오류(순수 함수 — 테스트 대상). 2xx면 nil.
+    /// 401(잘못된/누락된 API 키, 본문 `invalid_api_key`)만 키 거부 안내로 바꾼다.
+    /// 403(키의 IP 허용 목록 밖)은 키 무효가 아니라 기존처럼 HTTP 오류로 둔다.
+    static func statusError(_ status: Int, retryAfter: String?, body: Data) -> UsageError? {
+        switch status {
+        case 200..<300: return nil
+        case 401: return .apiKeyRejected(.elevenlabs)
+        case 429: return .rateLimited(parseRetryAfter(retryAfter))
+        default: return .http(status, String(data: body, encoding: .utf8) ?? "")
         }
     }
 }

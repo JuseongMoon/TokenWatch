@@ -21,13 +21,9 @@ enum PoeUsageClient {
 
         let (data, response) = try await APISession.shared.data(for: req)
         let http = response as? HTTPURLResponse
-        let status = http?.statusCode ?? 0
-        if status == 401 || status == 403 { throw UsageError.unauthorized }
-        if status == 429 {
-            throw UsageError.rateLimited(parseRetryAfter(http?.value(forHTTPHeaderField: "Retry-After")))
-        }
-        guard (200..<300).contains(status) else {
-            throw UsageError.http(status, String(data: data, encoding: .utf8) ?? "")
+        if let error = statusError(http?.statusCode ?? 0,
+                                   retryAfter: http?.value(forHTTPHeaderField: "Retry-After"), body: data) {
+            throw error
         }
         do {
             let decoded = try JSONDecoder().decode(Response.self, from: data)
@@ -38,6 +34,19 @@ enum PoeUsageClient {
                                 balanceRemaining: Double(points))]
         } catch {
             throw UsageError.decode(error.localizedDescription)
+        }
+    }
+
+    /// 비정상 상태 코드 → 오류(순수 함수 — 테스트 대상). 2xx면 nil.
+    /// 401만 키 거부 안내로 바꾼다 — Usage API 문서에서 401이 "Missing or invalid API Key"(`invalid_api_key`)다.
+    /// 403은 문서상 권한·인가 문제라 키 무효로 보지 않고 기존 처리(`unauthorized`) 그대로 둔다.
+    static func statusError(_ status: Int, retryAfter: String?, body: Data) -> UsageError? {
+        switch status {
+        case 200..<300: return nil
+        case 401: return .apiKeyRejected(.poe)
+        case 403: return .unauthorized
+        case 429: return .rateLimited(parseRetryAfter(retryAfter))
+        default: return .http(status, String(data: body, encoding: .utf8) ?? "")
         }
     }
 

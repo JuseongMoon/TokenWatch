@@ -32,6 +32,12 @@ enum UsageError: Error, LocalizedError {
         case .keyRejected(_, let message): return message
         }
     }
+
+    /// API 키 서비스가 키를 거부(HTTP 401)했을 때의 카드 오류 — 서비스 이름을 넣은 안내.
+    /// 분석 분류는 401이라 지금과 같은 `auth`다(`FetchErrorReason(classifying:)`). OpenRouter는 관리 키 안내가 따로 있다.
+    static func apiKeyRejected(_ provider: AgentProvider) -> UsageError {
+        .keyRejected(status: 401, message: L10n(lang: currentLang()).errAPIKeyRejected(provider.displayName))
+    }
 }
 
 extension FetchErrorReason {

@@ -45,11 +45,27 @@ enum KimiUsageClient {
 
     static func fetch(tokens: OAuthTokens) async throws -> [UsageWindow] {
         let host = tokens.accountId.flatMap { hosts.contains($0) ? $0 : nil } ?? hosts[0]
-        let data = try await fetchUsagesData(key: tokens.accessToken, host: host)
+        let data: Data
+        do {
+            data = try await fetchUsagesData(key: tokens.accessToken, host: host)
+        } catch {
+            throw cardError(error)
+        }
         return try KimiUsageMapper.windows(from: data)
     }
 
-    /// `/usages` 원본 응답. 401 → unauthorized(키 무효), 403·404 → http 오류(100%로 보이지 않게), 429 → rateLimited.
+    /// 카드 조회의 오류(순수 함수 — 테스트 대상). 저장한 지역 호스트가 키를 거부한 401(`unauthorized`)만
+    /// 키 거부 안내로 바꾸고, 나머지(429·403·404·5xx·네트워크·취소)는 그대로 둔다.
+    /// 추가 전 확인(`prepareCredential`)은 `fetchUsagesData`의 `unauthorized`를 보고 다음 지역 호스트로 넘어가므로 바꾸지 않는다.
+    static func cardError(_ error: Error) -> Error {
+        switch error {
+        case UsageError.unauthorized: return UsageError.apiKeyRejected(.kimi)
+        default: return error
+        }
+    }
+
+    /// `/usages` 원본 응답. 401 → unauthorized(키 무효 — 카드 조회에서는 `cardError`가 키 거부 안내로 바꾼다),
+    /// 403·404 → http 오류(100%로 보이지 않게), 429 → rateLimited.
     static func fetchUsagesData(key: String, host: String) async throws -> Data {
         var req = URLRequest(url: usagesURL(host: host))
         req.httpMethod = "GET"
